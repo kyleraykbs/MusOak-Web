@@ -657,6 +657,19 @@ function accountCard() {
   );
 }
 
+/**
+ * Whether a failed call means the server is down, or merely answered "no".
+ *
+ * A refusal is an answer. A server that asks for a login is up and working, and
+ * calling it "not answering" sends people looking for a network problem that
+ * does not exist - which is exactly what a deployment with requireLogin on
+ * looked like. Only a call that never got a response counts as down, and the
+ * client reports those with no status at all.
+ */
+export function serverAnswered(error) {
+  return Number(error?.status) > 0;
+}
+
 /** Ask the backend whether it is there, and draw the answer. */
 async function checkServer({ force = false } = {}) {
   if (!client || !state.server) return;
@@ -664,8 +677,8 @@ async function checkServer({ force = false } = {}) {
   try {
     await client.get("/api/v1/clock");
     state.online = true;
-  } catch {
-    state.online = false;
+  } catch (error) {
+    state.online = serverAnswered(error);
   }
   if (force || state.online !== before) renderCorner();
 }

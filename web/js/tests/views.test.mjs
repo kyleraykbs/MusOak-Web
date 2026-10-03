@@ -145,3 +145,16 @@ test("the uploads search keeps what matches the title, the artists or the file n
   assert.deepEqual(ids(matchingUploads(uploads, "track-02")), ["2"]);
   assert.deepEqual(ids(matchingUploads(uploads, "nothing here")), []);
 });
+
+test("a server that refuses is a server that answered", async () => {
+  // The clock probe throws on a 401, and treating that as "not answering" made
+  // every logged-out visitor to a requireLogin deployment see a dead server.
+  const { serverAnswered } = await import("../app.js");
+  assert.equal(serverAnswered({ status: 401 }), true);
+  assert.equal(serverAnswered({ status: 500 }), true);
+  assert.equal(serverAnswered({ status: 409 }), true);
+  // No status at all is the client's own "cannot reach" error.
+  assert.equal(serverAnswered({ status: 0 }), false);
+  assert.equal(serverAnswered(new Error("network")), false);
+  assert.equal(serverAnswered(undefined), false);
+});
