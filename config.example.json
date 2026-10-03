@@ -1,0 +1,14 @@
+{
+  "listen": ":4421",
+
+  "defaultServer": "https://music.example.com",
+  "loginPopup": true,
+
+  "servers": [
+    { "name": "Living room", "url": "https://music.example.com" },
+    { "name": "Laptop", "url": "http://10.0.0.5:4420" }
+  ],
+
+  "allowCustomServer": true,
+  "blockPrivateServers": false
+}

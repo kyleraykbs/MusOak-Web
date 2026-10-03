@@ -1,0 +1,12 @@
+# nix
+result
+result-*
+.direnv/
+.envrc
+
+# editor/OS
+*.swp
+.DS_Store
+
+# nothing here has a build step, so anything else is scratch
+*.log

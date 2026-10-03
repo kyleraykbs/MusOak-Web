@@ -1,0 +1,876 @@
+// The room's client-side state machine: what a user would see change when the
+// server says so. No DOM here — the reducers are pure.
+
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  createRoomState,
+  applyEvent,
+  mergeSnapshot,
+  positionMs,
+  moveItem,
+  nameOf,
+  mayDrive,
+  myQueue,
+  offsetFrom,
+  enterRoom,
+  closeRoom,
+  leaveRoom,
+  currentRoom,
+  enqueue,
+  remove,
+  reorder,
+  clear as clearQueue,
+  pause,
+  seek,
+  vote,
+  pickRoomVariant,
+  roomPlayMode,
+  driftDecision,
+  followWithPlayer,
+} from "../rooms-state.js";
+import { state } from "../state.js";
+
+const KYLE = "member-kyle";
+const SAM = "member-sam";
+
+function item(id, title, addedBy) {
+  return { id, trackId: `track-${id}`, title, addedBy, addedAtMs: 1 };
+}
+
+/** A room where kyle has queued two songs and sam one. */
+function twoMemberRoom() {
+  let state = createRoomState({ me: KYLE });
+  state = mergeSnapshot(state, {
+    id: "room-1",
+    name: "kitchen",
+    host: KYLE,
+    controls: "host",
+    members: [
+      { id: KYLE, name: "kyle", joinedAtMs: 1 },
+      { id: SAM, name: "sam", joinedAtMs: 2 },
+    ],
+    memberCount: 2,
+    queues: {
+      [KYLE]: [item("a1", "first", KYLE), item("a2", "second", KYLE)],
+      [SAM]: [item("b1", "sam one", SAM)],
+    },
+    masterQueue: [item("a1", "first", KYLE), item("b1", "sam one", SAM), item("a2", "second", KYLE)],
+    skip: { skipThreshold: 2, minVotersForSkip: 2, voterFractionForSkip: 0.5, readyTimeoutSeconds: 30 },
+  });
+  return state;
+}
+
+test("queue_updated keeps every member's own queue and the fair master order", () => {
+  const state = twoMemberRoom();
+  const next = applyEvent(state, {
+    type: "queue_updated",
+    roomId: "room-1",
+    data: {
+      queues: {
+        [KYLE]: [item("a1", "first", KYLE), item("a2", "second", KYLE)],
+        [SAM]: [item("b1", "sam one", SAM), item("b2", "sam two", SAM)],
+      },
+      masterQueue: [
+        item("a1", "first", KYLE),
+        item("b1", "sam one", SAM),
+        item("a2", "second", KYLE),
+        item("b2", "sam two", SAM),
+      ],
+      queue: [item("b1", "sam one", SAM), item("a2", "second", KYLE), item("b2", "sam two", SAM)],
+    },
+  });
+
+  // One queue per member, each in its owner's order.
+  assert.deepEqual(
+    next.queues[KYLE].map((entry) => entry.id),
+    ["a1", "a2"]
+  );
+  assert.deepEqual(
+    next.queues[SAM].map((entry) => entry.id),
+    ["b1", "b2"]
+  );
+  assert.deepEqual(
+    next.masterQueue.map((entry) => entry.id),
+    ["a1", "b1", "a2", "b2"]
+  );
+  // The round robin is the room's: kyle, sam, kyle, sam.
+  assert.deepEqual(
+    next.masterQueue.map((entry) => entry.addedBy),
+    [KYLE, SAM, KYLE, SAM]
+  );
+  assert.deepEqual(next.queue.map((entry) => entry.id), ["b1", "a2", "b2"]);
+  assert.deepEqual(myQueue(next), next.queues[KYLE]);
+});
+
+test("a queue_updated without a pending list derives it from the master queue", () => {
+  const playing = applyEvent(twoMemberRoom(), {
+    type: "queue_updated",
+    roomId: "room-1",
+    data: { queues: {}, masterQueue: [item("a1", "first", KYLE), item("b1", "sam one", SAM)] },
+  });
+  const started = applyEvent(playing, {
+    type: "track_started",
+    roomId: "room-1",
+    data: { item: item("a1", "first", KYLE), startedAt: 1000, timelineMs: 20000 },
+  });
+  const next = applyEvent(started, {
+    type: "queue_updated",
+    roomId: "room-1",
+    data: { queues: {}, masterQueue: [item("a1", "first", KYLE), item("b1", "sam one", SAM)] },
+  });
+  assert.deepEqual(next.queue.map((entry) => entry.id), ["b1"]);
+});
+
+test("members joining and leaving keep the count honest", () => {
+  const two = twoMemberRoom();
+  const three = applyEvent(two, {
+    type: "member_joined",
+    roomId: "room-1",
+    data: { member: { id: "member-jo", name: "jo" }, memberCount: 3 },
+  });
+  assert.equal(three.memberCount, 3);
+  assert.equal(nameOf(three, "member-jo"), "jo");
+  assert.equal(nameOf(three, "member-kyle"), "kyle");
+  assert.equal(nameOf(three, "member-unknown"), "member-u");
+
+  // Joining twice is one member, not two.
+  const again = applyEvent(three, {
+    type: "member_joined",
+    roomId: "room-1",
+    data: { member: { id: "member-jo", name: "jo" }, memberCount: 3 },
+  });
+  assert.equal(again.members.length, 3);
+
+  const left = applyEvent(again, { type: "member_left", roomId: "room-1", data: { memberId: "member-jo", memberCount: 2 } });
+  assert.equal(left.memberCount, 2);
+  assert.deepEqual(
+    left.members.map((member) => member.id),
+    [KYLE, SAM]
+  );
+});
+
+test("track_skipped stops the room's current track without forgetting it", () => {
+  const started = applyEvent(twoMemberRoom(), {
+    type: "track_started",
+    roomId: "room-1",
+    data: { item: item("a1", "first", KYLE), startedAt: 5000, timelineMs: 30000 },
+  });
+  assert.equal(started.current.item.title, "first");
+  assert.ok(positionMs(started, 5000) === 0);
+
+  const skipped = applyEvent(started, {
+    type: "track_skipped",
+    roomId: "room-1",
+    data: { item: item("a1", "first", KYLE), reason: "voted", positionMs: 4000 },
+  });
+  assert.equal(skipped.current.startedAtMs, 0, "the room is no longer playing it");
+  assert.equal(skipped.current.item.title, "first");
+  assert.equal(skipped.current.positionMs, 4000);
+  assert.equal(positionMs(skipped, 1e9), 0, "nothing is running, so nothing advances");
+
+  // A skip for some other track is not ours to act on.
+  const other = applyEvent(started, {
+    type: "track_skipped",
+    roomId: "room-1",
+    data: { item: item("zz", "elsewhere", SAM), positionMs: 1 },
+  });
+  assert.equal(other, started);
+});
+
+test("ready_state counts who is ready, out of how many", () => {
+  const state = twoMemberRoom();
+  const ready = applyEvent(state, {
+    type: "ready_state",
+    roomId: "room-1",
+    data: { ready: 1, members: 2, item: item("a1", "first", KYLE) },
+  });
+  assert.equal(ready.readyCount, 1);
+  assert.equal(ready.memberCount, 2);
+
+  const all = applyEvent(ready, { type: "ready_state", roomId: "room-1", data: { ready: 2, members: 2 } });
+  assert.equal(all.readyCount, 2);
+});
+
+test("ready_state carries who is sitting the track out", () => {
+  const state = twoMemberRoom();
+  assert.equal(state.members.length, 2, "the fixture has two members");
+  const [first, second] = state.members;
+
+  const out = applyEvent(state, {
+    type: "ready_state",
+    roomId: "room-1",
+    data: { ready: 1, members: 2, out: [second.id] },
+  });
+  assert.equal(out.members.find((member) => member.id === second.id).out, true);
+  assert.equal(out.members.find((member) => member.id === first.id).out, false);
+
+  // Coming back in clears it, and the panel stops saying so.
+  const back = applyEvent(out, {
+    type: "ready_state",
+    roomId: "room-1",
+    data: { ready: 2, members: 2, out: [] },
+  });
+  assert.equal(back.members.every((member) => !member.out), true);
+});
+
+test("the room position follows the server clock, freezes when paused and stops at the end", () => {
+  const started = applyEvent(twoMemberRoom(), {
+    type: "track_started",
+    roomId: "room-1",
+    data: { item: item("a1", "first", KYLE), startedAt: 10000, timelineMs: 30000 },
+  });
+  assert.equal(positionMs(started, 12000), 2000);
+  assert.equal(positionMs(started, 3000), 0, "before the start is still the start");
+
+  const offset = applyEvent(started, { type: "pong", clientSentAt: 100, serverReceivedAt: 4000 });
+  assert.equal(offset.serverOffsetMs, offsetFrom(100, Date.now(), 4000));
+
+  const paused = applyEvent(started, { type: "paused", roomId: "room-1", data: { positionMs: 7000 } });
+  assert.equal(positionMs(paused, 99000), 7000);
+
+  const resumed = applyEvent(paused, { type: "resumed", roomId: "room-1", data: { startedAt: 20000, positionMs: 7000 } });
+  assert.equal(positionMs(resumed, 21000), 8000);
+  assert.equal(positionMs(resumed, 99000), 30000, "a track does not outlive its timeline");
+
+  assert.equal(positionMs(createRoomState(), 1), 0);
+});
+
+test("events only move the room they belong to, and the reducer never mutates", () => {
+  const state = twoMemberRoom();
+  const before = structuredClone(state);
+  const foreign = applyEvent(state, { type: "queue_updated", roomId: "other", data: { queues: { x: [] } } });
+  assert.equal(foreign, state, "another room's event is ignored");
+
+  const next = applyEvent(state, { type: "member_left", roomId: "room-1", data: { memberId: SAM, memberCount: 1 } });
+  assert.notEqual(next, state);
+  assert.deepEqual(state, before, "the state we applied to is untouched");
+  assert.equal(next.members.length, 1);
+});
+
+test("the master mix can be reordered by moving one of your items", () => {
+  assert.deepEqual(moveItem(["a", "b", "c"], "c", "a"), ["c", "a", "b"]);
+  assert.deepEqual(moveItem(["a", "b", "c"], "a"), ["b", "c", "a"], "no target goes to the end");
+  assert.deepEqual(moveItem(["a", "b"], "z", "a"), ["a", "b"], "an unknown item changes nothing");
+});
+
+test("who may drive a room follows its controls", () => {
+  const host = twoMemberRoom();
+  assert.equal(mayDrive(host, KYLE), true);
+  assert.equal(mayDrive(host, SAM), false);
+  const everyone = mergeSnapshot(host, { id: "room-1", controls: "everyone", host: KYLE });
+  assert.equal(mayDrive(everyone, SAM), true);
+});
+
+test("the variant played is the account's choice, the default, then the provider order", () => {
+  const sources = [
+    { variantId: "official", default: false },
+    { variantId: "flagged", default: true },
+    { variantId: "third" },
+  ];
+  assert.equal(pickRoomVariant(sources, "official"), "official", "the saved preference wins");
+  assert.equal(pickRoomVariant(sources, ""), "flagged", "then the source the server defaults to");
+  assert.equal(
+    pickRoomVariant([{ variantId: "a" }, { variantId: "b" }], ""),
+    "a",
+    "then the first of the provider order"
+  );
+  assert.equal(pickRoomVariant(sources, "gone"), "flagged", "a stale preference falls through");
+  assert.equal(pickRoomVariant([], "", "assigned"), "assigned", "the room's assignment is the last word");
+  assert.equal(pickRoomVariant(undefined, "", ""), "");
+});
+
+test("the room's mode says whether to prepare, play, pause or stop", () => {
+  const base = createRoomState({ roomId: "room-1" });
+  assert.equal(roomPlayMode(base), "stop", "nothing prepared is nothing to do");
+  const prepared = applyEvent(base, {
+    type: "track_prepared",
+    roomId: "room-1",
+    data: { item: item("a1", "first", KYLE) },
+  });
+  assert.equal(roomPlayMode(prepared), "prepare");
+  const started = applyEvent(prepared, {
+    type: "track_started",
+    roomId: "room-1",
+    data: { item: item("a1", "first", KYLE), startedAt: 1000, timelineMs: 30000 },
+  });
+  assert.equal(roomPlayMode(started), "play");
+  const paused = applyEvent(started, { type: "paused", roomId: "room-1", data: { positionMs: 1000 } });
+  assert.equal(roomPlayMode(paused), "pause");
+  const skipped = applyEvent(started, {
+    type: "track_skipped",
+    roomId: "room-1",
+    data: { item: item("a1", "first", KYLE) },
+  });
+  assert.equal(roomPlayMode(skipped), "prepare", "a track with no start instant is only held, never played");
+});
+
+test("drift is only worth a seek past the tolerance", () => {
+  assert.equal(driftDecision(5000, 5000), "hold");
+  assert.equal(driftDecision(6400, 5000), "hold", "400ms ahead stays");
+  assert.equal(driftDecision(6600, 5000), "back", "1.6s ahead is seeked back");
+  assert.equal(driftDecision(3400, 5000), "forward", "1.6s behind is seeked forward");
+  assert.equal(driftDecision(5000, 3250), "back");
+});
+
+// --- following a room ------------------------------------------------------
+//
+// The socket and the REST calls, seen from the outside: a fake client stands in
+// for the browser, so what is checked is what a room member would notice —
+// which command goes out, and whether the membership survives.
+
+const HOST = {
+  id: "room-1",
+  name: "kitchen",
+  host: KYLE,
+  controls: "host",
+  members: [{ id: KYLE, name: "kyle" }],
+  memberCount: 1,
+  queues: { [KYLE]: [item("a1", "first", KYLE)] },
+  masterQueue: [item("a1", "first", KYLE)],
+  queue: [],
+  current: null,
+  skip: { skipThreshold: 2, minVotersForSkip: 2, voterFractionForSkip: 0.5, readyTimeoutSeconds: 30 },
+};
+
+function fakeClient({ room = HOST, joinError = null, sources = null } = {}) {
+  const calls = { joins: [], commands: [], leaves: [], ready: [], sockets: [] };
+  const client = {
+    memberId: KYLE,
+    calls,
+    joinError,
+    roomData: room,
+    joinRoom(roomId, password) {
+      calls.joins.push({ roomId, password });
+      if (client.joinError) return Promise.reject(client.joinError);
+      return Promise.resolve({ room: client.roomData, memberId: KYLE });
+    },
+    room() {
+      return Promise.resolve(client.roomData);
+    },
+    sources(trackId) {
+      calls.sources = calls.sources || [];
+      calls.sources.push(trackId);
+      const answer = typeof sources === "function" ? sources(trackId) : sources;
+      return Promise.resolve(answer || { sources: [], preferredVariantId: "" });
+    },
+    roomEnqueue(roomId, trackId) {
+      calls.commands.push({ name: "roomEnqueue", args: [roomId, trackId] });
+      return Promise.resolve(client.roomData);
+    },
+    roomRemove(roomId, itemId) {
+      calls.commands.push({ name: "roomRemove", args: [roomId, itemId] });
+      return Promise.resolve(client.roomData);
+    },
+    roomReorder(roomId, itemIds) {
+      calls.commands.push({ name: "roomReorder", args: [roomId, itemIds] });
+      return Promise.resolve(client.roomData);
+    },
+    roomClearQueue(roomId) {
+      calls.commands.push({ name: "roomClearQueue", args: [roomId] });
+      return Promise.resolve(client.roomData);
+    },
+    roomPause(roomId) {
+      calls.commands.push({ name: "roomPause", args: [roomId] });
+      return Promise.resolve(client.roomData);
+    },
+    roomResume(roomId) {
+      calls.commands.push({ name: "roomResume", args: [roomId] });
+      return Promise.resolve(client.roomData);
+    },
+    roomSkip(roomId) {
+      calls.commands.push({ name: "roomSkip", args: [roomId] });
+      return Promise.resolve(client.roomData);
+    },
+    roomSeek(roomId, positionMs) {
+      calls.commands.push({ name: "roomSeek", args: [roomId, positionMs] });
+      return Promise.resolve(client.roomData);
+    },
+    roomVote(roomId, score) {
+      calls.commands.push({ name: "roomVote", args: [roomId, score] });
+      return Promise.resolve(client.roomData);
+    },
+    roomReady(roomId, trackId, variantId, durationMs) {
+      calls.ready.push({ roomId, trackId, variantId, durationMs });
+      return Promise.resolve(client.roomData);
+    },
+    leaveRoom(roomId) {
+      calls.leaves.push({ roomId });
+      return Promise.resolve(client.roomData);
+    },
+    roomSocket({ roomId, onEvent, onOpen, onClose }) {
+      const socket = {
+        roomId,
+        sends: [],
+        closed: false,
+        onEvent,
+        onOpen,
+        onClose,
+        send(type, payload) {
+          this.sends.push({ type, ...payload });
+          return true;
+        },
+        close() {
+          this.closed = true;
+          onClose?.();
+        },
+      };
+      calls.sockets.push(socket);
+      return socket;
+    },
+  };
+  return client;
+}
+
+async function waitFor(predicate, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return predicate();
+}
+
+test("a wrong password is the server's error, and leaves you outside the room", async (t) => {
+  t.after(closeRoom);
+  const client = fakeClient({ joinError: new Error("wrong password") });
+  await assert.rejects(enterRoom({ client, roomId: "room-1", password: "nope" }), /wrong password/);
+  assert.equal(currentRoom(), null);
+  assert.equal(client.calls.sockets.length, 0, "no socket for a room we are not in");
+});
+
+test("a room you cannot join does not cost you the room you are in", async (t) => {
+  t.after(closeRoom);
+  const client = fakeClient();
+  let left = 0;
+  await enterRoom({ client, roomId: "room-1", onLeave: () => (left += 1) });
+
+  client.joinError = new Error("wrong password");
+  await assert.rejects(enterRoom({ client, roomId: "room-2", password: "nope" }), /wrong password/);
+
+  assert.equal(left, 0, "the room we were following is untouched");
+  assert.equal(currentRoom().roomId, "room-1");
+  assert.equal(client.calls.sockets[0].closed, false);
+});
+
+test("the queue commands go to the room through the client's own wrappers", async (t) => {
+  t.after(closeRoom);
+  const client = fakeClient();
+  await enterRoom({ client, roomId: "room-1", password: "sesame" });
+  assert.deepEqual(client.calls.joins, [{ roomId: "room-1", password: "sesame" }]);
+  assert.equal(client.calls.sockets.length, 1, "joining opens the room channel");
+
+  await enqueue({ id: "track-9" });
+  assert.deepEqual(client.calls.commands.at(-1), { name: "roomEnqueue", args: ["room-1", "track-9"] });
+
+  await remove("a1");
+  assert.deepEqual(client.calls.commands.at(-1), { name: "roomRemove", args: ["room-1", "a1"] });
+
+  await reorder(["b1", "a1"]);
+  assert.deepEqual(client.calls.commands.at(-1), { name: "roomReorder", args: ["room-1", ["b1", "a1"]] });
+
+  await pause();
+  assert.deepEqual(client.calls.commands.at(-1), { name: "roomPause", args: ["room-1"] });
+
+  await seek(4200);
+  assert.deepEqual(client.calls.commands.at(-1), { name: "roomSeek", args: ["room-1", 4200] });
+
+  await vote(4);
+  assert.deepEqual(client.calls.commands.at(-1), { name: "roomVote", args: ["room-1", 4] });
+
+  await clearQueue();
+  assert.deepEqual(client.calls.commands.at(-1), { name: "roomClearQueue", args: ["room-1"] });
+});
+
+test("a dropped socket is rejoined with the same password", async (t) => {
+  t.after(closeRoom);
+  const client = fakeClient();
+  await enterRoom({ client, roomId: "room-1", password: "sesame" });
+  const first = client.calls.sockets[0];
+  first.onOpen();
+  assert.equal(currentRoom().connected, true);
+
+  first.onClose();
+  assert.equal(currentRoom().connected, false, "the page says we are reconnecting");
+  assert.ok(await waitFor(() => client.calls.sockets.length === 2), "a second socket is opened");
+  assert.deepEqual(client.calls.joins.at(-1), { roomId: "room-1", password: "sesame" });
+});
+
+test("events from the room channel reach the state the views read", async (t) => {
+  t.after(closeRoom);
+  const client = fakeClient();
+  await enterRoom({ client, roomId: "room-1" });
+  client.calls.sockets[0].onEvent({
+    type: "member_joined",
+    roomId: "room-1",
+    data: { member: { id: "member-jo", name: "jo" }, memberCount: 2 },
+  });
+  assert.equal(currentRoom().memberCount, 2);
+  assert.equal(nameOf(currentRoom(), "member-jo"), "jo");
+
+  client.calls.sockets[0].onEvent({ type: "queue_updated", roomId: "other-room", data: { queues: {} } });
+  assert.equal(currentRoom().memberCount, 2, "another room's events change nothing here");
+});
+
+test("leaving ends the membership here and on the server", async (t) => {
+  t.after(closeRoom);
+  const client = fakeClient();
+  let left = 0;
+  await enterRoom({ client, roomId: "room-1", onLeave: () => (left += 1) });
+  const socket = client.calls.sockets[0];
+
+  await leaveRoom({ client, roomId: "room-1" });
+
+  assert.equal(left, 1, "the player is told to stop routing through the room");
+  assert.equal(socket.closed, true);
+  assert.deepEqual(client.calls.leaves, [{ roomId: "room-1" }]);
+  assert.equal(currentRoom(), null);
+});
+
+// --- keeping the player on the room's clock --------------------------------
+//
+// The player a browser would run is stood in for by one a test can hold still:
+// it records what it was asked to play, and puts its own position, duration and
+// readiness where the engine reads them.
+
+class FakePlayer {
+  constructor() {
+    this.queue = [];
+    this.index = -1;
+    this.variant = "";
+    this.room = null;
+    this.ready = "none";
+    this.loading = false;
+    this.error = "";
+    this.position = 0;
+    this.duration = 0;
+    // What the browser read from the file. Null means "the same as duration",
+    // which is a file that is ready to play; a test can hold it at 0 to model a
+    // file whose metadata has not arrived yet.
+    this.measured = null;
+    this.paused = true;
+    this.plays = [];
+    this.seeks = [];
+    this.warmed = [];
+    this._listeners = new Map();
+  }
+
+  on(event, handler) {
+    if (!this._listeners.has(event)) this._listeners.set(event, new Set());
+    this._listeners.get(event).add(handler);
+    return () => this._listeners.get(event)?.delete(handler);
+  }
+
+  current() {
+    return this.index >= 0 && this.index < this.queue.length ? this.queue[this.index] : null;
+  }
+
+  variantId() {
+    return this.variant;
+  }
+
+  /** The room asks for its upcoming tracks to be fetched ahead of time. */
+  warm(track) {
+    this.warmed.push(track);
+  }
+
+  readyState() {
+    return this.ready;
+  }
+
+  positionMs() {
+    return this.position;
+  }
+
+  durationMs() {
+    // The real player falls back to the queue entry's duration when the file's
+    // own is not known; here that is `duration`.
+    const measured = this.measuredDurationMs();
+    return measured > 0 ? measured : this.duration;
+  }
+
+  measuredDurationMs() {
+    return this.measured === null ? this.duration : this.measured;
+  }
+
+  state() {
+    return { loading: this.loading, error: this.error, paused: this.paused, playing: !this.paused };
+  }
+
+  isPaused() {
+    return this.paused;
+  }
+
+  pause() {
+    this.paused = true;
+  }
+
+  resume() {
+    this.paused = false;
+  }
+
+  seek(ms) {
+    this.seeks.push(ms);
+    this.position = ms;
+  }
+
+  playVariant(track, variantId, { positionMs = 0, autoplay = true } = {}) {
+    this.plays.push({ track, variantId, positionMs, autoplay });
+    this.queue = [track];
+    this.index = 0;
+    this.variant = variantId;
+    this.loading = true;
+    this.ready = "downloading";
+    // The fetch finishes a moment later, as a real one would.
+    Promise.resolve().then(() => {
+      this.loading = false;
+      this.ready = "ready";
+      this.duration = 30000;
+      this.paused = !autoplay;
+    });
+    return Promise.resolve();
+  }
+
+  setRoom(room) {
+    this.room = room;
+  }
+
+  clearRoom() {
+    this.room = null;
+  }
+
+  inRoom() {
+    return Boolean(this.room);
+  }
+
+  roomId() {
+    return this.room ? this.room.roomId : "";
+  }
+}
+
+const ONE_VARIANT = () => ({ sources: [{ variantId: "v-default", default: true }], preferredVariantId: "" });
+
+/** The room document the backend returns once a track is prepared. */
+function roomPrepared(track) {
+  return { ...HOST, current: { item: track, startedAtMs: 0, timelineMs: 0, positionMs: 0, paused: false } };
+}
+
+/** The room document the backend returns once a track is running. */
+function roomStarted(track, startedAt, timelineMs) {
+  return { ...HOST, current: { item: track, startedAtMs: startedAt, timelineMs, positionMs: 0, paused: false } };
+}
+
+test("a member reports the length of its own file, never the song's canonical one", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  // The queue entry says 7:11 - the song's canonical length - and the browser
+  // has not read this member's file yet.
+  player.duration = 431000;
+  player.measured = 0;
+  const client = fakeClient({ sources: ONE_VARIANT });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1" });
+  const socket = client.calls.sockets[0];
+  const track = item("a1", "first", KYLE);
+
+  client.roomData = roomPrepared(track);
+  socket.onEvent({ type: "track_prepared", roomId: "room-1", atMs: Date.now(), data: { item: track } });
+  assert.ok(await waitFor(() => player.plays.length === 1), "the room's rendition is fetched");
+
+  // The placeholder report carries no length at all. A borrowed 7:11 here is
+  // what made the room outlast every file in it, leaving the members who held
+  // the 4:14 copy sitting in silence at the end of their song.
+  assert.ok(
+    await waitFor(() => client.calls.ready.length === 1, 6000),
+    "readiness is reported once the grace is up"
+  );
+  assert.equal(client.calls.ready[0].durationMs, 0, "no length is invented");
+
+  // The browser reads the file: its real length follows in a second report.
+  player.measured = 253705;
+  assert.ok(await waitFor(() => client.calls.ready.length === 2), "the measured length follows");
+  assert.equal(client.calls.ready[1].durationMs, 253705, "the file's own length");
+});
+
+test("the prepared track is played, reported ready once, then follows the room's clock", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const client = fakeClient({ sources: ONE_VARIANT });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1" });
+  const socket = client.calls.sockets[0];
+  const track = item("a1", "first", KYLE);
+
+  // The room prepares it; the snapshot the debounced refetch returns agrees.
+  client.roomData = roomPrepared(track);
+  socket.onEvent({ type: "track_prepared", roomId: "room-1", atMs: Date.now(), data: { item: track } });
+
+  assert.ok(await waitFor(() => player.plays.length === 1), "the room's rendition is fetched");
+  assert.deepEqual(player.plays[0], {
+    track: { id: "track-a1", title: "first" },
+    variantId: "v-default",
+    positionMs: 0,
+    autoplay: false,
+  });
+
+  assert.ok(await waitFor(() => client.calls.ready.length === 1), "readiness is reported");
+  assert.deepEqual(client.calls.ready[0], {
+    roomId: "room-1",
+    trackId: "track-a1",
+    variantId: "v-default",
+    durationMs: 30000,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  assert.equal(client.calls.ready.length, 1, "reported once per prepared track");
+
+  // The room starts it: the held file is resumed, not fetched again.
+  const startedAt = Date.now() - 500;
+  client.roomData = roomStarted(track, startedAt, 30000);
+  socket.onEvent({
+    type: "track_started",
+    roomId: "room-1",
+    atMs: Date.now(),
+    data: { item: track, startedAt, timelineMs: 30000 },
+  });
+  assert.ok(await waitFor(() => !player.isPaused()), "the room's play resumes the file");
+  assert.equal(player.plays.length, 1, "the prepared file is reused");
+
+  // A local clock that has run ahead is pulled back with one small seek.
+  player.position = 8000;
+  assert.ok(await waitFor(() => player.seeks.length === 1), "drift past the tolerance is corrected");
+  assert.ok(player.seeks[0] < 3000, `the seek lands on the room's position (${player.seeks[0]})`);
+});
+
+test("a file shorter than the timeline waits, silent, instead of starting over", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const client = fakeClient({ sources: ONE_VARIANT });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1" });
+  const socket = client.calls.sockets[0];
+  const track = item("a1", "first", KYLE);
+
+  client.roomData = roomPrepared(track);
+  socket.onEvent({ type: "track_prepared", roomId: "room-1", atMs: Date.now(), data: { item: track } });
+  await waitFor(() => player.plays.length === 1);
+
+  const startedAt = Date.now();
+  client.roomData = roomStarted(track, startedAt, 60000);
+  socket.onEvent({
+    type: "track_started",
+    roomId: "room-1",
+    atMs: Date.now(),
+    data: { item: track, startedAt, timelineMs: 60000 },
+  });
+  await waitFor(() => !player.isPaused());
+
+  // The short file reaches its own end while the room still has a minute left.
+  player.duration = 4000;
+  player.position = 4000;
+  player.pause();
+  await new Promise((resolve) => setTimeout(resolve, 700));
+
+  assert.ok(player.isPaused(), "the member stays silent to the room's end");
+  assert.equal(player.plays.length, 1, "the file is not started over");
+  assert.equal(player.seeks.length, 0, "and the timeline does not push it back");
+});
+
+test("past the room's timeline the file is held, and leaving gives the player back", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const client = fakeClient({ sources: ONE_VARIANT });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1" });
+  const socket = client.calls.sockets[0];
+  const track = item("a1", "first", KYLE);
+
+  client.roomData = roomPrepared(track);
+  socket.onEvent({ type: "track_prepared", roomId: "room-1", atMs: Date.now(), data: { item: track } });
+  await waitFor(() => player.plays.length === 1);
+  assert.ok(await waitFor(() => player.inRoom()), "the player routes through the room");
+
+  const startedAt = Date.now();
+  client.roomData = roomStarted(track, startedAt, 150);
+  socket.onEvent({
+    type: "track_started",
+    roomId: "room-1",
+    atMs: Date.now(),
+    data: { item: track, startedAt, timelineMs: 150 },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 900));
+  assert.ok(player.isPaused(), "the room's timeline end stops the file");
+  assert.equal(player.plays.length, 1, "and never loops");
+
+  await leaveRoom({ client, roomId: "room-1" });
+  assert.ok(await waitFor(() => !player.inRoom()), "the player is its own again");
+});
+
+test("the room's track reaches the player with its artist and artwork", async (t) => {
+  t.after(closeRoom);
+  // A room's queue item carries a title and nothing else, so the follower has
+  // to look the track up. Without that the bar a listener sees has no artist
+  // and no cover, only a title.
+  const client = fakeClient({
+    room: {
+      ...HOST,
+      current: { item: item("a1", "first", KYLE), startedAtMs: Date.now() - 1000, paused: false },
+    },
+  });
+  client.sources = async () => ({
+    sources: [{ variantId: "v1", downloadable: true }],
+    preferredVariantId: "v1",
+  });
+  client.track = async (id) => ({
+    id,
+    title: "Feel Right",
+    artists: ["meija"],
+    artworkUrl: "/api/v1/artwork/abc.png",
+  });
+
+  const player = new FakePlayer();
+  followWithPlayer(player);
+  await enterRoom({ client, roomId: "room-1" });
+
+  assert.ok(await waitFor(() => player.plays.length), "the follower starts the room's track");
+  assert.deepEqual(player.plays[0].track.artists, ["meija"]);
+  assert.equal(player.plays[0].track.artworkUrl, "/api/v1/artwork/abc.png");
+});
+
+test("the room you are in is remembered, and forgotten when you leave", async (t) => {
+  t.after(closeRoom);
+  const client = fakeClient();
+  await enterRoom({ client, roomId: "room-1", password: "sesame" });
+  // A reload reads this back and rejoins: without it "pick up where you left
+  // off" leaves you outside the room you were listening in.
+  assert.deepEqual(state.room, { roomId: "room-1", name: "kitchen", password: "sesame" });
+
+  await leaveRoom({ client, roomId: "room-1" });
+  assert.equal(state.room, null, "a room you have left is not one to rejoin");
+});
+
+test("the room's next tracks are fetched ahead, so a skip does not wait on one", async (t) => {
+  t.after(closeRoom);
+  const next = item("a2", "second", KYLE);
+  const client = fakeClient({
+    room: {
+      ...HOST,
+      queues: { [KYLE]: [item("a1", "first", KYLE), next] },
+      masterQueue: [item("a1", "first", KYLE), next],
+      current: { item: item("a1", "first", KYLE), startedAtMs: Date.now() - 1000, paused: false },
+    },
+  });
+  client.sources = async () => ({ sources: [{ variantId: "v1", downloadable: true }], preferredVariantId: "v1" });
+  client.track = async (id) => ({ id, title: "x" });
+
+  const player = new FakePlayer();
+  followWithPlayer(player);
+  await enterRoom({ client, roomId: "room-1" });
+
+  // The player's own queue is empty in a room, so nothing else would fetch this.
+  assert.ok(
+    await waitFor(() => player.warmed.some((track) => track.id === "track-a2")),
+    "the item after the current one is warmed"
+  );
+});
+

@@ -1,0 +1,1358 @@
+/* MusOak web UI — gruvbox-dark.
+ *
+ * One palette, one set of components. Everything else in the app is HTML and
+ * these classes; nothing hardcodes a colour, so a second theme is one block of
+ * variables away.
+ */
+
+/* Miracode, by Idrees Inc, under the SIL Open Font License 1.1 (fonts/OFL.txt).
+   Vendored rather than fetched: this app has no CDN and works offline. */
+@font-face {
+  font-family: "Miracode";
+  src: url("fonts/Miracode.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* gruvbox dark */
+  --bg0-h: #1d2021;
+  --bg0: #282828;
+  --bg0-s: #32302f;
+  --bg1: #3c3836;
+  --bg2: #504945;
+  --bg3: #665c54;
+  --bg4: #7c6f64;
+
+  --fg0: #fbf1c7;
+  --fg1: #ebdbb2;
+  --fg2: #d5c4a1;
+  --fg3: #bdae93;
+  --fg4: #a89984;
+  --gray: #928374;
+
+  --red: #fb4934;
+  --red-dim: #cc241d;
+  --green: #b8bb26;
+  --green-dim: #98971a;
+  --yellow: #fabd2f;
+  --yellow-dim: #d79921;
+  --blue: #83a598;
+  --blue-dim: #458588;
+  --purple: #d3869b;
+  --purple-dim: #b16286;
+  --aqua: #8ec07c;
+  --aqua-dim: #689d6a;
+  --orange: #fe8019;
+  --orange-dim: #d65d0e;
+
+  --radius: 8px;
+  --radius-small: 5px;
+  --sidebar-width: 232px;
+  --player-height: 92px;
+
+  color-scheme: dark;
+  font-family: "Miracode", "Iosevka", "JetBrains Mono", "Fira Mono", ui-monospace, monospace;
+  font-size: 15px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  /* The app is the whole screen and scrolls its own panes: a page that scrolls
+     under it is what made a phone feel like it was fighting the scroll. */
+  overflow: hidden;
+  background: var(--bg0-h);
+  color: var(--fg1);
+  /* Firefox draws its own scrollbars: without this the app has light grey ones
+     in a dark room, and the tab strip below has none to speak of. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--bg3) transparent;
+}
+
+button, input, select, textarea {
+  font: inherit;
+  color: inherit;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bg0); }
+::-webkit-scrollbar-thumb { background: var(--bg3); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: var(--bg4); }
+
+/* ---------- layout ---------- */
+
+.app {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) 1fr;
+  grid-template-rows: 1fr var(--player-height);
+  /* Pinned to what is actually on screen rather than sized by a viewport unit:
+     fixed positioning is relative to the *layout* viewport, which on a phone is
+     the screen with the browser chrome hidden - taller than the part you can
+     see - so the bottom of the shell, where the tab strip and the player live,
+     fell behind it. app.js measures visualViewport and sets the height; dvh is
+     the closest a stylesheet can get on its own, for if that script never runs. */
+  position: fixed;
+  inset: 0;
+  height: 100dvh;
+}
+
+.sidebar {
+  grid-row: 1;
+  background: var(--bg0);
+  border-right: 1px solid var(--bg1);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* The brand and the server, together: a phone puts them on one line. */
+.sidebar-top { display: block; }
+
+.main {
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* A grid item's automatic minimum is its min-content, so the padding the
+     queue adds here would widen the whole track - and with it the full-width
+     player, pushing the bar's last buttons off the window. */
+  min-width: 0;
+}
+
+.content {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 0 0 32px;
+}
+
+.banner-slot { flex: none; }
+
+.corner { padding: 0 10px 10px; }
+.corner-row { display: flex; gap: 6px; align-items: center; min-width: 0; }
+
+/* The light beside the server's name: green while it answers, orange while it
+   does not, with a retry button appearing next to it when it does not. */
+.server-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--bg4);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg0-h) 60%, transparent);
+}
+.server-dot.online { background: var(--green); }
+.server-dot.offline { background: var(--orange); }
+.corner-row .btn.retry { flex: none; color: var(--orange); }
+.corner-row .btn.retry:hover { background: var(--orange-dim); color: var(--bg0-h); }
+
+/* Who you are on this server: the account's icon and name, under its own. */
+.account-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: var(--bg1);
+  border: 1px solid var(--bg2);
+  border-radius: var(--radius-small);
+  color: var(--fg1);
+  cursor: pointer;
+  text-align: left;
+}
+.account-card:hover { border-color: var(--green-dim); }
+/* Signed out, the card is one button that says so and asks: no icon, no name
+   we cannot vouch for, just the way in. */
+.account-card.signin {
+  flex: none;
+  min-height: 40px;
+  padding: 10px 22px;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--bg0-h);
+  background: var(--blue-dim);
+  border-color: var(--blue-dim);
+}
+.account-card.signin:hover { background: var(--blue); border-color: var(--blue); color: var(--bg0-h); }
+.account-card .art.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg2);
+  color: var(--fg3);
+}
+.account-card .who { display: flex; flex-direction: column; min-width: 0; }
+.account-card .name {
+  font-size: 0.95rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.account-card .handle { color: var(--fg4); font-size: 0.8rem; }
+
+/* Signing in says what it is doing, and what the server said when it refused. */
+.login-status { color: var(--fg3); font-size: 0.9rem; min-height: 1.2em; }
+.login-status.error { color: var(--red); }
+.btn[data-busy="true"] { opacity: 0.7; cursor: progress; }
+.corner-row .btn {
+  flex: 1;
+  min-width: 0;
+  justify-content: flex-start;
+  overflow: hidden;
+  white-space: nowrap;
+  padding: 6px 9px;
+  font-size: 14px;
+}
+/* The round buttons share the row but not the shape: they stay round and centre
+   their icon, where the rule above is for the labelled server button. */
+.corner-row .btn.round { flex: none; justify-content: center; padding: 0; }
+.corner-row .btn .label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.player {
+  grid-column: 1 / -1;
+  background: var(--bg0-s);
+  border-top: 1px solid var(--bg1);
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  background: color-mix(in srgb, var(--bg0-h) 92%, transparent);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--bg1);
+}
+
+.topbar h1 {
+  font-size: 17px;
+  margin: 0;
+  flex: 1;
+  font-weight: 600;
+  color: var(--fg0);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px 10px;
+  color: var(--fg0);
+  font-weight: 700;
+  font-size: 17px;
+  white-space: nowrap;
+}
+.brand img { height: 26px; width: 26px; }
+/* The wordmark is one word: no gap, no space between its halves. */
+.brand .wordmark { display: inline-flex; }
+.brand .accent { color: var(--orange); }
+/* "Mus" in orange, "Oak" in green: the name says what it is made of. */
+.brand .oak { color: var(--green); }
+
+/* ---------- navigation ---------- */
+
+.nav { overflow-y: auto; flex: 1; padding: 6px 8px; min-height: 0; }
+
+/* The strip and the arrows that say it goes further. On a desktop the sidebar
+   is a column, so the wrapper is only a column of one. `min-width: 0` is what
+   keeps the strip scrolling inside its column instead of widening the page. */
+.nav-wrap { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+.nav-edge { display: none; }
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  margin: 2px 0;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--fg2);
+  cursor: pointer;
+  text-align: left;
+}
+.nav-item:hover { background: var(--bg1); color: var(--fg0); }
+.nav-item.active { background: var(--bg2); color: var(--fg0); }
+.nav-item .icon { width: 18px; text-align: center; color: var(--fg3); }
+.nav-item.active .icon { color: var(--orange); }
+
+.nav-section {
+  margin: 12px 10px 4px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gray);
+}
+
+/* ---------- buttons ---------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border: 1px solid var(--bg3);
+  border-radius: var(--radius-small);
+  background: var(--bg1);
+  color: var(--fg1);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.btn:hover { background: var(--bg2); border-color: var(--bg4); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: 0.5; cursor: default; transform: none; }
+/* A control the room's policy reserves for the host: it stays clickable so it
+   can explain itself, so it is not really disabled - only dimmed. */
+.btn[aria-disabled="true"] { opacity: 0.5; }
+
+.btn.suggested {
+  background: var(--blue-dim);
+  border-color: var(--blue-dim);
+  color: var(--fg0);
+  font-weight: 600;
+}
+.btn.suggested:hover { background: var(--blue); border-color: var(--blue); color: var(--bg0-h); }
+
+.btn.destructive {
+  background: transparent;
+  border-color: var(--red-dim);
+  color: var(--red);
+}
+.btn.destructive:hover { background: var(--red-dim); color: var(--fg0); }
+
+.btn.flat { background: transparent; border-color: transparent; }
+.btn.flat:hover { background: var(--bg1); }
+
+.btn.round {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 17px;
+  /* A round button is round: no flex or grid stretch may turn it into an oval. */
+  flex: none;
+  aspect-ratio: 1;
+}
+
+.btn.circle-big {
+  width: 52px;
+  height: 52px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 22px;
+}
+
+.btn.small { padding: 4px 9px; font-size: 13px; }
+
+/* ---------- cards, rows, lists ---------- */
+
+.card {
+  background: var(--bg0-s);
+  border: 1px solid var(--bg1);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.page { padding: 18px 22px; display: flex; flex-direction: column; gap: 18px; }
+
+.list {
+  background: var(--bg0-s);
+  border: 1px solid var(--bg1);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--bg1);
+}
+.row:last-child { border-bottom: 0; }
+.row:hover { background: var(--bg1); }
+.row.clickable { cursor: pointer; }
+
+.row .grow { flex: 1; min-width: 0; }
+.row .title { color: var(--fg1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .subtitle {
+  color: var(--fg4);
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.row .time { color: var(--fg4); font-variant-numeric: tabular-nums; font-size: 13px; }
+/* A subtitle that is a sentence rather than a list line: it wraps, so it
+   cannot set a phone's page wider than the screen. */
+.row .subtitle.wrap { white-space: normal; }
+
+.art {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-small);
+  object-fit: cover;
+  background: var(--bg2);
+  flex: none;
+}
+.art.small { width: 32px; height: 32px; }
+/* Somebody in a room is a person, not a list item: their picture is worth
+   seeing, so the Listening panel gives it more room than a row's own tile. */
+.art.member { width: 56px; height: 56px; }
+.art.big { width: 168px; height: 168px; border-radius: var(--radius); }
+.art.round { border-radius: 50%; }
+
+/* ---------- forms ---------- */
+
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label { color: var(--fg3); font-size: 13px; }
+
+.input, select.input, textarea.input {
+  width: 100%;
+  padding: 9px 11px;
+  background: var(--bg1);
+  border: 1px solid var(--bg3);
+  border-radius: var(--radius-small);
+  color: var(--fg0);
+  outline: none;
+}
+.input:focus { border-color: var(--blue); }
+.input::placeholder { color: var(--gray); }
+
+.form-row { display: flex; gap: 12px; align-items: flex-end; }
+.form-row .field { flex: 1; }
+
+/* ---------- dialogs ---------- */
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(16, 16, 16, 0.62);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.dialog {
+  background: var(--bg0-s);
+  border: 1px solid var(--bg3);
+  border-radius: var(--radius);
+  width: min(560px, calc(100vw - 48px));
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.dialog h2 { margin: 0; font-size: 18px; color: var(--fg0); }
+.dialog p { margin: 0; color: var(--fg3); line-height: 1.5; }
+.dialog .actions { display: flex; gap: 10px; justify-content: flex-end; }
+
+/* ---------- the platform filter (search, and the source dialog) ---------- */
+
+.search-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 2px;
+}
+
+.filter-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--bg3);
+  border-radius: 999px;
+  background: var(--bg1);
+  color: var(--fg2);
+  font-size: 13px;
+  cursor: pointer;
+}
+.filter-button:hover { color: var(--fg0); border-color: var(--fg4); }
+
+.platform-panel {
+  padding: 8px;
+  /* Fixed rather than absolute: this panel opens inside a dialog, and a dialog
+     is centred on the viewport, so the button's rect is a viewport rect. */
+  position: fixed;
+}
+
+.platform-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: var(--radius-small);
+  color: var(--fg1);
+  font-size: 14px;
+  cursor: pointer;
+}
+.platform-row:hover { background: var(--bg2); }
+.platform-row input { accent-color: var(--accent, var(--fg1)); cursor: pointer; }
+
+/* ---------- "find a source" ---------- */
+
+.find-source { display: flex; flex-direction: column; gap: 10px; }
+.find-source-results {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+.find-source-row { align-items: baseline; gap: 10px; }
+.find-source-provider {
+  flex: none;
+  min-width: 64px;
+  color: var(--fg4);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ---------- popovers (menus, source picker) ---------- */
+
+.popover {
+  position: absolute;
+  /* Above a dialog's backdrop (50): the platform filter opens its panel from
+     inside a dialog, and a panel behind the backdrop would swallow the click
+     and close the dialog instead. */
+  z-index: 60;
+  min-width: 220px;
+  background: var(--bg1);
+  border: 1px solid var(--bg3);
+  border-radius: var(--radius);
+  padding: 6px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--fg1);
+  cursor: pointer;
+  text-align: left;
+}
+.menu-item:hover { background: var(--bg2); }
+.menu-separator { height: 1px; margin: 6px 4px; background: var(--bg3); }
+
+/* A row that carries a second, smaller action beside its label. */
+.menu-row { display: flex; align-items: center; gap: 2px; }
+.menu-row .menu-item { flex: 1; min-width: 0; }
+.menu-item.trailing {
+  flex: none;
+  width: 30px;
+  padding: 8px 0;
+  justify-content: center;
+  color: var(--fg4);
+}
+.menu-item.trailing:hover { background: var(--bg2); color: var(--red); }
+
+
+
+/* ---------- player bar ---------- */
+
+/* The round buttons keep their bubble: the circle is always there, a shade
+   lighter under the mouse, lighter again while it is held down. The resting
+   shade has to be a visible step from the bar behind it, or the circle is only
+   there when the mouse is. */
+.player .btn.flat.round {
+  background: var(--bg2);
+  border-color: var(--bg2);
+}
+.player .btn.flat.round:hover { background: var(--bg3); border-color: var(--bg3); }
+.player .btn.flat.round:active { background: var(--bg4); border-color: var(--bg4); }
+.player .btn.flat.round:disabled { background: var(--bg0-s); border-color: var(--bg1); opacity: 0.55; }
+.player .btn.round:hover { background: var(--bg3); }
+.player .btn.round:active { background: var(--bg4); }
+.player .btn.round:disabled { background: var(--bg0-s); opacity: 0.55; }
+
+/* The transport reads at a glance: what is showing is what it does. The button
+   carries the state its icon is in (player.js sets data-state), so the play
+   side is green and the pause side is orange. */
+.player .btn.round[data-state="paused"] { color: var(--green); border-color: var(--green-dim); }
+.player .btn.round[data-state="playing"] { color: var(--orange); border-color: var(--orange-dim); }
+.player .btn.round:hover { border-color: currentColor; }
+
+/* The volume: the part up to the dot is green whatever the transport is doing -
+   it says how loud, not whether it is playing. Firefox fills with
+   ::-moz-range-progress; everywhere else the fill is a gradient driven by
+   --fill, which player.js keeps up to date. */
+.player input[type="range"].volume::-moz-range-track { background: var(--bg3); height: 5px; border-radius: 3px; }
+.player input[type="range"].volume::-moz-range-progress { background: var(--green); height: 5px; border-radius: 3px; }
+.player input[type="range"].volume::-moz-range-thumb { background: var(--fg1); border: 0; width: 14px; height: 14px; }
+.player input[type="range"].volume::-webkit-slider-thumb { background: var(--fg1); }
+.player input[type="range"].volume::-webkit-slider-runnable-track {
+  background: linear-gradient(
+    to right,
+    var(--green) 0 var(--fill),
+    var(--bg3) var(--fill) 100%
+  );
+}
+
+.player {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 16px;
+  overflow: hidden;
+  position: relative;
+  z-index: 40;
+}
+
+/* The bar's own row, so its content can never spill over the page above it. */
+.player-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-width: 0;
+}
+.player-bar .controls { flex: none; }
+
+/* The track's text is the part that gives way when the bar is tight: it shrinks
+   rather than squeezing the seek and the volume past their floor, and what does
+   not fit fades into the bar instead of ending in an ellipsis. A mask, so it
+   works over whatever is behind it; the pill keeps its own edge, so it is not
+   masked with the artist it sits beside. Its width follows the text, so a short
+   title does not leave the transport stranded behind a gap of empty bar. */
+.player .track-text { flex: 0 1 auto; max-width: 240px; min-width: 0; }
+.player .track-text .title,
+.player .track-text .subtitle {
+  white-space: nowrap;
+  overflow: hidden;
+  mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+}
+.player .track-text .title { color: var(--fg0); }
+.player .track-text .subtitle { color: var(--fg4); font-size: 12.5px; }
+
+.player .controls { display: flex; align-items: center; gap: 8px; }
+/* The sound group dissolves into the bar itself, so the seek and the volume can
+   hold their seven-to-three share of the row and the mute stands outside it. */
+.player .controls:has(.volume) { display: contents; }
+.player .controls:has(.volume) > .btn { flex: none; }
+/* The room chip carries the room's name, which can be any length at all: capped,
+   so a long one cannot starve the seek and the volume of the row they share. */
+.player-bar > .btn[title="Open the room"],
+.player-bar > .btn[title^="Listening along"] {
+  max-width: 140px;
+  overflow: hidden;
+}
+/* The seek and the volume split the free row seven to three, and they scale
+   with it: the seek takes whatever the rest of the bar leaves, the sound group
+   takes three tenths of the whole. The timeline is the seek's container, and it
+   holds the same floor the input does: with `min-width: 0` it shrank past the
+   input's own minimum, and the input spilled out over the volume beside it. */
+.player .timeline { flex: 7 1 0; align-self: stretch; min-width: 90px; display: flex; align-items: center; gap: 10px; }
+/* The seek and the volume hold a floor, but a low one: just above the desktop
+   layout's own breakpoint the bar is at its tightest, and a 140px floor there
+   made both bars wider than the room they had, so the seek rode over the
+   transport. They shrink first; the buttons beside them never do. */
+.player .timeline input[type="range"] { flex: 1 1 auto; width: auto; min-width: 90px; }
+/* The played part of the seek wears the transport's colour: orange while it is
+   playing, green while it is paused. player.js sets data-state on the bar,
+   beside the play button's own. The volume is separate: it says how loud, so it
+   stays green. */
+.player,
+.player-bar { --play-color: var(--green); }
+.player[data-state="playing"],
+.player-bar[data-state="playing"] { --play-color: var(--orange); }
+.player[data-state="paused"],
+.player-bar[data-state="paused"] { --play-color: var(--green); }
+.player .timeline input[type="range"]::-moz-range-progress { background: var(--play-color); height: 5px; border-radius: 3px; }
+.player .timeline input[type="range"]::-moz-range-track { background: var(--bg3); height: 5px; border-radius: 3px; }
+/* Where ::-moz-range-progress does not exist, the played part is a gradient on
+   the element, driven by --fill the way the volume's is: the Firefox pseudo
+   element paints over it, so the two never disagree. */
+.player .timeline input[type="range"]::-webkit-slider-runnable-track {
+  background: linear-gradient(
+    to right,
+    var(--play-color) 0 var(--fill, 0%),
+    var(--bg3) var(--fill, 0%) 100%
+  );
+}
+.player .timeline input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--fg1);
+  border: 0;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+}
+
+.source-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--bg3);
+  border-radius: 999px;
+  background: var(--bg1);
+  color: var(--fg3);
+  font-size: 11.5px;
+  cursor: pointer;
+  max-width: 240px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.source-pill:hover { border-color: var(--blue); color: var(--fg1); }
+
+/* ---------- sliders ---------- */
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 5px;
+  outline: none;
+  /* The bar itself is drawn by the track, not by this element's background: a
+     background cannot be rounded at its ends, and a track can. The element is
+     left transparent and tall - that is the hit area. */
+  background: transparent;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--bg3);
+}
+input[type="range"]::-moz-range-track {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--bg3);
+}
+/* A thin bar in a control as tall as the panel it sits in, so a click anywhere
+   above or below the line - right up to the top and bottom of the bar - still
+   grabs the slider. */
+input[type="range"],
+.player .timeline input[type="range"],
+.player input[type="range"].volume {
+  height: auto;
+  align-self: stretch;
+  /* The browser gives a slider a 2px margin of its own, which shifts it off the
+     column it was placed in and into its neighbour. */
+  margin: 0;
+  /* The thumb rides the track's ends; padding keeps it inside the control, so
+     two sliders side by side cannot overlap however narrow they get. */
+  padding: 0 7px;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  /* Centred on the track, not on the element: the element is as tall as the
+     panel it fills, and the track is painted down the middle of that. */
+  margin-top: -4.5px;
+  border-radius: 50%;
+  background: var(--fg1);
+  cursor: pointer;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--fg1);
+  cursor: pointer;
+}
+/* The volume fills what the sound group leaves once the mute has its share; in
+   the phone's grid the group is a `display: contents` and the mobile rule sizes
+   it against its own column instead. */
+input[type="range"].volume { flex: 3 1 0; width: auto; min-width: 90px; }
+
+/* ---------- badges, banners, status ---------- */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  /* A count of things waiting: red, because it is the one colour that reads as
+     "look at me" at this size. */
+  background: var(--red);
+  color: var(--bg0);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* A count sitting in a tab, so the tab says how much is behind it. */
+.tab .badge { margin-left: 6px; }
+
+/* The same count on a round button - the bell - sits on its corner instead of
+   beside it: the button is a fixed circle, so a chip next to the icon pushes the
+   icon out of it and the badge hangs over the edge. */
+.topbar .btn { position: relative; }
+.topbar .btn .badge {
+  position: absolute;
+  top: -4px;
+  right: -5px;
+  margin: 0;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  font-size: 10px;
+  box-shadow: 0 0 0 2px var(--bg0);
+}
+
+/* Something is waiting to be read: the bell says so in green, and only then. */
+.topbar .btn.has-unread { color: var(--green); }
+
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 22px 0;
+  padding: 10px 14px;
+  border: 1px solid var(--blue-dim);
+  border-radius: var(--radius-small);
+  background: color-mix(in srgb, var(--blue-dim) 18%, transparent);
+  color: var(--fg0);
+}
+.banner.error { border-color: var(--red-dim); background: color-mix(in srgb, var(--red-dim) 18%, transparent); }
+.banner .grow { flex: 1; }
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--gray);
+}
+.status-dot.online { background: var(--green); }
+.status-dot.offline { background: var(--bg4); }
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 56px 24px;
+  color: var(--fg4);
+  text-align: center;
+}
+.empty .icon { font-size: 38px; color: var(--bg4); }
+.empty .title { color: var(--fg2); font-size: 17px; }
+
+.progress {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--bg2);
+  overflow: hidden;
+}
+.progress .bar { height: 100%; background: var(--green-dim); width: 0; transition: width 180ms ease; }
+
+.tabs { display: flex; gap: 6px; }
+.tab {
+  padding: 7px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg3);
+  cursor: pointer;
+}
+.tab:hover { background: var(--bg1); color: var(--fg1); }
+.tab.active { background: var(--bg2); color: var(--fg0); }
+
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.section-title { color: var(--fg3); font-size: 13px; text-transform: uppercase; letter-spacing: 0.07em; }
+
+.tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--bg2);
+  color: var(--fg3);
+  font-size: 11.5px;
+}
+.tag.green { background: color-mix(in srgb, var(--green-dim) 30%, transparent); color: var(--green); }
+.tag.orange { background: color-mix(in srgb, var(--orange-dim) 30%, transparent); color: var(--orange); }
+
+.login-corner { position: relative; }
+.login-corner .btn { border-color: var(--orange-dim); color: var(--orange); }
+.login-corner .btn:hover { background: var(--orange-dim); color: var(--bg0-h); }
+
+.drag-handle { cursor: grab; color: var(--gray); user-select: none; }
+
+/* The queue's button floats above the bottom panels: the bar keeps the song's
+   actions, and the queue is one tap away wherever you are. It stays under the
+   popovers and the drawer - a menu opening over it must not be covered by it. */
+.queue-fab {
+  position: fixed;
+  right: 18px;
+  bottom: var(--queue-fab-bottom, 100px); /* clears the player bar */
+  z-index: 25; /* the drawer is 30, the popovers 40 */
+  width: 56px;
+  height: 56px;
+  background: var(--bg2);
+  border-color: var(--bg3);
+  color: var(--fg1);
+  box-shadow: 0 8px 20px rgb(0 0 0 / 35%);
+  transition: right 180ms ease;
+}
+.queue-fab:hover { background: var(--bg3); border-color: var(--bg4); }
+.queue-fab:active { background: var(--bg4); border-color: var(--bg4); }
+/* Open, it steps aside to sit just left of the drawer it opened. */
+.queue-fab.open { right: calc(min(420px, 92vw) + 18px); }
+
+/* The room's bubble floats beside the queue button, not in the bar: in the row
+   it sat between the mute and the star, which is nowhere anyone looks for the
+   room they are in. It is a rounded rectangle rather than a disc, so the room's
+   name has a line to sit on, and its offset follows the queue button's - the
+   bar and the tab strip are measured in placeQueueFab, and a fixed bottom here
+   landed the bubble on the bar at most phone widths. It hides while the drawer
+   is open, which would otherwise cover it - the bubble is inside the bar's
+   stacking context, so it cannot step aside behind the drawer the way the queue
+   button does. */
+.player-bar > .btn[title="Open the room"] {
+  position: fixed;
+  /* A gap to the left of the queue button, at its height: both sit on the
+     offset placeQueueFab measures above the bottom panels. */
+  right: calc(18px + 38px + 10px);
+  bottom: var(--queue-fab-bottom, 100px);
+  width: auto;
+  height: 38px;
+  max-width: 180px;
+  padding: 0 14px;
+  border-radius: 12px;
+  background: var(--bg2);
+  border-color: var(--bg3);
+  color: var(--fg1);
+  box-shadow: 0 8px 20px rgb(0 0 0 / 35%);
+}
+/* The name is the bubble's only variable part: it truncates rather than
+   stretching the bubble across the bar. */
+.player-bar > .btn[title="Open the room"] > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body:has(.drawer:not([hidden])) .player-bar > .btn[title="Open the room"] { display: none; }
+
+/* A desktop makes room for the queue rather than hiding under it, but only the
+   page gives up the space: the bar stays the full width of the window and is
+   painted over the drawer (it is z-index 40 against the drawer's 30, and the
+   drawer's own list keeps 92px clear at the bottom for it), exactly as it does
+   on a phone. */
+.app.queue-open .main { padding-right: min(420px, 92vw); }
+.main { transition: padding-right 180ms ease; }
+.row.dragging { opacity: 0.5; }
+.row.drag-over { border-top: 2px solid var(--blue); }
+/* A row that can be dragged: its text is not selectable, or a drag leaves a
+   blue smear behind it. The gesture belongs to its grip, not to the row - a row
+   that takes the pointer cannot be scrolled on a phone, which is how a queue
+   stopped scrolling at all once its rows were draggable. */
+.row.sortable {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* The grip that picks a queue row up: the one part of the row that drags. Its
+   hitbox is deliberately generous, because a finger is not a mouse, and it
+   takes the gesture from the scroller so a drag does not scroll the list. It is
+   written `.btn.drag-handle` so it outranks `.btn.small`'s own padding. */
+.btn.drag-handle {
+  flex: none;
+  align-self: stretch;
+  min-width: 44px;
+  padding: 0 10px;
+  color: var(--fg4);
+  cursor: grab;
+  touch-action: none;
+}
+.btn.drag-handle:hover { color: var(--fg2); }
+.btn.drag-handle:active { cursor: grabbing; }
+
+.toast {
+  position: fixed;
+  bottom: calc(var(--player-height) + 18px);
+  /* Centred with both edges pinned rather than with `left: 50%`: for a fixed
+     element that would make the available width half the viewport, which
+     squeezed a long notice into a narrow column of five lines. */
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  width: fit-content;
+  /* A square, not a pill: a long notice wraps to several lines, and a pill's
+     corners cut into the first and last of them. The outline is faint enough
+     to read as an edge rather than a box. */
+  max-width: min(440px, calc(100vw - 32px));
+  background: var(--bg2);
+  border: 1px solid color-mix(in srgb, var(--fg4) 35%, transparent);
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: var(--fg0);
+  z-index: 60;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+/* ---------- the queue drawer ---------- */
+
+/* The queue, slid out beside the page rather than replacing it: the bar's queue
+   button asks for it, Escape or its own close button puts it away. */
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(420px, 92vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg0);
+  border-left: 1px solid var(--bg2);
+  box-shadow: -12px 0 32px rgba(0, 0, 0, 0.35);
+  z-index: 30;
+}
+.drawer[hidden] { display: none; }
+
+/* The two room queues, yours and the room's own order, side by side. The Queue
+   page and the Room page show both; the playbar's drawer is a column and holds
+   one at a time, so it never gets this - and both the floating queue button and
+   the page's inset are measured against the drawer's own width. */
+.queue-panels { display: flex; align-items: flex-start; gap: 12px; }
+.queue-panel { flex: 1 1 0; min-width: 0; }
+.queue-panel[hidden] { display: none; }
+/* Only a phone hides your own songs from the Room page's queue, so only a phone
+   shows the line that says where they are. */
+.room-queue-hint { display: none; color: var(--fg4); font-size: 12.5px; margin: 4px 0 6px; }
+/* The heading sat on the panel's top edge and its left one: the rows below are
+   inset, so give it the same air. */
+.queue-panel { padding-top: 10px; }
+.queue-panel > .title,
+.queue-panel > .subtitle { padding-left: 12px; }
+/* A room queue row says who queued it: your own songs in the player's green,
+   everyone else's in the orange the room marks the playing track with. Three
+   classes, because `.row .title` sets the colour too. */
+.row .title.queued-mine { color: var(--green); }
+.row .title.queued-other { color: var(--orange); }
+/* A name that is also a way in: the artist line under a title opens their page,
+   and it has to keep looking like the line it replaced. */
+.subtitle > .link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+.subtitle > .link:hover { color: var(--fg2); }
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 10px 10px 14px;
+  border-bottom: 1px solid var(--bg1);
+}
+.drawer-head .drawer-title {
+  flex: 1;
+  color: var(--fg2);
+  font-size: 13px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+/* The player stays above the drawer, so the bar is always usable; the space it
+   takes is what the drawer's list keeps clear at the bottom. */
+.drawer-body { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 92px; }
+
+/* ---------- phone: tall and thin ---------- */
+
+/* The same app, laid out for a hand: the brand, the server and the sign-in
+   share one line across the top, the tabs become a bar of their own above the
+   player that scrolls sideways, and everything is sized for a thumb. The rule
+   keys on the shape of the window, so a narrow desktop window gets it too. */
+@media (max-width: 700px), (max-aspect-ratio: 2/3) {
+  :root {
+    font-size: 17px;
+    --player-height: 112px;
+  }
+
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr auto auto;
+  }
+
+  /* The sidebar stops being a column: its two groups take rows of their own. */
+  .sidebar { display: contents; }
+
+  .sidebar-top {
+    grid-row: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    /* Clear of the notch and the status bar on a phone. */
+    padding: calc(8px + env(safe-area-inset-top, 0px)) calc(10px + env(safe-area-inset-right, 0px)) 6px
+      calc(10px + env(safe-area-inset-left, 0px));
+    border-bottom: 1px solid var(--bg1);
+    background: var(--bg0);
+  }
+  .brand { flex: none; padding: 0; font-size: 17px; }
+  .corner { flex: 1; padding: 0; min-width: 0; max-width: none; display: flex; align-items: center; gap: 8px; }
+  .corner-row { gap: 6px; flex: 0 1 auto; min-width: 0; }
+  .corner-row .btn { padding: 7px 10px; font-size: 0.94rem; }
+  /* Room is short across a phone, so the account sits beside the server rather
+     than under it: the icon and the name, no handle. */
+  .corner .account-card { margin: 0; width: auto; flex: 0 0 auto; padding: 4px 7px; gap: 6px; }
+  .corner .account-card .handle { display: none; }
+  .corner .account-card .name { font-size: 0.9rem; max-width: 24vw; }
+
+  .main { grid-row: 2; }
+  .content { padding-bottom: 12px; }
+  .page { padding: 14px; gap: 14px; }
+  /* Two buttons side by side do not fit a phone: they stack, which is also what
+     keeps the row from setting the page wider than the screen. */
+  .form-row { flex-wrap: wrap; }
+  .topbar { padding: 10px 14px; }
+  .topbar h1 { font-size: 1.05rem; }
+
+  /* Tabs: a bar of their own, above the player, scrolling left to right. The
+     bar of them is wider than the screen, so it keeps a scrollbar to say so,
+     and an arrow at whichever edge still has somewhere to go. */
+  .nav-wrap {
+    grid-row: 3;
+    position: relative;
+    display: block;
+    flex: none;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .nav {
+    grid-row: auto;
+    display: flex;
+    gap: 6px;
+    padding: 6px 10px 10px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-top: 1px solid var(--bg1);
+    background: var(--bg0);
+    scrollbar-width: none;              /* the drawn one below replaces it */
+    -webkit-overflow-scrolling: touch;
+  }
+  .nav::-webkit-scrollbar { display: none; }
+
+  /* The strip's scrollbar, drawn: visible so the bar says it goes further,
+     never grabbable and never lit up under the mouse, because the strip itself
+     is what you drag. */
+  .nav-indicator {
+    position: absolute;
+    bottom: 5px;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--bg3);
+    pointer-events: none;
+  }
+  .nav-wrap:not([data-scrollable="true"]) .nav-indicator { display: none; }
+
+  /* A vignette with a small arrow in it, on the side that has more tabs. */
+  .nav-wrap[data-scrollable="true"][data-more-left="true"] .nav-edge.left,
+  .nav-wrap[data-scrollable="true"][data-more-right="true"] .nav-edge.right {
+    display: flex;
+  }
+  .nav-edge {
+    position: absolute;
+    top: 0;
+    bottom: 8px;
+    width: 42px;
+    align-items: center;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    color: var(--fg2);
+    background: none;
+  }
+  .nav-edge.left {
+    left: 0;
+    justify-content: flex-start;
+    padding-left: 3px;
+    background: linear-gradient(to right, var(--bg0) 42%, transparent);
+  }
+  .nav-edge.right {
+    right: 0;
+    justify-content: flex-end;
+    padding-right: 3px;
+    background: linear-gradient(to left, var(--bg0) 42%, transparent);
+  }
+  .nav-edge:hover { color: var(--fg0); }
+  .nav-item {
+    width: auto;
+    flex: none;
+    margin: 0;
+    padding: 9px 13px;
+    font-size: 1rem;
+    white-space: nowrap;
+  }
+  .nav-item .icon svg { width: 17px; height: 17px; }
+
+  /* The player becomes two bars: the seek and volume above with the transport
+     at the right edge, where a right thumb already is, and the song itself
+     below. The tab strip already sits above both. */
+  /* A phone's own furniture: the home indicator would sit over the bar without
+     the safe-area inset, which needs viewport-fit=cover in the page's meta. */
+  .player { grid-row: 4; padding: 0 12px env(safe-area-inset-bottom, 0px); border-top: 0; }
+  .player-bar {
+    display: grid;
+    /* The seek and the volume split what is left of the row seven to three, and
+       they hold a floor: past it the row does not squeeze them further, the
+       track's text gives way instead (it truncates). The shuffle travels with
+       the star on the row below rather than leading the row: a column of its
+       own in front of the seek left a band of empty bar beside the playbar's
+       edge, and a phone has no room to waste. */
+    grid-template-columns: minmax(90px, 4fr) minmax(90px, 3fr) minmax(90px, 3fr) auto auto auto auto auto;
+    grid-template-areas:
+      "seek   seek   volume prev   play next   misc room"
+      "art    text   text   shuffle star queue misc room";
+    align-items: center;
+    /* Tight columns: the transport's buttons are circles with the glyph well
+       inside them, so the gap between them reads wider than it is, and the
+       space left over is what the seek and the volume are for. */
+    gap: 8px 4px;
+    padding: 8px 0 10px;
+  }
+  /* The transport travels as separate buttons; the volume is the slider beside
+     the seek, and its mute button stands down. */
+  .player .controls:not(:has(.volume)) { display: contents; }
+  /* The prev sits at the end of its column: the room chip shares that column on
+     the row below, so a wide chip would otherwise leave the button stranded at
+     the far side of it. */
+  .player .controls:not(:has(.volume)) > *:nth-child(1) { grid-area: prev; justify-self: end; }
+  .player .controls:not(:has(.volume)) > *:nth-child(2) { grid-area: play; }
+  .player .controls:not(:has(.volume)) > *:nth-child(3) { grid-area: next; }
+  .player .controls:has(.volume) { display: contents; }
+  /* A phone changes its own volume, so the mute button gives way: the slider
+     sits where it was, beside the seek. */
+  .player .controls:has(.volume) > .btn { display: none; }
+  .player input[type="range"].volume { grid-area: volume; display: block; min-width: 90px; width: 100%; }
+  .player .timeline { grid-area: seek; min-width: 0; }
+  .player .art { grid-area: art; width: 52px; height: 52px; }
+  .player .track-text { grid-area: text; width: auto; min-width: 0; }
+  .player .track-text .title { font-size: 1rem; }
+  .player .track-text .subtitle {
+    font-size: 0.85rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .player > .player-bar > .btn[title="Favourite"] { grid-area: star; }
+  .player > .player-bar > .btn[title="Song actions"] { grid-area: queue; }
+  .player > .player-bar > .btn[title="Open the room"] { grid-area: room; }
+  .player > .player-bar > .btn[title^="Listening along"] { grid-area: misc; }
+  .player > .player-bar > .btn[title^="Shuffle"] { grid-area: shuffle; }
+  /* A phone row holds less than a desktop one: the same floor as its columns. */
+  .player .timeline input[type="range"],
+  .player input[type="range"] { min-width: 90px; width: 100%; }
+
+  /* A phone cannot hold two queue columns. The Room page's queue shows the
+     room's own order alone: the Queue page keeps both because its tabs can hide
+     one, and this card has no tabs. */
+  .room-queue .queue-panel[data-panel="mine"] { display: none; }
+  .room-queue .room-queue-hint { display: block; }
+
+  /* A phone keeps the queue button where it is when the drawer opens: stepping
+     it aside means stepping it off a screen this narrow. It rides above the
+     drawer instead, and the room's bubble stays beside it. */
+  .queue-fab.open { right: 18px; z-index: 35; }
+  body:has(.drawer:not([hidden])) .player-bar > .btn[title="Open the room"] { display: inline-flex; }
+}
+
+/* The transport is the last thing that may leave the screen, so everything else
+   gives way before it does. At this width the shuffle is the first to go: it
+   shares the row with the star, and the row is what the bars and the transport
+   are competing for. */
+@media (max-width: 560px) {
+  .player > .player-bar > .btn[title^="Shuffle"] { display: none; }
+  .player-bar {
+    grid-template-columns: minmax(56px, 4fr) minmax(40px, 3fr) minmax(40px, 3fr) auto auto auto auto auto;
+    /* The bars sit closer together than the buttons do: what lies between them
+       is the thumb's overhang, which nothing else needs. */
+    gap: 8px 0;
+  }
+  /* The volume has a floor of its own, and it is the one that overflowed its
+     column into the prev button: a bar shrinks to fit before it overlaps. */
+  .player input[type="range"].volume { min-width: 56px; }
+  .player .timeline input[type="range"],
+  .player input[type="range"] { min-width: 56px; padding: 0 4px; }
+}
+
+/* A narrow phone cannot hold the shuffle beside the two bars at their floor.
+   It steps out, and the grid drops its column with it - a hidden item still
+   leaves the column it was named in. The Queue view has its own Shuffle.
+
+   The bars give way first and the buttons tighten, because the transport is the
+   last thing that may leave the screen. */
+@media (max-width: 390px) {
+  .player > .player-bar > .btn[title^="Shuffle"] { display: none; }
+  .player-bar {
+    grid-template-columns: minmax(40px, 7fr) minmax(28px, 3fr) auto auto auto auto auto;
+    grid-template-areas:
+      "seek volume prev play next misc room"
+      "art  text   text star queue misc room";
+  }
+  .player .timeline input[type="range"],
+  .player input[type="range"] { min-width: 40px; }
+  .player input[type="range"].volume { min-width: 40px; }
+  .player .art { width: 40px; height: 40px; }
+  .player .source-pill { max-width: 100%; font-size: 0.8rem; }
+  .player .btn.flat.round { width: 40px; height: 40px; }
+  .player .btn.round { width: 44px; height: 44px; font-size: 1.15rem; }
+  /* Above the tab strip, which is the topmost panel down there. */
+  .queue-fab { right: 14px; bottom: var(--queue-fab-bottom, 196px); }
+  .player-bar > .btn[title="Open the room"] { right: calc(14px + 38px + 10px); }
+  /* A phone keeps the overlay: there is no room to give, and the drawer covers
+     the page. The drawer also covers the corner the button lives in, so the way
+     back has to ride above it - a desktop has already moved it clear instead. */
+  .app.queue-open { padding-right: 0; }
+  .queue-fab.open { right: 14px; z-index: 35; }
+
+  /* Lists: room for a thumb, and the tail of a row is what gets dropped. */
+  .list .row { padding: 11px 12px; gap: 11px; }
+  .input, select.input, textarea.input { padding: 11px 13px; }
+  .btn { padding: 9px 15px; }
+  .dialog { width: calc(100vw - 20px); padding: 18px; }
+  .popover { max-width: calc(100vw - 20px); }
+  .menu-item { padding: 11px 12px; }
+  .banner { margin: 10px 12px 0; }
+  .toast { bottom: calc(var(--player-height) + 12px); }
+}
+
+/* Below this even the extra controls cannot fit beside the transport: the star
+   and the song menu step out, and the queue's own drawer keeps the menu. */
+@media (max-width: 330px) {
+  .player > .player-bar > .btn[title="Favourite"],
+  .player > .player-bar > .btn[title="Song actions"] { display: none; }
+}
