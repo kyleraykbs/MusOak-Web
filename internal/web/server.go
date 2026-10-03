@@ -204,7 +204,7 @@ func (s *Server) handleSite(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	if path == "" || strings.HasSuffix(path, "/") || path == "index.html" {
-		s.servePage(w)
+		s.servePage(w, r)
 		return
 	}
 	if path != "" && !strings.HasSuffix(path, "/") {
@@ -228,7 +228,7 @@ func (s *Server) handleSite(w http.ResponseWriter, r *http.Request) {
 // two copies of the whole app - two shells, two dialogs, and a boot that runs
 // twice. Everything is served `no-cache` anyway, which is what keeps the modules
 // fresh.
-func (s *Server) servePage(w http.ResponseWriter) {
+func (s *Server) servePage(w http.ResponseWriter, r *http.Request) {
 	page, err := fs.ReadFile(s.siteFS, "index.html")
 	if err != nil {
 		http.Error(w, "no page", http.StatusNotFound)
@@ -236,9 +236,60 @@ func (s *Server) servePage(w http.ResponseWriter) {
 	}
 	stamp := s.assetStamp()
 	body := strings.ReplaceAll(string(page), `href="theme.css"`, `href="theme.css?v=`+stamp+`"`)
+	// The embed's absolute URLs, from where the page was actually reached.
+	body = strings.ReplaceAll(body, "{{origin}}", requestOrigin(r))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	_, _ = io.WriteString(w, body)
+}
+
+// requestOrigin is where this page was reached, which is not where this server
+// sits: it is behind a reverse proxy that terminates TLS and forwards over
+// plain HTTP, so its own request has neither the right scheme nor the right
+// host. A crawler building a link preview needs absolute URLs, and the
+// forwarded headers are what say. A direct connection falls back to the socket.
+func requestOrigin(r *http.Request) string {
+	scheme := firstValue(r.Header.Get("X-Forwarded-Proto"))
+	if scheme == "" {
+		scheme = "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+	}
+	host := firstValue(r.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = r.Host
+	}
+	if host = safeHost(host); host == "" {
+		return ""
+	}
+	return scheme + "://" + host
+}
+
+// firstValue takes the first entry of a comma-separated forwarded header: a
+// chain of proxies appends to it, and the first entry is the browser's.
+func firstValue(value string) string {
+	if at := strings.IndexByte(value, ','); at >= 0 {
+		value = value[:at]
+	}
+	return strings.TrimSpace(value)
+}
+
+// safeHost keeps a host and an optional port and nothing else. This value lands
+// in an HTML attribute that a crawler reads, and a Host header is whatever the
+// client sent, so anything that could break out of the attribute is refused
+// outright rather than escaped - a page with no embed beats a page that points
+// somewhere else.
+func safeHost(host string) string {
+	for _, r := range host {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '.', r == '-', r == ':', r == '[', r == ']':
+		default:
+			return ""
+		}
+	}
+	return host
 }
 
 // assetStamp is the newest modification time in the frontend, so changing any

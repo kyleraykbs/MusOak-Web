@@ -5,6 +5,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark" />
     <title>MusOak</title>
+    <meta
+      name="description"
+      content="Self-hosted music: search across providers, stream your own library, and listen together."
+    />
+    <!-- The link preview an app builds when somebody sends this page. Crawlers
+         want absolute URLs, and this server cannot know its own public address -
+         it sits behind a reverse proxy - so {{origin}} is filled in from the
+         request that serves the page. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="MusOak" />
+    <meta property="og:title" content="MusOak" />
+    <meta
+      property="og:description"
+      content="Self-hosted music: search across providers, stream your own library, and listen together."
+    />
+    <meta property="og:url" content="{{origin}}/" />
+    <meta property="og:image" content="{{origin}}/icon.png" />
+    <meta property="og:image:width" content="1080" />
+    <meta property="og:image:height" content="1080" />
+    <meta property="og:image:alt" content="MusOak" />
+    <meta name="twitter:card" content="summary_large_image" />
     <link rel="stylesheet" href="theme.css" />
     <link rel="icon" type="image/png" href="icon.png" />
     <link rel="apple-touch-icon" href="icon.png" />

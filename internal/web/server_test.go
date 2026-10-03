@@ -448,3 +448,41 @@ func TestProxyTunnelsWebSocketUpgrades(t *testing.T) {
 		t.Errorf("tunnel echoed %q", echo)
 	}
 }
+
+// The link preview an app builds for a shared page needs absolute URLs, and
+// this server only ever sees plain HTTP on loopback - so the page has to take
+// its public address from the request that served it.
+func TestPageNamesTheOriginItWasReachedOn(t *testing.T) {
+	server := newServer(t, &config.Config{Listen: ":0"})
+
+	response := do(t, server.Handler(), "GET", "/", map[string]string{
+		"X-Forwarded-Proto": "https",
+		"X-Forwarded-Host":  "music.example",
+	}, nil)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d", response.Code)
+	}
+	body := response.Body.String()
+	if strings.Contains(body, "{{origin}}") {
+		t.Errorf("the page still carries the placeholder:\n%s", body)
+	}
+	if !strings.Contains(body, `content="https://music.example/icon.png"`) {
+		t.Errorf("the embed image is not absolute, so no app will show it:\n%s", body)
+	}
+}
+
+// A Host header is whatever the client sent, and this value lands in an
+// attribute a crawler reads: a page pointing at the attacker's image is worse
+// than a page with no preview at all.
+func TestPageRefusesAHostThatCouldBreakOutOfTheAttribute(t *testing.T) {
+	server := newServer(t, &config.Config{Listen: ":0"})
+
+	response := do(t, server.Handler(), "GET", "/", map[string]string{
+		"X-Forwarded-Host": `evil.example"><script>alert(1)</script>`,
+	}, nil)
+
+	if body := response.Body.String(); strings.Contains(body, "evil.example") || strings.Contains(body, "<script>alert") {
+		t.Errorf("a hostile host reached the page:\n%s", body)
+	}
+}
