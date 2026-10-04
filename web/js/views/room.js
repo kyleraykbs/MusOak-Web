@@ -5,7 +5,7 @@
 // position it shows comes from the room's timeline, or from the player when the
 // player is the one playing the track the room is on.
 
-import { h, mount, clear, popover, toast, fmtDuration, icon, iconButton } from "../dom.js";
+import { h, mount, clear, popover, toast, fmtDuration, icon, iconButton, scheduleFrame } from "../dom.js";
 import { registerView, navigate, banner, currentClient, requireLogin } from "../app.js";
 import { state, saveLocal } from "../state.js";
 import { player } from "../player.js";
@@ -76,22 +76,9 @@ function refresh() {
   paint();
 }
 
-/** Whether a repaint is already waiting for the next frame. */
-let redrawQueued = false;
-
-function scheduleRedraw() {
-  if (!host) return;
-  // One repaint for a burst of events, and none at all while the tab is
-  // hidden. A phone that comes back to a room is handed everything it missed in
-  // one go, and a microtask per event meant a full rebuild - the queue, the
-  // members, the lot - for every one of them.
-  if (redrawQueued) return;
-  redrawQueued = true;
-  requestAnimationFrame(() => {
-    redrawQueued = false;
-    if (host && state.view === "room") paint();
-  });
-}
+const scheduleRedraw = scheduleFrame(() => {
+  if (host && state.view === "room") paint();
+});
 
 function paint() {
   if (!host) return;

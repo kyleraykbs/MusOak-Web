@@ -53,6 +53,26 @@ export function mount(parent, ...children) {
   return parent;
 }
 
+/**
+ * A function that runs `fn` at most once per frame.
+ *
+ * Repainting a view is expensive and the events that ask for it arrive in
+ * bursts - a phone returning to a tab is handed everything it missed at once.
+ * A frame coalesces those into one repaint, and none are painted while the tab
+ * is hidden, so coming back costs exactly one.
+ */
+export function scheduleFrame(fn) {
+  let queued = false;
+  return () => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => {
+      queued = false;
+      fn();
+    });
+  };
+}
+
 /** Replace everything in `parent` with what `build()` returns. */
 export function render(parent, build) {
   clear(parent);

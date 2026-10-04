@@ -4,7 +4,7 @@
 // room.js follows it. Both send their commands through rooms-state.js; neither
 // talks to the socket itself.
 
-import { h, mount, clear, dialog, toast, status, icon } from "../dom.js";
+import { h, mount, clear, dialog, toast, status, icon, scheduleFrame } from "../dom.js";
 import { registerView, navigate, banner, requireLogin, currentClient } from "../app.js";
 import { roomsTabTarget } from "../rooms-state.js";
 import { state, saveLocal } from "../state.js";
@@ -67,12 +67,9 @@ function refresh() {
   loadRooms();
 }
 
-function scheduleRedraw() {
-  if (!host || state.view !== "rooms") return;
-  queueMicrotask(() => {
-    if (host && state.view === "rooms") paint();
-  });
-}
+const scheduleRedraw = scheduleFrame(() => {
+  if (host && state.view === "rooms") paint();
+});
 
 // --- the list --------------------------------------------------------------
 
