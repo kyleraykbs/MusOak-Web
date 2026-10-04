@@ -710,9 +710,12 @@ function accountCard() {
   }
   const name = user.displayName || user.username;
   const iconUrl = user.iconUrl && client ? client.artworkUrl(user.iconUrl, iconVersion(userIdOf(user))) : "";
+  // Their own face, at a size worth looking at: the card is about one person,
+  // not a list of them, and a row's 32px tile reads as a thumbnail of somebody
+  // you barely know.
   const artwork = iconUrl
-    ? h("img", { class: "art round small", src: iconUrl, alt: "" })
-    : h("span", { class: "art round small placeholder" }, icon("users", 16));
+    ? h("img", { class: "art round account-icon", src: iconUrl, alt: "" })
+    : h("span", { class: "art round account-icon placeholder" }, icon("users", 24));
   return h(
     "button",
     { class: "account-card", title: "Your account", onclick: () => navigate("account") },

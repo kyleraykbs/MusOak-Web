@@ -415,6 +415,9 @@ button, input, select, textarea {
 /* Somebody in a room is a person, not a list item: their picture is worth
    seeing, so the Listening panel gives it more room than a row's own tile. */
 .art.member { width: 56px; height: 56px; }
+/* The account card is the same idea about one person: 1.75x the 32px tile it
+   used to borrow, which is the size a face is recognisable at. */
+.art.account-icon { width: 56px; height: 56px; }
 .art.big { width: 168px; height: 168px; border-radius: var(--radius); }
 .art.round { border-radius: 50%; }
 
