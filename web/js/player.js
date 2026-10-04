@@ -21,6 +21,9 @@ import { openSourcePicker, pickSource, sourceLabel, findSourceDialog } from "./v
 export const PREFETCH = 3;
 /** How often the bar asks the backend whether a download is done. */
 const POLL_MS = 400;
+
+/** How long a preload may take before the room's own timeout is left to it. */
+const PRELOAD_TIMEOUT_MS = 8000;
 /** How long a seek counts as still in progress after the last drag. */
 const SEEK_SETTLE_MS = 400;
 /** How long the volume waits before this machine remembers it. */
@@ -1175,11 +1178,53 @@ class Player {
         // The callback is for the room: it needs to know a member is ready for
         // a song it has not started, which is the whole point of fetching it
         // early. A file that did not arrive says nothing.
-        if (await this._warm(resolved.variantId)) onReady?.(resolved.variantId);
+        if (!(await this._warm(resolved.variantId))) return;
+        // The file being on the server is not the same as this browser being
+        // able to play it. Fetching it takes seconds, and a room that starts on
+        // the server's word alone plays those seconds to itself - so the report
+        // waits until the browser has it buffered, and then the song really does
+        // start at its beginning.
+        if (!onReady) return;
+        if (await this._preload(resolved.variantId)) onReady(resolved.variantId);
       })
       .catch(() => {
         /* a track that cannot be fetched will say so when it is reached */
       });
+  }
+
+  /**
+   * Fetch a rendition into the browser's own cache and wait until it can play.
+   *
+   * The element is thrown away afterwards; what matters is that the bytes are
+   * cached under the URL the real player will ask for, so the transition costs
+   * nothing. A file that never becomes playable reports false rather than
+   * holding the room up: the room's timeout is the backstop.
+   */
+  _preload(variantId) {
+    return new Promise((resolve) => {
+      if (!variantId) return resolve(false);
+      let settled = false;
+      const audio = new Audio();
+      const done = (ok) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        audio.removeEventListener("canplay", onCanPlay);
+        audio.removeEventListener("error", onError);
+        audio.removeAttribute("src");
+        audio.load();
+        resolve(ok);
+      };
+      const onCanPlay = () => done(true);
+      const onError = () => done(false);
+      const timer = setTimeout(() => done(false), PRELOAD_TIMEOUT_MS);
+      audio.preload = "auto";
+      audio.muted = true;
+      audio.addEventListener("canplay", onCanPlay, { once: true });
+      audio.addEventListener("error", onError, { once: true });
+      audio.src = this._client().mediaUrl(variantId);
+      audio.load();
+    });
   }
 
   /**
