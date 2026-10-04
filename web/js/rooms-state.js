@@ -501,22 +501,6 @@ export function moveItem(itemIds, movedId, beforeId = "") {
 }
 
 /**
- * Which source this member plays the room's track from: the one saved to the
- * account, else the source the server marks as the default, else the first of
- * the provider order — and failing all of those, whatever the room assigned.
- */
-export function pickRoomVariant(sources, preferredVariantId = "", assignedVariantId = "") {
-  const list_ = list(sources);
-  const preferred = str(preferredVariantId);
-  if (preferred && list_.some((source) => str(source.variantId) === preferred)) return preferred;
-  const flagged = list_.find((source) => source && source.default && str(source.variantId));
-  if (flagged) return str(flagged.variantId);
-  const first = list_.find((source) => source && str(source.variantId));
-  if (first) return str(first.variantId);
-  return str(assignedVariantId);
-}
-
-/**
  * What the room is telling this member's player to do with the current track:
  * `"stop"` (nothing is playing), `"prepare"` (fetch it, so the room can
  * start), `"play"` (it is running) or `"pause"` (hold where it is).
@@ -1086,7 +1070,7 @@ async function followRoom(running) {
       // is fetched alongside the variant: without it the bar has no artist and
       // no artwork to show, which is what a listener in a room used to see.
       [variant, running.track] = await Promise.all([
-        resolveVariant(room, trackId),
+        resolveVariant(room, trackId, player),
         loadTrack(active, trackId),
       ]);
     } finally {
@@ -1107,6 +1091,20 @@ async function followRoom(running) {
   const ours = onTrack && str(player.variantId()) === running.variantId;
   const loadingHere = onTrack && Boolean(state && state.loading);
   const broken = onTrack && Boolean(state && state.error);
+
+  // A track this member cannot fetch is not worth the room's readiness timeout:
+  // it would start late and play to nobody. Sitting this one out is what the
+  // room's reckoning is for — it stops the room waiting on this member — and
+  // coming back in is the next track's business.
+  const unfetchable = running.failedItemId === itemId || (onTrack && player.readyState() === "failed");
+  if (unfetchable && running.satOutFor !== itemId) {
+    running.satOutFor = itemId;
+    sayStatus("That track could not be fetched. The room carries on without it.");
+    setOut(true).catch(() => {});
+  } else if (!unfetchable && running.satOutFor) {
+    running.satOutFor = "";
+    setOut(false).catch(() => {});
+  }
 
   // A skip can take a while - the source is resolved, the file fetched, the
   // room's gate opened - and a silent bar reads as a broken one. Say what is
@@ -1213,18 +1211,20 @@ async function loadTrack(connection, trackId) {
 }
 
 /**
- * The variant this member plays: the account's saved source, else the default,
- * else the provider order — and the room's own assignment when nothing else is
- * known.
+ * The variant this member plays, which is the one the player would choose: the
+ * account's saved source, else the default, else the provider order — and the
+ * room's own assignment when nothing else is known.
+ *
+ * The player is asked rather than the same choice made a second time here, so
+ * that what gets warmed and what gets played are one file.
  */
-async function resolveVariant(room, trackId) {
-  const connection = active;
-  if (!connection) return "";
+async function resolveVariant(room, trackId, player) {
+  if (!active) return "";
   const assignments = room.current && room.current.variants;
   const assigned = assignments ? str(assignments[room.me]) : "";
   try {
-    const { sources, preferredVariantId } = await connection.client.sources(trackId);
-    return pickRoomVariant(sources, preferredVariantId, assigned);
+    const resolved = await player.variantFor({ id: trackId });
+    return str(resolved && resolved.variantId) || assigned;
   } catch {
     return assigned;
   }

@@ -1154,6 +1154,19 @@ class Player {
    * Public because a room's queue is not the player's own: the follower knows
    * what the room will play next, and nothing else would fetch it.
    */
+  /**
+   * The variant this player would play a track from, resolved and cached.
+   *
+   * Public for the same reason `warm` is: a room's queue is not the player's
+   * own, and whoever fetches the room's next track has to fetch the file the
+   * player will really play. Choosing separately meant the warm fetched one
+   * rendition and the play needed another, so the room paid to download the
+   * track twice and waited on the second one.
+   */
+  variantFor(track) {
+    return this._variantFor(track);
+  }
+
   warm(track) {
     if (!track || !track.id) return;
     this._variantFor(track)

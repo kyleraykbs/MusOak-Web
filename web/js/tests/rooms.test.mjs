@@ -25,7 +25,6 @@ import {
   pause,
   seek,
   vote,
-  pickRoomVariant,
   roomPlayMode,
   driftDecision,
   followWithPlayer,
@@ -263,24 +262,6 @@ test("who may drive a room follows its controls", () => {
   assert.equal(mayDrive(everyone, SAM), true);
 });
 
-test("the variant played is the account's choice, the default, then the provider order", () => {
-  const sources = [
-    { variantId: "official", default: false },
-    { variantId: "flagged", default: true },
-    { variantId: "third" },
-  ];
-  assert.equal(pickRoomVariant(sources, "official"), "official", "the saved preference wins");
-  assert.equal(pickRoomVariant(sources, ""), "flagged", "then the source the server defaults to");
-  assert.equal(
-    pickRoomVariant([{ variantId: "a" }, { variantId: "b" }], ""),
-    "a",
-    "then the first of the provider order"
-  );
-  assert.equal(pickRoomVariant(sources, "gone"), "flagged", "a stale preference falls through");
-  assert.equal(pickRoomVariant([], "", "assigned"), "assigned", "the room's assignment is the last word");
-  assert.equal(pickRoomVariant(undefined, "", ""), "");
-});
-
 test("the room's mode says whether to prepare, play, pause or stop", () => {
   const base = createRoomState({ roomId: "room-1" });
   assert.equal(roomPlayMode(base), "stop", "nothing prepared is nothing to do");
@@ -389,6 +370,10 @@ function fakeClient({ room = HOST, joinError = null, sources = null } = {}) {
     },
     roomVote(roomId, score) {
       calls.commands.push({ name: "roomVote", args: [roomId, score] });
+      return Promise.resolve(client.roomData);
+    },
+    roomOut(roomId, out) {
+      calls.commands.push({ name: "roomOut", args: [roomId, out] });
       return Promise.resolve(client.roomData);
     },
     roomReady(roomId, trackId, variantId, durationMs) {
@@ -553,6 +538,8 @@ class FakePlayer {
     this.plays = [];
     this.seeks = [];
     this.warmed = [];
+    // What `variantFor` answers: the variant the room's follower will play.
+    this.resolvedVariant = "v-default";
     this._listeners = new Map();
   }
 
@@ -573,6 +560,13 @@ class FakePlayer {
   /** The room asks for its upcoming tracks to be fetched ahead of time. */
   warm(track) {
     this.warmed.push(track);
+  }
+
+  /** The variant this player would play a track from. The real one resolves it
+   *  from the client and the room now asks for that answer rather than making
+   *  the same choice again, so a test says what it would have chosen. */
+  variantFor() {
+    return Promise.resolve({ variantId: this.resolvedVariant });
   }
 
   readyState() {
@@ -691,6 +685,50 @@ test("a member reports the length of its own file, never the song's canonical on
   player.measured = 253705;
   assert.ok(await waitFor(() => client.calls.ready.length === 2), "the measured length follows");
   assert.equal(client.calls.ready[1].durationMs, 253705, "the file's own length");
+});
+
+test("the room plays the variant the player would, so a warm is not wasted", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  // The player's own answer, which is what the room now plays. Warming asks the
+  // same question, so a warm and the play that follows fetch one file between
+  // them; choosing separately meant the room downloaded the track twice and
+  // waited on the second download.
+  player.resolvedVariant = "v-other";
+  const client = fakeClient({ sources: ONE_VARIANT });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1" });
+  const socket = client.calls.sockets[0];
+  const track = item("a1", "first", KYLE);
+
+  client.roomData = roomPrepared(track);
+  socket.onEvent({ type: "track_prepared", roomId: "room-1", atMs: Date.now(), data: { item: track } });
+
+  assert.ok(await waitFor(() => player.plays.length === 1), "the room's rendition is fetched");
+  assert.equal(player.plays[0].variantId, "v-other", "the variant the player resolved, not a second guess");
+});
+
+test("a track this member cannot fetch is sat out, not waited on", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const client = fakeClient({ sources: ONE_VARIANT });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1" });
+  const socket = client.calls.sockets[0];
+  const track = item("a1", "first", KYLE);
+
+  client.roomData = roomPrepared(track);
+  socket.onEvent({ type: "track_prepared", roomId: "room-1", atMs: Date.now(), data: { item: track } });
+  await waitFor(() => player.plays.length === 1);
+
+  // The file cannot be fetched: the media state says so, which is what a failed
+  // download looks like here. The room would otherwise wait out its readiness
+  // timeout and then play the track to nobody.
+  player.ready = "failed";
+  assert.ok(
+    await waitFor(() => client.calls.commands.some((call) => call.name === "roomOut" && call.args[1] === true), 9000),
+    "the member sits the track out rather than waiting on it"
+  );
 });
 
 test("the prepared track is played, reported ready once, then follows the room's clock", async (t) => {
