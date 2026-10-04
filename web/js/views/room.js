@@ -10,7 +10,7 @@ import { registerView, navigate, banner, currentClient, requireLogin } from "../
 import { state, saveLocal } from "../state.js";
 import { player } from "../player.js";
 import { artworkTile, trackMenu } from "./playlist.js";
-import { avatarFor } from "./share.js";
+import { avatarFor, inviteFriendsToRoom } from "./share.js";
 import { listDrag, dragHandle, roomQueueTrack, titleClass } from "./queue.js";
 import {
   setOut,
@@ -136,6 +136,12 @@ function header(room) {
       h("div", { class: "title", style: { fontSize: "20px", color: "var(--fg0)" }, text: room.name || "Room" }),
       h("div", { class: "subtitle", text: `${room.memberCount} listening · ${policy}` })
     ),
+    h("button", {
+      class: "btn",
+      text: "Invite",
+      title: `Invite friends to “${room.name}”`,
+      onclick: () => inviteFriendsToRoom(room),
+    }),
     h("button", { class: "btn destructive", text: "Leave", title: `Leave “${room.name}”`, onclick: () => leave() })
   );
 }

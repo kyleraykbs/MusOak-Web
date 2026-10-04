@@ -461,10 +461,19 @@ button, input, select, textarea {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  position: relative;
 }
 .dialog h2 { margin: 0; font-size: 18px; color: var(--fg0); }
 .dialog p { margin: 0; color: var(--fg3); line-height: 1.5; }
 .dialog .actions { display: flex; gap: 10px; justify-content: flex-end; }
+
+/* The way out some dialogs ask for. Out of the flow, so the panel's own layout
+   - title, body, actions - is exactly what it would have been. */
+.dialog .dialog-close { position: absolute; top: 10px; right: 10px; }
+
+/* An invite that has gone: the same green as somebody being online, because it
+   is a fact and not a warning. */
+.sent-mark { display: inline-flex; align-items: center; flex: none; color: var(--green); }
 
 /* ---------- the platform filter (search, and the source dialog) ---------- */
 

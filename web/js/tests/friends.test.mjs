@@ -10,9 +10,37 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  DRIFT_TOLERANCE_MS, displayName, driftDecision, isOnline, listeningLine,
-  queueTrack, relationshipLabel, sortFriends,
+  DRIFT_TOLERANCE_MS, displayName, driftDecision, filterFriends, isOnline,
+  listeningLine, queueTrack, relationshipLabel, roomIdOf, sortFriends,
 } from "../views/share.js";
+
+test("a room is named by whichever shape its id arrived in", () => {
+  // The room state, as rooms-state.js normalizes it.
+  assert.equal(roomIdOf({ roomId: "abc", name: "Room" }), "abc");
+  // An API room, as /api/v1/rooms returns it.
+  assert.equal(roomIdOf({ id: "xyz", name: "Room" }), "xyz");
+  // A room state that carries both prefers its own field.
+  assert.equal(roomIdOf({ roomId: "abc", id: "xyz" }), "abc");
+  // Nothing to work with is an empty string, never undefined.
+  assert.equal(roomIdOf(null), "");
+  assert.equal(roomIdOf({ name: "Room" }), "");
+});
+
+test("a search keeps the friends whose name or username it matches", () => {
+  const friends = [
+    { username: "bob", displayName: "Robert" },
+    { username: "kyle", displayName: "" },
+    { username: "ana", displayName: "Ana Maria" },
+  ];
+  assert.deepEqual(filterFriends(friends, "rob").map((f) => f.username), ["bob"]);
+  assert.deepEqual(filterFriends(friends, "KYLE").map((f) => f.username), ["kyle"]);
+  assert.deepEqual(filterFriends(friends, "mar").map((f) => f.username), ["ana"]);
+  // Nothing typed is the whole list; nobody by that name is nobody.
+  assert.equal(filterFriends(friends, "").length, 3);
+  assert.equal(filterFriends(friends, "   ").length, 3);
+  assert.equal(filterFriends(friends, "zed").length, 0);
+  assert.equal(filterFriends(undefined, "x").length, 0);
+});
 
 test("a relationship reads as the row around it says it", () => {
   assert.equal(relationshipLabel("friend"), "Already friends");

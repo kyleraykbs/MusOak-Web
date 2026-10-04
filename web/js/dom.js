@@ -66,7 +66,7 @@ export function render(parent, build) {
  * keeps the dialog open (an action that failed and wants to say so).
  * Escape and a backdrop click close it. Returns {close, node}.
  */
-export function dialog({ title, body, actions = [], onOpen }) {
+export function dialog({ title, body, actions = [], onOpen, closeButton = false }) {
   const backdrop = h("div", { class: "dialog-backdrop" });
   const close = () => {
     document.removeEventListener("keydown", onKey);
@@ -78,6 +78,13 @@ export function dialog({ title, body, actions = [], onOpen }) {
   const panel = h(
     "div",
     { class: "dialog", role: "dialog", "aria-modal": "true" },
+    closeButton
+      ? iconButton("cross", {
+          title: "Close",
+          class: "btn flat round dialog-close",
+          onclick: () => close(),
+        })
+      : null,
     title ? h("h2", { text: title }) : null,
     body ? (typeof body === "string" ? h("p", { text: body }) : body) : null,
     h(

@@ -260,6 +260,75 @@ function askToRejoin(room) {
   });
 }
 
+/** Rooms whose invitation has been announced this session. Keyed by room, not
+ *  by notification: two invites to one room are one thing to answer, and a poll
+ *  every thirty seconds must not say it again. */
+const announcedRooms = new Set();
+
+/**
+ * A room invite nobody has seen is worth interrupting for: somebody is waiting
+ * on an answer, which a badge on the bell does not convey. Dismissing leaves it
+ * in the bell; taking it goes to the room.
+ */
+async function announceInvites(payload) {
+  const invites = (payload?.notifications || []).filter(
+    (note) =>
+      note.kind === "room-invite" &&
+      !note.read &&
+      note.roomId &&
+      !announcedRooms.has(String(note.roomId))
+  );
+  if (!invites.length) return;
+
+  // A notification names the room only by id, so the name comes from the rooms
+  // list. Not having it is not worth failing an invitation over.
+  const names = new Map();
+  try {
+    const rooms = await client.rooms();
+    for (const room of Array.isArray(rooms) ? rooms : rooms?.rooms || []) {
+      names.set(String(room.id), room.name);
+    }
+  } catch {
+    /* the invitation still stands without a name */
+  }
+
+  for (const note of invites) {
+    announcedRooms.add(String(note.roomId));
+    const from = note.from?.displayName || note.from?.username || "Someone";
+    if (await askToJoinRoom(from, names.get(String(note.roomId)))) {
+      navigate("rooms", { roomId: note.roomId });
+    }
+  }
+}
+
+/** Resolves true when they take the invitation, and false when they dismiss it
+ *  or press Escape. */
+function askToJoinRoom(from, room) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (value) => {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener("keydown", onKey);
+      resolve(value);
+    };
+    const onKey = (event) => {
+      if (event.key === "Escape") done(false);
+    };
+    document.addEventListener("keydown", onKey);
+    dialog({
+      title: "Room invite",
+      body: room
+        ? `${from} invited you to room \u201c${room}\u201d.`
+        : `${from} invited you to a room.`,
+      actions: [
+        { label: "Dismiss", onClick: () => done(false) },
+        { label: "Join", class: "suggested", onClick: () => done(true) },
+      ],
+    });
+  });
+}
+
 async function loadViews() {
   const results = await Promise.allSettled(VIEW_MODULES.map((path) => import(path)));
   results.forEach((result, index) => {
@@ -1204,13 +1273,15 @@ function startNotifications() {
     return;
   }
   const tick = async () => {
+    let payload;
     try {
-      const payload = await client.notifications();
+      payload = await client.notifications();
       setUnread(payload.unread || 0);
     } catch {
       /* offline is not an error worth shouting about */
       return;
     }
+    await announceInvites(payload);
     // Somebody may have changed their picture or their name: the views that
     // show people ask again, and the icon versions in the answer are what make
     // a new picture a new URL.

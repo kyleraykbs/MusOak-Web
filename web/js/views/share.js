@@ -30,9 +30,34 @@ export function displayName(user) {
   return username || "Someone";
 }
 
+/**
+ * A room's id, whichever shape it arrived in: the room state calls it `roomId`,
+ * and the API's rooms call it `id`. They name the same room, and a caller that
+ * only knows it has a room should not have to know which one it holds.
+ */
+export function roomIdOf(room) {
+  return String(room?.roomId || room?.id || "").trim();
+}
+
 /** The API's `online` flag: they played something within the last five minutes. */
 export function isOnline(user) {
   return Boolean(user?.online);
+}
+
+/**
+ * The friends a search keeps: matched on the name they are shown under or on
+ * their username, case and surrounding space ignored. An empty query keeps
+ * everybody, which is the list before anyone types.
+ */
+export function filterFriends(friends, query) {
+  const needle = String(query ?? "").trim().toLowerCase();
+  const list = Array.isArray(friends) ? friends : [];
+  if (!needle) return list;
+  return list.filter((friend) => {
+    const name = displayName(friend).toLowerCase();
+    const username = String(friend?.username || friend?.name || "").toLowerCase();
+    return name.includes(needle) || username.includes(needle);
+  });
 }
 
 /**
@@ -422,7 +447,7 @@ async function inviteSomeoneToRoom() {
           rooms.map((room) =>
             roomRow(room, () => {
               close?.();
-              chooseFriendForRoom(client, room);
+              inviteFriendsToRoom(room);
             })
           )
         )
@@ -431,7 +456,14 @@ async function inviteSomeoneToRoom() {
   close = dialog({ title: "Invite to a room", body, actions: [{ label: "Cancel" }] }).close;
 }
 
-async function chooseFriendForRoom(client, room) {
+/**
+ * Bring friends into a room: pick as many as you like. A pick sends that person
+ * an invite and marks their row sent, and the dialog stays open - inviting one
+ * person is rarely the whole job.
+ */
+export async function inviteFriendsToRoom(room) {
+  const client = currentClient();
+  if (!client || !roomIdOf(room)) return;
   let friends = [];
   try {
     friends = await loadFriends(client);
@@ -439,34 +471,77 @@ async function chooseFriendForRoom(client, room) {
     report(error);
     return;
   }
-  let close = null;
-  const body = h(
-    "div",
-    { style: column(10) },
-    h("p", { text: `Who goes to ${room?.name || "the room"}?` })
-  );
-  body.appendChild(
-    friends.length
-      ? h(
-          "div",
-          { class: "list" },
-          friends.map((friend) =>
-            personRow(client, friend, () => {
-              close?.();
-              sendRoomInvite(client, friend, room);
-            })
-          )
-        )
-      : h("p", { class: "subtitle", text: "You have no friends yet." })
-  );
-  close = dialog({ title: "Invite to a room", body, actions: [{ label: "Cancel" }] }).close;
+
+  const invited = new Set();
+  const rows = new Map();
+  const list = h("div", { class: "list" });
+  const search = h("input", {
+    class: "input",
+    type: "search",
+    placeholder: "Search friends",
+    "aria-label": "Search friends",
+  });
+
+  // Only the list is redrawn, so typing never costs the search box its focus.
+  const paint = () => {
+    rows.clear();
+    const shown = filterFriends(friends, search.value);
+    mount(
+      list,
+      shown.length
+        ? shown.map((friend) => {
+            const row = personRow(client, friend, () => send(friend));
+            rows.set(friend.id, row);
+            if (invited.has(friend.id)) row.appendChild(sentMark());
+            return row;
+          })
+        : [
+            h("p", {
+              class: "subtitle",
+              text: friends.length ? "Nobody by that name." : "You have no friends yet.",
+            }),
+          ]
+    );
+  };
+
+  const send = async (friend) => {
+    if (invited.has(friend.id)) return;
+    if (!(await sendRoomInvite(client, friend, room))) return;
+    invited.add(friend.id);
+    rows.get(friend.id)?.appendChild(sentMark());
+  };
+
+  search.addEventListener("input", paint);
+  paint();
+
+  dialog({
+    title: "Invite to a room",
+    closeButton: true,
+    body: h(
+      "div",
+      { style: column(10) },
+      h("p", { text: `Invite friends to ${room?.name || "the room"}.` }),
+      search,
+      list
+    ),
+    actions: [{ label: "Done" }],
+  });
+}
+
+/** The mark a friend's row carries once their invite has gone. */
+function sentMark() {
+  return h("span", { class: "sent-mark", title: "Invite sent" }, icon("check", 14));
 }
 
 async function sendRoomInvite(client, friend, room) {
+  const roomId = roomIdOf(room);
+  if (!roomId) return false;
   try {
-    await client.share(friend.id, { roomId: room.id });
-    toast(`Invited ${displayName(friend)} to ${room?.name || "the room"}.`);
+    await client.share(friend.id, { roomId });
   } catch (error) {
     report(error);
+    return false;
   }
+  toast(`Invited ${displayName(friend)} to ${room?.name || "the room"}.`);
+  return true;
 }
