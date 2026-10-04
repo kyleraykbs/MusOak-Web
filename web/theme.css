@@ -833,6 +833,10 @@ input[type="range"].volume { flex: 3 1 0; width: auto; min-width: 90px; }
 /* A count sitting in a tab, so the tab says how much is behind it. */
 .tab .badge { margin-left: 6px; }
 
+/* On a nav item the count belongs at the far edge, past the label, where it
+   does not shift the text when it appears. */
+.nav-item .badge { margin-left: auto; }
+
 /* The same count on a round button - the bell - sits on its corner instead of
    beside it: the button is a fixed circle, so a chip next to the icon pushes the
    icon out of it and the badge hangs over the edge. */

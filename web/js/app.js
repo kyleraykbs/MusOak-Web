@@ -21,6 +21,8 @@ let booted = false;
 let layout = null;
 let notifyTimer = 0;
 let reachabilityTimer = 0;
+/** Friend requests waiting on an answer, for the Friends tab's badge. */
+let friendRequestCount = 0;
 
 const VIEW_MODULES = [
   "./views/search.js",
@@ -788,10 +790,27 @@ function nameForIcon(glyph) {
 
 let navSignature = "";
 
+/** How many people are waiting on an answer, for the Friends tab. Zero hides
+ *  the badge. The bell's poll keeps it current, so the count arrives whether or
+ *  not the Friends page has ever been opened. */
+export function setFriendRequestCount(count) {
+  const next = Math.max(0, Math.trunc(Number(count) || 0));
+  if (next === friendRequestCount) return;
+  friendRequestCount = next;
+  renderNav();
+}
+
+/** The number a tab carries. Only Friends has one. */
+function navBadge(view) {
+  return view.id === "friends" ? friendRequestCount : 0;
+}
+
 function renderNav() {
   if (!layout) return;
   const items = [...views.values()].filter((view) => !view.hidden).sort((a, b) => (a.order ?? 50) - (b.order ?? 50));
-  const signature = items.map((view) => view.id).join("\u0000");
+  // The count is part of the signature: a tab that gains or loses a badge is a
+  // different strip, and a strip is only rebuilt when it is.
+  const signature = items.map((view) => `${view.id}:${navBadge(view)}`).join("\u0000");
   // The strip scrolls sideways on a phone, and rebuilding it throws that scroll
   // away: a click on a tab would snap the bar back to its start. When only the
   // highlight moved, move the highlight.
@@ -809,7 +828,13 @@ function renderNav() {
       h("button", {
         class: `nav-item ${navCovers(view) ? "active" : ""}`.trim(),
         onclick: () => navigate(navTarget(view)),
-      }, h("span", { class: "icon" }, iconOr(nameForIcon(view.icon), 16)), h("span", { text: view.title }))
+      },
+        h("span", { class: "icon" }, iconOr(nameForIcon(view.icon), 16)),
+        h("span", { text: view.title }),
+        navBadge(view)
+          ? h("span", { class: "badge", text: navBadge(view) > 99 ? "99+" : String(navBadge(view)) })
+          : null
+      )
     )
   );
   layout.nav.scrollLeft = scroll;
@@ -1273,6 +1298,7 @@ function startNotifications() {
   clearInterval(notifyTimer);
   if (!isSignedIn()) {
     setUnread(0);
+    setFriendRequestCount(0);
     return;
   }
   const tick = async () => {
@@ -1280,6 +1306,7 @@ function startNotifications() {
     try {
       payload = await client.notifications();
       setUnread(payload.unread || 0);
+      setFriendRequestCount(payload.friendRequests || 0);
     } catch {
       /* offline is not an error worth shouting about */
       return;

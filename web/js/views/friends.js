@@ -6,7 +6,7 @@
 // something within the last five minutes).
 
 import { h, mount, popover, confirm, debounce, toast, icon, iconButton } from "../dom.js";
-import { registerView, navigate, currentClient, banner, requireLogin } from "../app.js";
+import { registerView, navigate, currentClient, banner, requireLogin, setFriendRequestCount } from "../app.js";
 import { state } from "../state.js";
 import {
   avatarFor, displayName, isOnline, listeningLine, relationshipLabel, sortFriends, peopleSearchEmpty,} from "./share.js";
@@ -145,6 +145,10 @@ async function loadFriends() {
     if (mine === generation && bodyEl) showError(bodyEl, "Could not load your friends", error);
     return;
   }
+  // The same answer carries the requests still waiting, which is what the nav's
+  // badge shows: opening this tab is enough to bring it up to date.
+  waiting = (payload?.incoming || []).length;
+  setFriendRequestCount(waiting);
   if (mine !== generation || !bodyEl) return;
   const friends = sortFriends(payload?.friends || []);
   if (!friends.length) {
@@ -186,8 +190,10 @@ async function loadRequests() {
     if (mine === generation && bodyEl) showError(bodyEl, "Could not load your requests", error);
     return;
   }
-  // This list is the count the tab's badge shows, so keep them the same.
+  // This list is the count the tab's badge shows, so keep them the same - and
+  // the nav's badge with it, so answering one drops it without waiting a poll.
   waiting = (payload?.incoming || []).length;
+  setFriendRequestCount(waiting);
   if (mine !== generation || !bodyEl) return;
   const incoming = payload?.incoming || [];
   const outgoing = payload?.outgoing || [];
