@@ -1146,6 +1146,12 @@ async function followRoom(running) {
   // saying so is what lets the room start it the moment this one ends: it can
   // only learn a member is ready before the gap if the member says so before
   // the gap, and a download that begins at the end is the gap.
+  // What the room is waiting for, and how far along each of them is. The room
+  // assigns every member a rendition, so its own state says what to ask about -
+  // and a member's file is the only thing between them and hearing this song.
+  // "Getting ready" with nothing behind it is what a stuck room looked like.
+  await reportLoading(room, running);
+
   const prepared = room.next;
   const preparedId = str(prepared?.id);
   if (preparedId && running.preReadyFor !== preparedId) {
@@ -1272,6 +1278,52 @@ function followTimeline(player, room) {
 
   if (driftDecision(local, position) !== "hold") player.seek(position);
   if (player.isPaused()) player.resume();
+}
+
+/** How often a waiting member's file is looked in on. */
+const LOADING_POLL_MS = 500;
+
+/**
+ * Ask after the files of the members the room is waiting for, and keep the
+ * answers where the room view can show them. A member the room is not waiting
+ * for is not asked about: their file is not what this song is waiting on.
+ */
+async function reportLoading(room, running) {
+  const connection = active;
+  const current = room && room.current;
+  const waiting = (current && current.awaiting) || [];
+  const variants = (current && current.variants) || {};
+  const wanted = waiting.map((id) => str(variants[id]));
+
+  if (!connection || !waiting.length) {
+    if (running.loading && Object.keys(running.loading).length) setLoading(connection, {});
+    return;
+  }
+  if (Date.now() - (running.loadingAt || 0) < LOADING_POLL_MS) return;
+  running.loadingAt = Date.now();
+
+  const statuses = await Promise.all(
+    wanted.map((variantId) =>
+      variantId ? connection.client.mediaStatus(variantId).catch(() => null) : Promise.resolve(null)
+    )
+  );
+  if (connection !== active) return;
+
+  const loading = {};
+  waiting.forEach((id, index) => {
+    const status = statuses[index];
+    if (status) loading[id] = { state: str(status.state), progress: num(status.progress) };
+  });
+  setLoading(connection, loading);
+}
+
+/** Keep the room's picture of what it is waiting for, without redrawing for an
+ *  answer that has not changed. */
+function setLoading(connection, loading) {
+  if (!connection || connection !== active) return;
+  const before = connection.state.loading || {};
+  if (JSON.stringify(before) === JSON.stringify(loading)) return;
+  setState({ ...connection.state, loading });
 }
 
 /** Tell the room a file is here for a song it has not started yet. The report

@@ -1381,3 +1381,7 @@ body:has(.drawer:not([hidden])) .player-bar > .btn[title="Open the room"] { disp
   .player > .player-bar > .btn[title="Favourite"],
   .player > .player-bar > .btn[title="Song actions"] { display: none; }
 }
+
+/* A member's file, in the Listening panel: the room is waiting on it, so it is
+   worth a bar rather than a word. */
+.member-load { width: 96px; flex: none; }

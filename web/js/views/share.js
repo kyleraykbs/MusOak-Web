@@ -55,6 +55,19 @@ export function peopleSearchEmpty({ query = "", directory = false } = {}) {
   return { title: "Nobody else is here yet", body: "When somebody joins, they will show up here." };
 }
 
+/**
+ * What a member's file is doing, in a few words: the state the server reports,
+ * and how far along a download is. An answer with no percentage is still
+ * loading, because a download that has not reported one has not started.
+ */
+export function memberLoadLabel(load) {
+  const state = String(load?.state || "").trim();
+  if (state === "ready") return "Ready";
+  if (state === "failed") return "That file could not be fetched";
+  const percent = Math.round(Math.min(1, Math.max(0, Number(load?.progress) || 0)) * 100);
+  return percent > 0 ? `Loading ${percent}%` : "Loading";
+}
+
 /** The API's `online` flag: they played something within the last five minutes. */
 export function isOnline(user) {
   return Boolean(user?.online);

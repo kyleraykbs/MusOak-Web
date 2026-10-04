@@ -10,7 +10,7 @@ import { registerView, navigate, banner, currentClient, requireLogin } from "../
 import { state, saveLocal } from "../state.js";
 import { player } from "../player.js";
 import { artworkTile, trackMenu } from "./playlist.js";
-import { avatarFor, inviteFriendsToRoom } from "./share.js";
+import { avatarFor, inviteFriendsToRoom, memberLoadLabel } from "./share.js";
 import { listDrag, dragHandle, roomQueueTrack, titleClass } from "./queue.js";
 import {
   setOut,
@@ -376,6 +376,7 @@ function members(room) {
     const queued = upcoming.length
       ? ` · next: ${upcoming[0].title}${upcoming.length > 1 ? ` (+${upcoming.length - 1})` : ""}`
       : "";
+    const load = (room.loading || {})[member.id];
     list.appendChild(
       h(
         "div",
@@ -387,7 +388,16 @@ function members(room) {
           "div",
           { class: "grow" },
           h("div", { class: "title", text: nameOf(room, member.id) }),
-          h("div", { class: "subtitle", text: `${marks.length ? marks.join(", ") : "listening"}${queued}` })
+          h("div", { class: "subtitle", text: `${marks.length ? marks.join(", ") : "listening"}${queued}` }),
+          // The file, and how far along it is: the only thing between this
+          // member and hearing the song, and the answer to "is it stuck?".
+          load && load.state !== "ready"
+            ? h(
+                "div",
+                { class: "progress member-load", title: memberLoadLabel(load) },
+                h("div", { class: "bar", style: { width: `${Math.round((load.progress || 0) * 100)}%` } })
+              )
+            : null
         ),
         // The room plays for as long as the shortest file in it, so a member
         // holding a short or broken copy needs a way to say so rather than end

@@ -11,8 +11,8 @@ import assert from "node:assert/strict";
 
 import {
   DRIFT_TOLERANCE_MS, displayName, driftDecision, filterFriends, isOnline,
-  listeningLine, peopleSearchEmpty, queueTrack, relationshipLabel, roomIdOf,
-  sortFriends,
+  listeningLine, memberLoadLabel, peopleSearchEmpty, queueTrack,
+  relationshipLabel, roomIdOf, sortFriends,
 } from "../views/share.js";
 
 test("a room is named by whichever shape its id arrived in", () => {
@@ -176,4 +176,14 @@ test("an empty people search reads as the answer the server could give", () => {
   // An empty box on a server too big to list must not read as an empty server.
   assert.equal(peopleSearchEmpty({ query: "", directory: false }).title, "Too many people to list");
   assert.equal(peopleSearchEmpty({}).title, "Too many people to list");
+});
+
+test("a member's file reads as the state the server reports", () => {
+  assert.equal(memberLoadLabel({ state: "ready", progress: 1 }), "Ready");
+  assert.equal(memberLoadLabel({ state: "failed" }), "That file could not be fetched");
+  assert.equal(memberLoadLabel({ state: "downloading", progress: 0.42 }), "Loading 42%");
+  // A download that has not reported a fraction has not started.
+  assert.equal(memberLoadLabel({ state: "downloading" }), "Loading");
+  assert.equal(memberLoadLabel({}), "Loading");
+  assert.equal(memberLoadLabel(null), "Loading");
 });
