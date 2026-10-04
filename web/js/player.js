@@ -254,6 +254,7 @@ class Player {
 
     this._token = 0;              // which track the async work is still for
     this._loading = false;
+    this._buffering = false;      // the file is here, the sound is not yet
     this._progress = 0;
     this._error = "";
     this._pendingSeek = 0;
@@ -553,6 +554,7 @@ class Player {
       playing: this.isPlaying(),
       paused: this.isPaused(),
       loading: this._loading,
+      buffering: this._buffering,
       error: this._error,
       positionMs: this.positionMs(),
       durationMs: this.durationMs(),
@@ -782,6 +784,10 @@ class Player {
       if (this._loading) {
         const label = mediaStateLabel(this._mediaState()) || "downloading…";
         subtitle = subtitle ? `${subtitle} · ${label}` : label;
+      } else if (this._buffering) {
+        // Here, and not making a sound yet: the bar says so rather than showing
+        // a pause button over silence.
+        subtitle = subtitle ? `${subtitle} · loading…` : "loading…";
       }
       if (this._error) subtitle = this._error;
       setText(bar.subtitle, subtitle);
@@ -832,6 +838,9 @@ class Player {
     // Which state the button is showing, for the theme to colour: no colour
     // is chosen here.
     bar.play.dataset.state = playing ? "playing" : "paused";
+    // Waiting on the sound is its own state: the button still offers pause, and
+    // the theme holds it back a little so the wait is visible.
+    bar.play.dataset.busy = this._buffering ? "true" : "false";
     // The bar itself carries it too: the played part of the seek takes the
     // same colour as the transport.
     bar.root.dataset.state = playing ? "playing" : "paused";
@@ -864,9 +873,16 @@ class Player {
     // --- how the download is going --------------------------------------
     if (this._loading && !this._error) {
       bar.progress.style.display = "";
+      bar.progress.classList.remove("indeterminate");
       bar.progressFill.style.width = `${Math.round(clamp01(this._progress) * 100)}%`;
+    } else if (this._buffering && !this._error) {
+      // Nothing to count: the file is whole, the browser is just not playing it
+      // yet. The bar sweeps rather than filling.
+      bar.progress.style.display = "";
+      bar.progress.classList.add("indeterminate");
     } else {
       bar.progress.style.display = "none";
+      bar.progress.classList.remove("indeterminate");
     }
 
     // --- volume ----------------------------------------------------------
@@ -932,12 +948,19 @@ class Player {
       this._stateEvent();
       this.savePlaybackNow();
     });
-    audio.addEventListener("playing", () => this._stateEvent());
-    audio.addEventListener("waiting", () => this._stateEvent());
-    audio.addEventListener("ended", () => this.next());
+    audio.addEventListener("playing", () => this._setBuffering(false));
+    audio.addEventListener("waiting", () => this._setBuffering(true));
+    audio.addEventListener("stalled", () => this._setBuffering(true));
+    audio.addEventListener("canplay", () => this._setBuffering(false));
+    audio.addEventListener("pause", () => this._setBuffering(false));
+    audio.addEventListener("ended", () => {
+      this._setBuffering(false);
+      this.next();
+    });
     audio.addEventListener("error", () => {
       if (!this._variant) return;
       this._loading = false;
+      this._buffering = false;
       this._error = "could not play that file";
       this._stateEvent();
     });
@@ -1030,6 +1053,9 @@ class Player {
     this._wantResume(true);
     const started = audio.play();
     if (started?.catch) started.catch(() => { /* nothing to say: the button still says pause */ });
+    // The button becomes a pause button the moment play() is called, and the
+    // sound can still be a moment behind it.
+    this._setBuffering(audio.readyState < 3);
   }
 
   /** A variant a room assigned: the sources are only there to name it. */
@@ -1431,6 +1457,18 @@ class Player {
         this._retryWanted();
       }, 4000);
     }
+  }
+
+  /** Whether the bar is showing play while no sound is coming out.
+   *
+   *  The file is here and the button has already become a pause button, but the
+   *  browser has not started playing it yet. Saying so is the difference
+   *  between a track that is loading and a player that looks broken. */
+  _setBuffering(buffering) {
+    const next = Boolean(buffering) && this.isPlaying();
+    if (next === this._buffering) return;
+    this._buffering = next;
+    this._stateEvent();
   }
 
   _stateEvent() {

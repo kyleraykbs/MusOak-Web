@@ -1128,7 +1128,7 @@ async function followRoom(running) {
   const state = player.state();
   const onTrack = player.current()?.id === trackId;
   const ours = onTrack && str(player.variantId()) === running.variantId;
-  const loadingHere = onTrack && Boolean(state && state.loading);
+  const loadingHere = onTrack && Boolean(state && (state.loading || state.buffering));
   const broken = onTrack && Boolean(state && state.error);
 
   // A track this member cannot fetch is not worth the room's readiness timeout:
