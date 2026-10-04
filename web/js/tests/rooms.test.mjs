@@ -557,9 +557,11 @@ class FakePlayer {
     return this.variant;
   }
 
-  /** The room asks for its upcoming tracks to be fetched ahead of time. */
-  warm(track) {
+  /** The room asks for its upcoming tracks to be fetched ahead of time. The
+   *  callback is how a room is told the file is really here. */
+  warm(track, { onReady } = {}) {
     this.warmed.push(track);
+    if (onReady) this.warmReady = onReady;
   }
 
   /** The variant this player would play a track from. The real one resolves it
@@ -912,3 +914,44 @@ test("the room's next tracks are fetched ahead, so a skip does not wait on one",
   );
 });
 
+
+test("the song prepared behind this one is fetched and reported before it is needed", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const client = fakeClient({ sources: ONE_VARIANT });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1" });
+  const socket = client.calls.sockets[0];
+  const first = item("a1", "first", KYLE);
+  const second = item("a2", "second", KYLE);
+
+  // Playing the first, with the second prepared behind it.
+  client.roomData = roomStarted(first, Date.now(), 180_000);
+  socket.onEvent({
+    type: "track_started",
+    roomId: "room-1",
+    atMs: Date.now(),
+    data: { item: first, startedAt: Date.now(), timelineMs: 180_000 },
+  });
+  await waitFor(() => player.plays.length === 1);
+
+  socket.onEvent({ type: "queue_updated", roomId: "room-1", atMs: Date.now(), data: { next: second } });
+
+  assert.ok(
+    await waitFor(() => player.warmed.some((track) => track.id === "track-a2")),
+    "the prepared song is fetched while this one plays"
+  );
+  assert.equal(typeof player.warmReady, "function", "and the room is told when it arrives");
+
+  // The file is here: say so now, rather than waiting for the room to move on.
+  player.warmReady("v-default");
+  assert.ok(
+    await waitFor(() => client.calls.ready.some((report) => report.trackId === "track-a2")),
+    "readiness is reported for a song the room has not started"
+  );
+  assert.equal(
+    client.calls.ready.find((report) => report.trackId === "track-a2").durationMs,
+    0,
+    "with no length: the measured one follows once the song is really playing"
+  );
+});

@@ -217,6 +217,7 @@ export function normalizeSnapshot(raw) {
     queue: room.queue === undefined ? pendingFrom(masterQueue, current) : list(room.queue).map(normalizeItem),
     current,
     preparing: null,
+    next: room.next ? normalizeItem(room.next) : null,
     skip: normalizeSkip(room.skip),
     serverNowMs: num(room.serverNowMs),
     atMs: 0,
@@ -249,12 +250,14 @@ export function applyEvent(state, event) {
   switch (type) {
     case EVENTS.queueUpdated: {
       const masterQueue = data.masterQueue === undefined ? state.masterQueue : list(data.masterQueue).map(normalizeItem);
+      const next = data.next === undefined ? state.next : (data.next ? normalizeItem(data.next) : null);
       const current = state.current;
       return {
         ...state,
         atMs,
         queues: data.queues === undefined ? state.queues : normalizeQueues(data.queues),
         masterQueue,
+        next,
         queue: data.queue === undefined ? pendingFrom(masterQueue, current) : list(data.queue).map(normalizeItem),
         preparing: data.preparing ? normalizeItem(data.preparing) : null,
       };
@@ -1139,6 +1142,20 @@ async function followRoom(running) {
     player.warm?.({ id: str(entry.trackId), title: entry.title });
   }
 
+  // The room names the song it has prepared behind this one. Fetching it and
+  // saying so is what lets the room start it the moment this one ends: it can
+  // only learn a member is ready before the gap if the member says so before
+  // the gap, and a download that begins at the end is the gap.
+  const prepared = room.next;
+  const preparedId = str(prepared?.id);
+  if (preparedId && running.preReadyFor !== preparedId) {
+    running.preReadyFor = preparedId;
+    player.warm?.(
+      { id: str(prepared.trackId), title: prepared.title },
+      { onReady: (variantId) => reportReadyAhead(prepared, variantId) }
+    );
+  }
+
   if (mode === "play") followTimeline(player, room);
   else if (!player.isPaused()) player.pause();
 }
@@ -1255,6 +1272,16 @@ function followTimeline(player, room) {
 
   if (driftDecision(local, position) !== "hold") player.seek(position);
   if (player.isPaused()) player.resume();
+}
+
+/** Tell the room a file is here for a song it has not started yet. The report
+ *  carries no length: the room starts on it, and the length this member really
+ *  plays follows once the song is running and the browser has measured it. */
+function reportReadyAhead(item, variantId) {
+  const connection = active;
+  const trackId = str(item?.trackId);
+  if (!connection || !trackId || !variantId) return;
+  connection.client.roomReady(connection.roomId, trackId, variantId, 0).catch(() => {});
 }
 
 /** Tell the room the file is here — once for each prepared track. */

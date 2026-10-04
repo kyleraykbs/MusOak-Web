@@ -1167,11 +1167,15 @@ class Player {
     return this._variantFor(track);
   }
 
-  warm(track) {
+  warm(track, { onReady } = {}) {
     if (!track || !track.id) return;
     this._variantFor(track)
-      .then((resolved) => {
-        if (resolved) this._warm(resolved.variantId);
+      .then(async (resolved) => {
+        if (!resolved) return;
+        // The callback is for the room: it needs to know a member is ready for
+        // a song it has not started, which is the whole point of fetching it
+        // early. A file that did not arrive says nothing.
+        if (await this._warm(resolved.variantId)) onReady?.(resolved.variantId);
       })
       .catch(() => {
         /* a track that cannot be fetched will say so when it is reached */
@@ -1185,7 +1189,8 @@ class Player {
    * asking now is what makes the advance into the next track cost nothing.
    */
   async _warm(variantId) {
-    if (!variantId || this._status.get(variantId)?.state === "ready") return;
+    if (!variantId) return false;
+    if (this._status.get(variantId)?.state === "ready") return true;
     try {
       const client = this._client();
       this._startDownload(variantId, client);
@@ -1194,12 +1199,14 @@ class Player {
       for (let attempt = 0; attempt < 150; attempt += 1) {
         const status = await client.mediaStatus(variantId);
         if (this._status.get(variantId)?.state !== "ready") this._status.set(variantId, status);
-        if (status.state === "ready" || status.state === "failed") return;
+        if (status.state === "ready") return true;
+        if (status.state === "failed") return false;
         await sleep(POLL_MS);
       }
     } catch {
       /* the track will say so when it is reached */
     }
+    return false;
   }
 
   _mediaState() {
