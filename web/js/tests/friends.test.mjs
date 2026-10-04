@@ -11,7 +11,8 @@ import assert from "node:assert/strict";
 
 import {
   DRIFT_TOLERANCE_MS, displayName, driftDecision, filterFriends, isOnline,
-  listeningLine, queueTrack, relationshipLabel, roomIdOf, sortFriends,
+  listeningLine, peopleSearchEmpty, queueTrack, relationshipLabel, roomIdOf,
+  sortFriends,
 } from "../views/share.js";
 
 test("a room is named by whichever shape its id arrived in", () => {
@@ -164,4 +165,15 @@ test("a paused friend stops the follower and a resumed one starts it again", () 
     driftDecision({ localMs: 1_000, remoteMs: 9_000, localPaused: true, remotePaused: true }).action,
     "none"
   );
+});
+
+test("an empty people search reads as the answer the server could give", () => {
+  // A name that found nobody is its own case, whatever the server's size.
+  assert.deepEqual(peopleSearchEmpty({ query: "zed", directory: true }).title, "No one found");
+  assert.deepEqual(peopleSearchEmpty({ query: "zed", directory: false }).title, "No one found");
+  // An empty box on a small server: nobody else is here, which is not an error.
+  assert.equal(peopleSearchEmpty({ query: "", directory: true }).title, "Nobody else is here yet");
+  // An empty box on a server too big to list must not read as an empty server.
+  assert.equal(peopleSearchEmpty({ query: "", directory: false }).title, "Too many people to list");
+  assert.equal(peopleSearchEmpty({}).title, "Too many people to list");
 });

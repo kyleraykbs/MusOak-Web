@@ -186,14 +186,14 @@ function shareRow(client, share) {
   );
 }
 
-function section(title, rows, emptyText) {
+function section(title, rows, emptyText, { scroll = false } = {}) {
   return h(
     "section",
     { style: { display: "flex", flexDirection: "column", gap: "8px" } },
     h("h2", { class: "section-title", text: title }),
     h(
       "div",
-      { class: "list" },
+      { class: scroll ? "list scroll-list" : "list" },
       rows && rows.length
         ? rows
         : h("div", { class: "row" }, h("div", { class: "subtitle", text: emptyText }))
@@ -229,10 +229,13 @@ function listsGrid(client, detail, uploads = []) {
       favorites.map((track) => trackRow(client, track)),
       EMPTY_FAVOURITES
     ),
+    // A listening history has no natural end, so it gets a box of its own
+    // rather than making the page as long as the person's week.
     section(
       "Recently played",
       recent.map((track) => trackRow(client, track)),
-      EMPTY_RECENT
+      EMPTY_RECENT,
+      { scroll: true }
     ),
     section(
       "Shared with you",

@@ -475,6 +475,19 @@ button, input, select, textarea {
    is a fact and not a warning. */
 .sent-mark { display: inline-flex; align-items: center; flex: none; color: var(--green); }
 
+/* A list that can run long gets its own box: a height it scrolls inside, so the
+   sections beside it keep their place on the page instead of the page growing
+   to fit somebody's listening history. */
+.scroll-list {
+  max-height: 340px;
+  overflow-y: auto;
+  /* Reserve the scrollbar's width whether or not it is there, so the rows do
+     not shift sideways the moment the list is long enough to scroll. */
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--bg3) transparent;
+}
+
 /* ---------- the platform filter (search, and the source dialog) ---------- */
 
 .search-filter {

@@ -39,6 +39,22 @@ export function roomIdOf(room) {
   return String(room?.roomId || room?.id || "").trim();
 }
 
+/**
+ * What an empty people search means, which depends on whether the server could
+ * answer it. A small server lists everybody, which is what finding somebody you
+ * have not met needs; a larger one answers with nothing, and an empty page
+ * would read as an empty server rather than a busy one.
+ */
+export function peopleSearchEmpty({ query = "", directory = false } = {}) {
+  if (String(query || "").trim()) {
+    return { title: "No one found", body: "Try another name." };
+  }
+  if (!directory) {
+    return { title: "Too many people to list", body: "Search by display name or username." };
+  }
+  return { title: "Nobody else is here yet", body: "When somebody joins, they will show up here." };
+}
+
 /** The API's `online` flag: they played something within the last five minutes. */
 export function isOnline(user) {
   return Boolean(user?.online);

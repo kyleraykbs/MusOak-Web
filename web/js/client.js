@@ -553,8 +553,16 @@ export class Client {
 
   // --- people ------------------------------------------------------------
 
+  /**
+   * People by name. An empty query asks for the whole server: a small one
+   * answers with everybody and a large one with nothing, and `directory` says
+   * which, so that "nobody here" can be told from "too many to list".
+   */
   searchUsers(query) {
-    return this.get(`/api/v1/users?q=${encodeURIComponent(query)}`).then((payload) => payload?.users || []);
+    return this.get(`/api/v1/users?q=${encodeURIComponent(query)}`).then((payload) => ({
+      users: payload?.users || [],
+      directory: Boolean(payload?.directory),
+    }));
   }
 
   user(id) {

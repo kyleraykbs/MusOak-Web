@@ -9,8 +9,7 @@ import { h, mount, popover, confirm, debounce, toast, icon, iconButton } from ".
 import { registerView, navigate, currentClient, banner, requireLogin } from "../app.js";
 import { state } from "../state.js";
 import {
-  avatarFor, displayName, isOnline, listeningLine, relationshipLabel, sortFriends,
-} from "./share.js";
+  avatarFor, displayName, isOnline, listeningLine, relationshipLabel, sortFriends, peopleSearchEmpty,} from "./share.js";
 import { renderFriend } from "./friend.js";
 
 /** Typing should search without being asked, but every keystroke is a round
@@ -278,26 +277,25 @@ async function runSearch(force = false) {
   const wanted = searchInput.value.trim();
   query = wanted;
   const mine = ++generation;
-  if (!wanted) {
-    searchStatus.textContent = "";
-    mount(searchResults, emptyState("search", "Find people", "Search by display name or username."));
-    return;
-  }
-  if (wanted.length < MIN_QUERY && !force) {
-    searchStatus.textContent = "Keep typing\u2026";
-    mount(searchResults);
-    return;
-  }
   if (!client) {
     searchStatus.textContent = "";
     mount(searchResults, emptyState("search", "No server", "Choose a backend to search people."));
     return;
   }
-  searchStatus.textContent = `Looking for \u201c${wanted}\u201d\u2026`;
+  if (wanted && wanted.length < MIN_QUERY && !force) {
+    searchStatus.textContent = "Keep typing\u2026";
+    mount(searchResults);
+    return;
+  }
+  // An empty box asks for everybody. A server small enough to answer lists the
+  // people on it, which is what finding somebody you have not met needs; a
+  // larger one answers with nothing rather than a page that reads as empty.
+  searchStatus.textContent = wanted ? `Looking for \u201c${wanted}\u201d\u2026` : "Looking\u2026";
   mount(searchResults);
   let users = [];
+  let directory = false;
   try {
-    users = await client.searchUsers(wanted);
+    ({ users, directory } = await client.searchUsers(wanted));
   } catch (error) {
     if (mine === generation && searchResults) {
       searchStatus.textContent = "";
@@ -308,10 +306,13 @@ async function runSearch(force = false) {
   if (mine !== generation || !searchResults) return;
   if (!users.length) {
     searchStatus.textContent = "";
-    mount(searchResults, emptyState("search", "No one found", "Try another name."));
+    const { title, body } = peopleSearchEmpty({ query: wanted, directory });
+    mount(searchResults, emptyState("search", title, body));
     return;
   }
-  searchStatus.textContent = `${users.length} result${users.length === 1 ? "" : "s"}.`;
+  searchStatus.textContent = wanted
+    ? `${users.length} result${users.length === 1 ? "" : "s"}.`
+    : `${users.length} ${users.length === 1 ? "person" : "people"} here.`;
   mount(
     searchResults,
     h(
