@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"codeberg.org/kyleraykbs/musoak-web/internal/config"
+	"os"
+	"path/filepath"
 )
 
 // captured is what the backend saw, which is what these tests are about: the
@@ -484,5 +486,63 @@ func TestPageRefusesAHostThatCouldBreakOutOfTheAttribute(t *testing.T) {
 
 	if body := response.Body.String(); strings.Contains(body, "evil.example") || strings.Contains(body, "<script>alert") {
 		t.Errorf("a hostile host reached the page:\n%s", body)
+	}
+}
+
+// A browser told "no-cache" revalidates, so the answer has to come from the
+// file's contents. Everything in the store is stamped 1970, and a Last-Modified
+// from that never changes: every browser kept its first copy of the frontend,
+// and a deploy could not reach it however many times it was deployed.
+func TestFrontendRevalidatesByContent(t *testing.T) {
+	dir := t.TempDir()
+	write := func(rel, body string) {
+		t.Helper()
+		full := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("index.html", `<html><link rel="stylesheet" href="theme.css" /></html>`)
+	write("theme.css", "body { color: red }")
+	write("js/app.js", "console.log('one')")
+
+	server, err := New(&config.Config{Listen: ":0"}, slog.New(slog.NewTextHandler(io.Discard, nil)), dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	first := do(t, server.Handler(), "GET", "/js/app.js", nil, nil)
+	tag := first.Header().Get("ETag")
+	if tag == "" {
+		t.Fatal("a module is served with no ETag, so nothing can revalidate it")
+	}
+	if got := first.Header().Get("Last-Modified"); got != "" {
+		t.Errorf("Last-Modified = %q; the store's mtimes are the epoch and say nothing", got)
+	}
+
+	// The same bytes are Not Modified; different bytes are sent.
+	again := do(t, server.Handler(), "GET", "/js/app.js", map[string]string{"If-None-Match": tag}, nil)
+	if again.Code != http.StatusNotModified {
+		t.Errorf("revalidating an unchanged file = %d, want 304", again.Code)
+	}
+	write("js/app.js", "console.log('two')")
+	changed := do(t, server.Handler(), "GET", "/js/app.js", map[string]string{"If-None-Match": tag}, nil)
+	if changed.Code != http.StatusOK {
+		t.Errorf("a changed file = %d, want 200", changed.Code)
+	}
+	if changed.Header().Get("ETag") == tag {
+		t.Error("the ETag did not follow the contents")
+	}
+
+	// And the shell's stylesheet stamp follows the frontend too, so a deploy
+	// asks for a URL the browser has never seen.
+	before := do(t, server.Handler(), "GET", "/", nil, nil).Body.String()
+	write("theme.css", "body { color: blue }")
+	after := do(t, server.Handler(), "GET", "/", nil, nil).Body.String()
+	if before == after {
+		t.Error("the stylesheet stamp did not change with the frontend")
 	}
 }

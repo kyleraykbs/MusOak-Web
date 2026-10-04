@@ -18,12 +18,15 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	webui "codeberg.org/kyleraykbs/musoak-web"
 	"codeberg.org/kyleraykbs/musoak-web/internal/config"
+	"crypto/sha256"
+	"encoding/hex"
+	"mime"
+	"path/filepath"
 )
 
 const (
@@ -42,7 +45,6 @@ type Server struct {
 	cfg       *config.Config
 	logger    *slog.Logger
 	mux       *http.ServeMux
-	site      http.Handler
 	siteFS    fs.FS
 	transport http.RoundTripper
 	started   time.Time
@@ -66,7 +68,6 @@ func New(cfg *config.Config, logger *slog.Logger, staticDir string) (*Server, er
 		cfg:     cfg,
 		logger:  logger,
 		mux:     http.NewServeMux(),
-		site:    http.FileServer(http.FS(root)),
 		siteFS:  root,
 		started: time.Now(),
 	}
@@ -209,13 +210,11 @@ func (s *Server) handleSite(w http.ResponseWriter, r *http.Request) {
 	}
 	if path != "" && !strings.HasSuffix(path, "/") {
 		if info, err := fs.Stat(s.siteFS, path); err == nil && !info.IsDir() {
-			s.site.ServeHTTP(w, r)
+			s.serveAsset(w, r, path)
 			return
 		}
 	}
-	fresh := r.Clone(r.Context())
-	fresh.URL.Path = "/"
-	s.site.ServeHTTP(w, fresh)
+	s.servePage(w, r)
 }
 
 // servePage serves the shell with its stylesheet under a versioned URL. A
@@ -295,17 +294,72 @@ func safeHost(host string) string {
 // assetStamp is the newest modification time in the frontend, so changing any
 // file changes every URL the page asks for.
 func (s *Server) assetStamp() string {
-	newest := time.Time{}
-	_ = fs.WalkDir(s.siteFS, ".", func(_ string, entry fs.DirEntry, err error) error {
+	sum := sha256.New()
+	_ = fs.WalkDir(s.siteFS, ".", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil || entry.IsDir() {
 			return nil
 		}
-		if info, err := entry.Info(); err == nil && info.ModTime().After(newest) {
-			newest = info.ModTime()
+		body, err := fs.ReadFile(s.siteFS, path)
+		if err != nil {
+			return nil
 		}
+		_, _ = io.WriteString(sum, path)
+		_, _ = sum.Write(body)
 		return nil
 	})
-	return strconv.FormatInt(newest.Unix(), 10)
+	return hex.EncodeToString(sum.Sum(nil))[:12]
+}
+
+// serveAsset serves one frontend file with an ETag of its contents and no
+// Last-Modified.
+//
+// Every file in the store is stamped 1970, and the page is served "no-cache",
+// which means "revalidate". Against a Last-Modified that never changes a browser
+// is always told Not Modified - so a deploy could never reach a browser that had
+// already loaded the page once, and the frontend appeared frozen at whatever
+// version it first saw.
+func (s *Server) serveAsset(w http.ResponseWriter, r *http.Request, path string) {
+	body, err := fs.ReadFile(s.siteFS, path)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	tag := `"` + assetTag(body) + `"`
+	w.Header().Set("ETag", tag)
+	w.Header().Set("Content-Type", assetType(path))
+	if matchesETag(r.Header.Get("If-None-Match"), tag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	_, _ = w.Write(body)
+}
+
+// assetTag is a short digest of one file's contents, which is what makes a
+// revalidation meaningful: the same bytes answer Not Modified, different bytes
+// are sent.
+func assetTag(body []byte) string {
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+// assetType is the media type of a frontend file, from its name.
+func assetType(path string) string {
+	if kind := mime.TypeByExtension(filepath.Ext(path)); kind != "" {
+		return kind
+	}
+	return "application/octet-stream"
+}
+
+// matchesETag reports whether an If-None-Match header names this tag. The header
+// may list several, and any of them may carry the weak prefix.
+func matchesETag(header, tag string) bool {
+	for _, candidate := range strings.Split(header, ",") {
+		candidate = strings.TrimPrefix(strings.TrimSpace(candidate), "W/")
+		if strings.TrimSpace(candidate) == tag {
+			return true
+		}
+	}
+	return false
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
