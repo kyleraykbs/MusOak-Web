@@ -224,7 +224,13 @@ test("the room position follows the server clock, freezes when paused and stops 
   assert.equal(positionMs(started, 3000), 0, "before the start is still the start");
 
   const offset = applyEvent(started, { type: "pong", clientSentAt: 100, serverReceivedAt: 4000 });
-  assert.equal(offset.serverOffsetMs, offsetFrom(100, Date.now(), 4000));
+  // Within a few milliseconds of the offset for *now*: the code reads the clock
+  // itself and this reads it again, so asking for an exact match is asking for
+  // the two calls to land in the same millisecond.
+  assert.ok(
+    Math.abs(offset.serverOffsetMs - offsetFrom(100, Date.now(), 4000)) <= 5,
+    `offset ${offset.serverOffsetMs} is not the offset for now`
+  );
 
   const paused = applyEvent(started, { type: "paused", roomId: "room-1", data: { positionMs: 7000 } });
   assert.equal(positionMs(paused, 99000), 7000);
