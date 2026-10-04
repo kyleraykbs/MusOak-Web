@@ -28,6 +28,7 @@ import {
   roomPlayMode,
   driftDecision,
   followWithPlayer,
+  transportNotice,
 } from "../rooms-state.js";
 import { state } from "../state.js";
 
@@ -960,4 +961,20 @@ test("the song prepared behind this one is fetched and reported before it is nee
     0,
     "with no length: the measured one follows once the song is really playing"
   );
+});
+
+// A member's hand on the transport is announced by name; the room's own
+// decisions are silent, since there is nobody to name.
+test("a member's transport action is announced, the room's own is silent", () => {
+  const by = { id: KYLE, name: "Kyle" };
+  assert.equal(transportNotice({ type: "paused", data: { by } }), "Kyle paused");
+  assert.equal(transportNotice({ type: "resumed", data: { by } }), "Kyle resumed");
+  assert.equal(transportNotice({ type: "seeked", data: { by } }), "Kyle seeked");
+  assert.equal(transportNotice({ type: "track_skipped", data: { by } }), "Kyle skipped");
+  // The room skipped it on votes, or the track simply ran out: no name to say.
+  assert.equal(transportNotice({ type: "track_skipped", data: { reason: "votes" } }), "");
+  assert.equal(transportNotice({ type: "track_skipped", data: { reason: "completed" } }), "");
+  // Events that are not the transport at all say nothing.
+  assert.equal(transportNotice({ type: "queue_updated", data: { by } }), "");
+  assert.equal(transportNotice(null), "");
 });

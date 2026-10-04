@@ -10,6 +10,7 @@
 // reducers be tested without a browser.
 
 import { state, rememberRoom, forgetRoom } from "./state.js";
+import { toast } from "./dom.js";
 
 /** Who may drive a room. */
 export const CONTROLS_HOST = "host";
@@ -736,7 +737,42 @@ function onMessage(connection, message) {
     connection.state = next;
     publish();
   }
+  if (mine) notifyTransport(event);
   if (mine && RESYNC_EVENTS.has(type)) scheduleResync(connection);
+}
+
+/** What a member did, said in the past tense for the room's notice. */
+const TRANSPORT_VERBS = {
+  [EVENTS.paused]: "paused",
+  [EVENTS.resumed]: "resumed",
+  [EVENTS.seeked]: "seeked",
+  [EVENTS.trackSkipped]: "skipped",
+};
+
+/** How long the same notice stays quiet after it is shown, so dragging the
+ *  seek bar says one thing instead of a hundred. */
+const TRANSPORT_NOTICE_MS = 1200;
+
+let lastTransportNotice = { text: "", at: 0 };
+
+/** What a member's hand on the transport is called, or "" when nobody's is on
+ *  it: the room's own decisions - a vote, a track running out - name no one. */
+export function transportNotice(event) {
+  const verb = TRANSPORT_VERBS[str(event && event.type)];
+  const name = str(event && event.data && event.data.by && event.data.by.name);
+  if (!verb || !name) return "";
+  return `${name} ${verb}`;
+}
+
+/** Say who touched the transport, once: a dragged seek bar is one notice, not
+ *  one per pixel. */
+function notifyTransport(event) {
+  const text = transportNotice(event);
+  if (!text) return;
+  const now = Date.now();
+  if (text === lastTransportNotice.text && now - lastTransportNotice.at < TRANSPORT_NOTICE_MS) return;
+  lastTransportNotice = { text, at: now };
+  toast(text);
 }
 
 /** Events whose payload is a summary: the snapshot is the fuller truth. */
