@@ -100,8 +100,8 @@ function openPanel() {
   const controls = h(
     "select",
     { class: "input", title: "Who may pause, skip and seek" },
-    h("option", { value: "host", text: "Host controls" }),
-    h("option", { value: "everyone", text: "Everyone controls" })
+    h("option", { value: "everyone", text: "Everyone controls", selected: true }),
+    h("option", { value: "host", text: "Host controls" })
   );
   const password = h("input", {
     class: "input",

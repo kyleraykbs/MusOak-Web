@@ -669,7 +669,7 @@ export class Client {
     return this.get(`/api/v1/rooms/${id}`).then((payload) => payload?.room || payload || {});
   }
 
-  createRoom(name, controls = "host", password = "") {
+  createRoom(name, controls = "everyone", password = "") {
     return this.post("/api/v1/rooms", { name, controls, password }).then((value) => value || {});
   }
 
