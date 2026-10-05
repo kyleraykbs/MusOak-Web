@@ -22,8 +22,12 @@ export const PREFETCH = 3;
 /** How often the bar asks the backend whether a download is done. */
 const POLL_MS = 400;
 
-/** How long a preload may take before the room's own timeout is left to it. */
-const PRELOAD_TIMEOUT_MS = 8000;
+/** How long a preload may run before it is abandoned as hung. Giving up does
+ *  not shorten the room's wait - it is waiting for this file either way - and an
+ *  abandoned preload throws away the bytes it buffered, so the real player
+ *  fetches the whole thing again. Only a connection that hangs without failing
+ *  should reach this. */
+const PRELOAD_TIMEOUT_MS = 60000;
 /** How long this client waits for the backend to finish a file before saying it
  *  did not arrive. The server retries its own downloads and reports failure;
  *  this is the backstop for one that is stuck rather than failed, which would
@@ -1240,7 +1244,11 @@ class Player {
         // waits until the browser has it buffered, and then the song really does
         // start at its beginning.
         if (!onReady) return;
-        if (await this._preload(resolved.variantId)) onReady(resolved.variantId);
+        const durationMs = await this._preload(resolved.variantId);
+        // The length the browser measured, so the room knows how long the song
+        // really is before it starts: a report without one leaves the room on
+        // the song's canonical length until the song is already playing.
+        if (durationMs > 0) onReady(resolved.variantId, durationMs);
       })
       .catch(() => {
         /* a track that cannot be fetched will say so when it is reached */
@@ -1252,15 +1260,21 @@ class Player {
    *
    * The element is thrown away afterwards; what matters is that the bytes are
    * cached under the URL the real player will ask for, so the transition costs
-   * nothing. A file that never becomes playable reports false rather than
-   * holding the room up: the room's timeout is the backstop.
+   * nothing. Resolves with the length the browser measured, or zero when the
+   * file never became playable - the room's own reckoning is the backstop.
+   *
+   * The timeout is generous on purpose. Giving up here does not shorten
+   * anything: the room is waiting for this file either way, and a preload
+   * abandoned half-way throws away the bytes it had buffered, so the real
+   * player fetches the whole thing again. It exists only so a connection that
+   * hangs without failing does not hold the fetch open for the session.
    */
   _preload(variantId) {
     return new Promise((resolve) => {
-      if (!variantId) return resolve(false);
+      if (!variantId) return resolve(0);
       let settled = false;
       const audio = new Audio();
-      const done = (ok) => {
+      const done = (durationMs) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
@@ -1268,11 +1282,14 @@ class Player {
         audio.removeEventListener("error", onError);
         audio.removeAttribute("src");
         audio.load();
-        resolve(ok);
+        resolve(durationMs);
       };
-      const onCanPlay = () => done(true);
-      const onError = () => done(false);
-      const timer = setTimeout(() => done(false), PRELOAD_TIMEOUT_MS);
+      const onCanPlay = () => {
+        const seconds = Number(audio.duration);
+        done(Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : 0);
+      };
+      const onError = () => done(0);
+      const timer = setTimeout(() => done(0), PRELOAD_TIMEOUT_MS);
       audio.preload = "auto";
       audio.muted = true;
       audio.addEventListener("canplay", onCanPlay, { once: true });

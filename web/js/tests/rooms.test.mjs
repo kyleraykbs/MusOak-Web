@@ -940,10 +940,18 @@ test("a member who is not playing still fetches the room's next song", async (t)
   // And the room is told this member is ready for it, which is what lets the
   // song start the instant this one ends instead of waiting for them.
   assert.equal(typeof player.warmReady, "function", "the fetch came with a report to make");
-  player.warmReady("v-default");
+  player.warmReady("v-default", 253705);
   assert.ok(
     await waitFor(() => client.calls.ready.some((report) => report.trackId === "track-a2")),
     "readiness is reported for a song the room has not started"
+  );
+  // The length the browser measured travels with it, so the room knows how long
+  // the song is before it starts: a report without one leaves the room on the
+  // song's canonical length until the song is already playing.
+  assert.equal(
+    client.calls.ready.find((report) => report.trackId === "track-a2").durationMs,
+    253705,
+    "and it carries the length the browser measured"
   );
 });
 

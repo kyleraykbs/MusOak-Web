@@ -1282,7 +1282,7 @@ function warmAhead(player, room, itemId, running) {
     running.preReadyFor = preparedId;
     player.warm?.(
       { id: str(prepared.trackId), title: prepared.title },
-      { onReady: (variantId) => reportReadyAhead(prepared, variantId) }
+      { onReady: (variantId, durationMs) => reportReadyAhead(prepared, variantId, durationMs) }
     );
   }
 }
@@ -1496,14 +1496,15 @@ function setLoading(connection, loading) {
   setState({ ...connection.state, loading });
 }
 
-/** Tell the room a file is here for a song it has not started yet. The report
- *  carries no length: the room starts on it, and the length this member really
- *  plays follows once the song is running and the browser has measured it. */
-function reportReadyAhead(item, variantId) {
+/** Tell the room a file is here for a song it has not started yet, and how long
+ *  it runs. The room starts on this report, and the length is the one the
+ *  browser measured: a report without one leaves the room on the song's
+ *  canonical length until the song is already playing. */
+function reportReadyAhead(item, variantId, durationMs = 0) {
   const connection = active;
   const trackId = str(item?.trackId);
   if (!connection || !trackId || !variantId) return;
-  connection.client.roomReady(connection.roomId, trackId, variantId, 0).catch(() => {});
+  connection.client.roomReady(connection.roomId, trackId, variantId, Math.max(0, Math.round(num(durationMs)))).catch(() => {});
 }
 
 /** Tell the room the file is here — once for each prepared track.
