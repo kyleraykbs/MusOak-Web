@@ -836,6 +836,7 @@ function notifyTransport(event) {
 
 /** Events whose payload is a summary: the snapshot is the fuller truth. */
 const RESYNC_EVENTS = new Set([
+  EVENTS.trackStarted,
   EVENTS.trackPrepared,
   EVENTS.voteUpdated,
   EVENTS.readyState,
@@ -1046,6 +1047,7 @@ export function followWithPlayer(playbackPlayer) {
     track: null,
     reportedKey: "",
     alignedItemId: "",
+    endedAskedFor: "",
     preReadyFor: "",
     preReadyAt: 0,
     preReadyDone: "",
@@ -1131,6 +1133,7 @@ function forgetTrack() {
   plugin.track = null;
   plugin.reportedKey = "";
   plugin.alignedItemId = "";
+  plugin.endedAskedFor = "";
   plugin.preReadyFor = "";
   plugin.preReadyAt = 0;
   plugin.preReadyDone = "";
@@ -1171,6 +1174,17 @@ async function followRoom(running) {
     running.reportedKey = "";
     running.failedItemId = "";
     running.failedAt = 0;
+  }
+
+  // The file this member was playing has run out. The room's clock is that file,
+  // so the room should have moved on - and a client still showing the song it
+  // just finished has a stale picture of it: a start that never arrived, a
+  // socket that was down, a frame dropped. Asking turns "it sits on the play
+  // button until something else happens" into "it goes". A skip needs none of
+  // this, which is why a skip was always instant: its answer carries the room.
+  if (player.hasEnded?.() && running.endedAskedFor !== itemId) {
+    running.endedAskedFor = itemId;
+    scheduleResync(active);
   }
 
   // The room's next songs are fetched, and this member's readiness for them
@@ -1274,10 +1288,21 @@ async function followRoom(running) {
     // already playing, and rewinding the room to their file would be the host
     // arguing with the room they are supposed to lead. There they follow it,
     // like anybody else.
-    const atStart = positionMs(room, Date.now()) < HOST_ALIGN_MS && player.positionMs() < HOST_ALIGN_MS;
-    if (isHost(room) && atStart && !player.isPaused() && running.alignedItemId !== itemId) {
+    const mine = player.positionMs();
+    const roomAt = positionMs(room, Date.now());
+    // The file starts when it is ready and the room's clock starts when the song
+    // does, so the two differ by however long the load took - and the room is the
+    // one that has run ahead. Pinning it back is worth a seek only when the gap
+    // is real: a seek is heard by everybody, and one that moves nothing is noise.
+    const behind = roomAt - mine > HOST_PIN_MS;
+    const atStart = roomAt < HOST_ALIGN_MS * 2 && mine < HOST_ALIGN_MS;
+    if (isHost(room) && atStart && behind && !player.isPaused() && running.alignedItemId !== itemId) {
       running.alignedItemId = itemId;
-      seek(player.positionMs()).catch(() => {});
+      seek(mine).catch(() => {});
+      // The room is on its way back to where this file is. Correcting the file
+      // to the room in the same breath would drag it forward - the song starting
+      // a couple of seconds in, for the one person who is the clock.
+      return;
     }
     followTimeline(player, room);
   } else if (!player.isPaused()) player.pause();
@@ -1286,6 +1311,10 @@ async function followRoom(running) {
 /** How near the room's start a song must still be for the host to pin the clock
  *  to their own file. Past this they are joining a song already under way. */
 const HOST_ALIGN_MS = 2000;
+
+/** How far the room must have run ahead of the host's file before pinning it
+ *  back is worth a seek. Below this the two are where they should be. */
+const HOST_PIN_MS = 250;
 
 /**
  * Get the room's next songs ready, and say so for the one it has prepared.

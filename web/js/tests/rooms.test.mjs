@@ -376,7 +376,7 @@ const FOLLOWER = {
 };
 
 function fakeClient({ room = HOST, joinError = null, sources = null, memberId = KYLE } = {}) {
-  const calls = { joins: [], commands: [], leaves: [], ready: [], sockets: [] };
+  const calls = { joins: [], commands: [], leaves: [], ready: [], sockets: [], rooms: [] };
   const client = {
     memberId,
     calls,
@@ -388,6 +388,7 @@ function fakeClient({ room = HOST, joinError = null, sources = null, memberId = 
       return Promise.resolve({ room: client.roomData, memberId });
     },
     room() {
+      calls.rooms.push({ roomId: client.roomId });
       return Promise.resolve(client.roomData);
     },
     sources(trackId) {
@@ -699,6 +700,12 @@ class FakePlayer {
     this.variant = variantId;
     this.loading = true;
     this.ready = "downloading";
+    // A new source resets the element: it stands at the position it was handed,
+    // and it is not the ended file that was here a moment ago. A fake that kept
+    // either across a load would hide the very thing these tests are for - a
+    // client sitting at the end of the last song while the room plays the next.
+    this.position = positionMs;
+    this.ended = false;
     // The fetch finishes a moment later, as a real one would.
     Promise.resolve().then(() => {
       this.loading = false;
@@ -1297,4 +1304,187 @@ test("a member's transport action is announced, the room's own is silent", () =>
   // Events that are not the transport at all say nothing.
   assert.equal(transportNotice({ type: "queue_updated", data: { by } }), "");
   assert.equal(transportNotice(null), "");
+});
+
+// --- a song is not cut short, and a client is not left behind --------------
+//
+// A room's position is the one thing every listener hears at once: a seek is
+// not a local nudge, it moves the song for everybody, and the room takes it at
+// its word. The symptom that prompted these is a song ending seconds after it
+// started - the bar parked at the end of the finished song, the button showing
+// play, and the room already playing the next one for everybody else - from a
+// client nobody had touched. Skipping a song never did it, and that is the clue:
+// a skip's own answer carries the room, while an autoplay has only the event.
+
+test("the host follows the room onto the next song instead of parking on the finished one", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const client = fakeClient({ sources: ONE_VARIANT });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1" });
+  const socket = client.calls.sockets[0];
+  const first = item("a1", "first", KYLE);
+  const second = item("a2", "second", KYLE);
+
+  client.roomData = roomPrepared(first);
+  socket.onEvent({ type: "track_prepared", roomId: "room-1", atMs: Date.now(), data: { item: first } });
+  await waitFor(() => player.plays.length === 1);
+
+  const firstStart = Date.now() - 1000;
+  client.roomData = roomStarted(first, firstStart, 30000);
+  socket.onEvent({
+    type: "track_started",
+    roomId: "room-1",
+    atMs: Date.now(),
+    data: { item: first, startedAt: firstStart, timelineMs: 30000 },
+  });
+  await waitFor(() => !player.isPaused());
+
+  // The file runs out. A real element stops itself, which reads as paused, and
+  // the bar sits at the end of the song that has finished.
+  player.ended = true;
+  player.paused = true;
+  player.position = 30000;
+
+  // The room moves on - the next song was prepared behind this one and starts
+  // the instant this one ends - and this client goes with it rather than sitting
+  // on the finished file, at the finished file's position.
+  const secondStart = Date.now();
+  client.roomData = roomStarted(second, secondStart, 20000);
+  socket.onEvent({
+    type: "track_started",
+    roomId: "room-1",
+    atMs: Date.now(),
+    data: { item: second, startedAt: secondStart, timelineMs: 20000 },
+  });
+
+  assert.ok(await waitFor(() => player.plays.length === 2), "the next song is loaded here");
+  assert.equal(player.plays[1].track.id, "track-a2", "and it is the room's next song");
+  assert.ok(await waitFor(() => !player.isPaused()), "and it is playing");
+  assert.ok(player.positionMs() < 3000, `began at ${player.positionMs()}ms, want the room's position`);
+});
+
+test("the follower moves the room only to pin the host's clock, once, at the start", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const client = fakeClient({ sources: ONE_VARIANT });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1" });
+  const socket = client.calls.sockets[0];
+  const track = item("a1", "first", KYLE);
+
+  client.roomData = roomPrepared(track);
+  socket.onEvent({ type: "track_prepared", roomId: "room-1", atMs: Date.now(), data: { item: track } });
+  await waitFor(() => player.plays.length === 1);
+
+  // A prepared song is not a reason to move the room: it is not playing yet.
+  const asks = () => client.calls.commands.filter((command) => command.name === "roomSeek");
+  assert.equal(asks().length, 0, "a prepared song does not move the room");
+
+  // The room starts the song as soon as it is prepared, and this client's file
+  // begins when it is ready - so the room is a couple of seconds ahead of the
+  // file by then. That gap is the one thing the host's own file is allowed to
+  // correct.
+  const startedAt = Date.now() - 2000;
+  client.roomData = roomStarted(track, startedAt, 30000);
+  socket.onEvent({
+    type: "track_started",
+    roomId: "room-1",
+    atMs: Date.now(),
+    data: { item: track, startedAt, timelineMs: 30000 },
+  });
+  await waitFor(() => !player.isPaused());
+
+  assert.ok(await waitFor(() => asks().length === 1), "the host's clock is pinned to their file");
+  assert.ok(asks()[0].args[1] < 3000, `pinned the room to ${asks()[0].args[1]}ms, want where the file is`);
+
+  // And not again: the room is the authority from there, and a client that kept
+  // re-pinning it would drag the song around for everybody.
+  player.position = 12000;
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  assert.equal(asks().length, 1, "the room is not moved again for the same song");
+});
+
+test("the host's clock is not pinned from a stale position", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const client = fakeClient({ sources: ONE_VARIANT });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1" });
+  const socket = client.calls.sockets[0];
+  const track = item("a1", "first", KYLE);
+
+  client.roomData = roomPrepared(track);
+  socket.onEvent({ type: "track_prepared", roomId: "room-1", atMs: Date.now(), data: { item: track } });
+  await waitFor(() => player.plays.length === 1);
+
+  // The element is still holding the song before this one, at its end - what a
+  // client that has not loaded the new file yet looks like. The room has only
+  // just started this song, and a pin from here would put the room at the end
+  // of it and end it on the spot.
+  player.position = 215000;
+  const startedAt = Date.now();
+  client.roomData = roomStarted(track, startedAt, 219000);
+  socket.onEvent({
+    type: "track_started",
+    roomId: "room-1",
+    atMs: Date.now(),
+    data: { item: track, startedAt, timelineMs: 219000 },
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  // The room may still be pinned to where this file *is* - that is the host's
+  // job - but never to where the other file left off: a seek to the end of a
+  // song that has just started is that song cut off for everybody.
+  const asks = client.calls.commands.filter((command) => command.name === "roomSeek");
+  assert.ok(
+    asks.every((ask) => ask.args[1] < 3000),
+    `asked for ${JSON.stringify(asks.map((a) => a.args))}, want nothing near the stale position`
+  );
+});
+
+test("a client whose file has ended asks the room rather than sitting on the finished song", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const client = fakeClient({ sources: ONE_VARIANT });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1" });
+  const socket = client.calls.sockets[0];
+  const first = item("a1", "first", KYLE);
+  const second = item("a2", "second", KYLE);
+
+  client.roomData = roomPrepared(first);
+  socket.onEvent({ type: "track_prepared", roomId: "room-1", atMs: Date.now(), data: { item: first } });
+  await waitFor(() => player.plays.length === 1);
+
+  const firstStart = Date.now() - 1000;
+  client.roomData = roomStarted(first, firstStart, 30000);
+  socket.onEvent({
+    type: "track_started",
+    roomId: "room-1",
+    atMs: Date.now(),
+    data: { item: first, startedAt: firstStart, timelineMs: 30000 },
+  });
+  await waitFor(() => !player.isPaused());
+
+  // Let the room's own debounced refresh settle, so what is counted next is
+  // caused by the file ending rather than by the events before it.
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  const before = client.calls.rooms.length;
+
+  // The file runs out and the room moves on - but this client never hears it:
+  // the socket was down, or the frame was dropped. A skip would not care, since
+  // its own answer carries the room; an autoplay has only the event, and with
+  // that lost the client sits on the finished song until something else happens
+  // to refresh it. Its own file ending is the tell, and it asks.
+  player.ended = true;
+  player.paused = true;
+
+  const secondStart = Date.now();
+  client.roomData = roomStarted(second, secondStart, 20000);
+
+  assert.ok(await waitFor(() => client.calls.rooms.length > before), "the room is asked where it is");
+  assert.ok(await waitFor(() => player.plays.length === 2), "and the next song is played");
+  assert.equal(player.plays[1].track.id, "track-a2", "the room's next song, not the finished one");
+  assert.ok(await waitFor(() => !player.isPaused()), "and it is playing");
 });
