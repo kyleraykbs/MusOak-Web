@@ -557,8 +557,10 @@ class FakePlayer {
     // file whose metadata has not arrived yet.
     this.measured = null;
     this.paused = true;
+    this.ended = false;
     this.plays = [];
     this.seeks = [];
+    this.resumes = 0;
     this.warmed = [];
     // What `variantFor` answers: the variant the room's follower will play.
     this.resolvedVariant = "v-default";
@@ -620,12 +622,18 @@ class FakePlayer {
     return this.paused;
   }
 
+  /** An ended file reads as paused, as a real element's does. */
+  hasEnded() {
+    return this.ended;
+  }
+
   pause() {
     this.paused = true;
   }
 
   resume() {
     this.paused = false;
+    this.resumes += 1;
   }
 
   seek(ms) {
@@ -874,6 +882,40 @@ test("the host is never seeked onto the room's clock, nor stopped short of their
   player.position = 29760;
   await new Promise((resolve) => setTimeout(resolve, 700));
   assert.equal(player.isPaused(), false, "the host plays to the end of their own file");
+});
+
+test("a file that has run out is not started over while the room moves on", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const client = fakeClient({ sources: ONE_VARIANT });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1" });
+  const socket = client.calls.sockets[0];
+  const track = item("a1", "first", KYLE);
+
+  client.roomData = roomPrepared(track);
+  socket.onEvent({ type: "track_prepared", roomId: "room-1", atMs: Date.now(), data: { item: track } });
+  await waitFor(() => player.plays.length === 1);
+
+  const startedAt = Date.now() - 500;
+  client.roomData = roomStarted(track, startedAt, 30000);
+  socket.onEvent({
+    type: "track_started",
+    roomId: "room-1",
+    atMs: Date.now(),
+    data: { item: track, startedAt, timelineMs: 30000 },
+  });
+  await waitFor(() => !player.isPaused());
+
+  // The file runs out. The element stops itself, which reads as paused - but it
+  // is not waiting to be resumed, and play() on it starts the song again from
+  // the beginning. That is what a listener hears as the song replaying just
+  // before it jumps.
+  player.ended = true;
+  player.paused = true;
+  const resumes = player.resumes;
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  assert.equal(player.resumes, resumes, "the ended file is left where it stopped");
 });
 
 test("a seek moves this member's own file, not only the room's idea of where they are", async (t) => {

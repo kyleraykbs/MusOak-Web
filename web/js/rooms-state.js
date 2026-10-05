@@ -1352,7 +1352,11 @@ function followTimeline(player, room) {
   // room on, and seeking or pausing them would be the room arguing with itself.
   // Starting it is still the room's business: the file was fetched and held.
   if (isHost(room)) {
-    if (player.isPaused()) player.resume();
+    // An ended file is not a paused one: the element stops itself when it runs
+    // out, and play() would start it over from the beginning - which is what a
+    // room that is about to move on would hear. Resuming is for the file that
+    // was fetched and held, waiting for the room to start it.
+    if (player.isPaused() && !player.hasEnded?.()) player.resume();
     // Except when the room has been moved somewhere else entirely. That is a
     // seek somebody made, not drift, and it is the room's position like any
     // other: the host follows it, and their own seeks moved them already.
@@ -1379,7 +1383,7 @@ function followTimeline(player, room) {
   }
 
   if (driftDecision(local, position) !== "hold") player.seek(position);
-  if (player.isPaused()) player.resume();
+  if (player.isPaused() && !player.hasEnded?.()) player.resume();
 }
 
 /** Whether this member is the room's host: the one whose copy it runs on. */

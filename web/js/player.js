@@ -541,6 +541,15 @@ class Player {
     return !this.audio || this.audio.paused;
   }
 
+  /** Whether the file has run out.
+   *
+   *  An ended file reads as paused - the element stops itself - but it is not
+   *  one that is waiting to be resumed: play() would start it again from the
+   *  beginning. A room that is about to move on must not do that. */
+  hasEnded() {
+    return Boolean(this.audio && this.audio.ended);
+  }
+
   isPlaying() {
     return Boolean(this.audio) && !this.audio.paused && !this.audio.ended;
   }
