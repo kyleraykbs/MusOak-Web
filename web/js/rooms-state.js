@@ -1347,6 +1347,9 @@ async function resolveVariant(room, trackId, player) {
  * not do that, and neither does this.
  */
 function followTimeline(player, room) {
+  const position = positionMs(room, Date.now());
+  const timeline = num(room.current.timelineMs);
+
   // The host is the room's clock, so there is nothing here to correct: the song
   // runs as long as their copy, their file reaching its end is what moves the
   // room on, and seeking or pausing them would be the room arguing with itself.
@@ -1363,9 +1366,6 @@ function followTimeline(player, room) {
     if (Math.abs(player.positionMs() - position) > HOST_SEEK_JUMP_MS) player.seek(position);
     return;
   }
-
-  const position = positionMs(room, Date.now());
-  const timeline = num(room.current.timelineMs);
 
   // The room's timeline is over: stop rather than loop or move on.
   if (timeline > 0 && position >= timeline) {

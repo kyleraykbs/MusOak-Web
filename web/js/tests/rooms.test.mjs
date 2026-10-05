@@ -388,6 +388,15 @@ function fakeClient({ room = HOST, joinError = null, sources = null, memberId = 
     },
     roomSeek(roomId, positionMs) {
       calls.commands.push({ name: "roomSeek", args: [roomId, positionMs] });
+      // The room answers with its new position, which is what a follower then
+      // keeps its own file on: without this the fake would hand back the old
+      // position and the follow loop would rightly pull the member back.
+      if (client.roomData && client.roomData.current) {
+        client.roomData = {
+          ...client.roomData,
+          current: { ...client.roomData.current, startedAtMs: Date.now() - positionMs, positionMs: 0 },
+        };
+      }
       return Promise.resolve(client.roomData);
     },
     roomVote(roomId, score) {
@@ -846,7 +855,7 @@ test("a file shorter than the timeline waits, silent, instead of starting over",
   assert.equal(player.seeks.length, 0, "and the timeline does not push it back");
 });
 
-test("the host is never seeked onto the room's clock, nor stopped short of their own end", async (t) => {
+test("the host follows a jump it did not make, and ignores its own drift", async (t) => {
   t.after(closeRoom);
   const player = new FakePlayer();
   const client = fakeClient({ sources: ONE_VARIANT });
@@ -859,7 +868,10 @@ test("the host is never seeked onto the room's clock, nor stopped short of their
   socket.onEvent({ type: "track_prepared", roomId: "room-1", atMs: Date.now(), data: { item: track } });
   await waitFor(() => player.plays.length === 1);
 
-  const startedAt = Date.now() - 500;
+  // The room is already twenty seconds in: the host arrived late, or somebody
+  // seeked. Either way it is the room's position like any other, and a jump
+  // this size is not drift.
+  const startedAt = Date.now() - 20000;
   client.roomData = roomStarted(track, startedAt, 30000);
   socket.onEvent({
     type: "track_started",
@@ -867,14 +879,15 @@ test("the host is never seeked onto the room's clock, nor stopped short of their
     atMs: Date.now(),
     data: { item: track, startedAt, timelineMs: 30000 },
   });
-  await waitFor(() => !player.isPaused());
+  assert.ok(await waitFor(() => player.seeks.length >= 1), "the host follows the room's position");
+  assert.ok(player.seeks.at(-1) > 15000, `seeked to ${player.seeks.at(-1)}, want where the room is`);
 
-  // The room runs on the host's copy, so a clock that has drifted is not the
-  // host's to chase: seeking them would cut the song they are hearing to catch
-  // up with a clock they are the reference for.
-  player.position = 8000;
+  // Their own small drift is not: the song runs as long as their copy, so there
+  // is nothing there to correct.
+  const seeks = player.seeks.length;
+  player.position = 21000;
   await new Promise((resolve) => setTimeout(resolve, 700));
-  assert.equal(player.seeks.length, 0, "the host is not seeked onto the room's clock");
+  assert.equal(player.seeks.length, seeks, "the host's own drift is not corrected");
 
   // And their file is not stopped a moment short of its own end: that gap is
   // the room's timeline arriving late, and it is the host's silence to hear.
