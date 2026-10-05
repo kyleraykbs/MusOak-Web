@@ -104,6 +104,48 @@ test("queue_updated keeps every member's own queue and the fair master order", (
   assert.deepEqual(myQueue(next), next.queues[KYLE]);
 });
 
+test("a queue event carries only the member whose queue moved", () => {
+  const state = twoMemberRoom();
+  // The server names the member whose queue changed and sends only theirs. The
+  // master mix is a function of the queues and the join order, which the client
+  // already has: sending it made every edit cost the whole room.
+  const next = applyEvent(state, {
+    type: "queue_updated",
+    roomId: "room-1",
+    data: { memberId: SAM, memberQueue: [item("b1", "sam one", SAM), item("b2", "sam two", SAM)] },
+  });
+  assert.deepEqual(
+    next.queues[SAM].map((entry) => entry.id),
+    ["b1", "b2"]
+  );
+  assert.deepEqual(
+    next.queues[KYLE].map((entry) => entry.id),
+    ["a1", "a2"],
+    "the other member's queue is untouched"
+  );
+  // One item from each member per pass, in join order: kyle, sam, kyle, sam.
+  assert.deepEqual(
+    next.masterQueue.map((entry) => entry.id),
+    ["a1", "b1", "a2", "b2"]
+  );
+  assert.deepEqual(
+    next.masterQueue.map((entry) => entry.addedBy),
+    [KYLE, SAM, KYLE, SAM]
+  );
+});
+
+test("a member leaving takes their queue out of the mix", () => {
+  const state = twoMemberRoom();
+  const left = applyEvent(state, { type: "member_left", roomId: "room-1", data: { memberId: SAM, memberCount: 1 } });
+  const after = applyEvent(left, { type: "queue_updated", roomId: "room-1", data: { memberId: SAM, gone: true } });
+  assert.equal(after.queues[SAM], undefined, "their queue is dropped, not replaced");
+  assert.deepEqual(
+    after.masterQueue.map((entry) => entry.id),
+    ["a1", "a2"],
+    "the mix is only the members who are here"
+  );
+});
+
 test("a queue_updated without a pending list derives it from the master queue", () => {
   const playing = applyEvent(twoMemberRoom(), {
     type: "queue_updated",

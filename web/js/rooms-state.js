@@ -174,6 +174,48 @@ function pendingFrom(masterQueue, current) {
 }
 
 /**
+ * The room's play order, from the member queues and the join order.
+ *
+ * The server used to send this with every queue change, along with the pending
+ * list: two more copies of a queue that a room holding three hundred songs
+ * makes a third of a megabyte on the wire, on every enqueue, every advance and
+ * every member arriving. It is a function of what the client already has - one
+ * item from each member per pass, in join order - so the client works it out.
+ */
+export function deriveMaster(queues, members) {
+  const order = list(members)
+    .map((member) => str(member.id))
+    .filter(Boolean);
+  const items = (id) => list(queues && queues[id]);
+  let total = 0;
+  for (const id of order) total += items(id).length;
+  const master = [];
+  for (let pass = 0; master.length < total; pass += 1) {
+    for (const id of order) {
+      const queue = items(id);
+      if (pass < queue.length) master.push(queue[pass]);
+    }
+  }
+  return master;
+}
+
+/**
+ * The queues after one event: the member it names, or all of them when a server
+ * still sends the lot. A member who left has their queue dropped rather than
+ * replaced.
+ */
+function queuesFrom(state, data) {
+  const memberId = str(data.memberId);
+  if (!memberId) {
+    return data.queues === undefined ? state.queues : normalizeQueues(data.queues);
+  }
+  const queues = { ...state.queues };
+  if (data.gone) delete queues[memberId];
+  else queues[memberId] = list(data.memberQueue).map(normalizeItem);
+  return queues;
+}
+
+/**
  * A room's state, empty but well-formed. The connection fields (`me`,
  * `connected`, `error`) belong to the client, not the server.
  */
@@ -257,13 +299,15 @@ export function applyEvent(state, event) {
 
   switch (type) {
     case EVENTS.queueUpdated: {
-      const masterQueue = data.masterQueue === undefined ? state.masterQueue : list(data.masterQueue).map(normalizeItem);
-      const next = data.next === undefined ? state.next : (data.next ? normalizeItem(data.next) : null);
+      const queues = queuesFrom(state, data);
+      const masterQueue =
+        data.masterQueue === undefined ? deriveMaster(queues, state.members) : list(data.masterQueue).map(normalizeItem);
+      const next = data.next === undefined ? state.next : data.next ? normalizeItem(data.next) : null;
       const current = state.current;
       return {
         ...state,
         atMs,
-        queues: data.queues === undefined ? state.queues : normalizeQueues(data.queues),
+        queues,
         masterQueue,
         next,
         queue: data.queue === undefined ? pendingFrom(masterQueue, current) : list(data.queue).map(normalizeItem),
@@ -902,11 +946,12 @@ export function enqueue(track) {
   return command(({ client, roomId }) => client.roomEnqueue(roomId, trackId));
 }
 
-/** Add a list of tracks to your queue, in order. */
-export async function enqueueMany(tracks) {
+/** Add a list of tracks to your queue, as one edit. */
+export function enqueueMany(tracks) {
   const items = Array.isArray(tracks) ? tracks : [tracks];
-  for (const track of items) await enqueue(track);
-  return currentRoom();
+  const ids = items.map((track) => (typeof track === "string" ? track : str(track && track.id))).filter(Boolean);
+  if (!ids.length) return Promise.resolve(currentRoom());
+  return command(({ client, roomId }) => client.roomEnqueue(roomId, ids));
 }
 
 /** Drop one item of your queue. */

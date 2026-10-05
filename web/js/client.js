@@ -681,9 +681,12 @@ export class Client {
     return this.post(`/api/v1/rooms/${roomId}/leave`).then((payload) => payload?.room || payload || {});
   }
 
-  /** Put a track on the caller's own queue; the room's fair order recomputes. */
-  roomEnqueue(roomId, trackId) {
-    return this.post(`/api/v1/rooms/${roomId}/queue`, { trackId }).then(this.roomSnapshot);
+  /** Put tracks on the caller's own queue; the room's fair order recomputes.
+   *  A list goes in one request: adding a playlist is one edit, not one per
+   *  song, and the room hears about it once. */
+  roomEnqueue(roomId, trackIds) {
+    const body = Array.isArray(trackIds) ? { trackIds } : { trackId: trackIds };
+    return this.post(`/api/v1/rooms/${roomId}/queue`, body).then(this.roomSnapshot);
   }
 
   /** Remove one entry (the caller's own, or any member's when the host asks). */
