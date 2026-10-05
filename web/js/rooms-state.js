@@ -47,6 +47,12 @@ export const CLOCK_RESYNC_MS = 15000;
 /** How far the local position may run from the room's before it is seeked. */
 export const DRIFT_TOLERANCE_MS = 1500;
 
+/** How far the room's position may sit from the host's own file before it
+ *  counts as somebody having seeked rather than the host's playback drifting.
+ *  The host is the room's clock, so only a jump of this size is theirs to
+ *  follow - and their own seeks have already moved them. */
+const HOST_SEEK_JUMP_MS = 3000;
+
 /** How often the local player is checked against the room's timeline. */
 export const FOLLOW_TICK_MS = 500;
 
@@ -931,8 +937,20 @@ export function skip() {
   return command(({ client, roomId }) => client.roomSkip(roomId));
 }
 
+/**
+ * Move the room's position, and this member's own file with it.
+ *
+ * A room owns the position, so the seek is asked of the room - but the answer
+ * is a room position, not a moved file. Without this the member's own audio
+ * stays where it was and only the room's idea of where they are has changed,
+ * which reads as a seek that did nothing.
+ */
 export function seek(positionMs = 0) {
-  return command(({ client, roomId }) => client.roomSeek(roomId, Math.max(0, Math.round(num(positionMs)))));
+  const target = Math.max(0, Math.round(num(positionMs)));
+  return command(({ client, roomId }) => client.roomSeek(roomId, target)).then((answer) => {
+    plugin?.player?.seek?.(target);
+    return answer;
+  });
 }
 
 /** A score of 1 (bad) to 5 (great); enough of them skips the track. */
@@ -1335,6 +1353,10 @@ function followTimeline(player, room) {
   // Starting it is still the room's business: the file was fetched and held.
   if (isHost(room)) {
     if (player.isPaused()) player.resume();
+    // Except when the room has been moved somewhere else entirely. That is a
+    // seek somebody made, not drift, and it is the room's position like any
+    // other: the host follows it, and their own seeks moved them already.
+    if (Math.abs(player.positionMs() - position) > HOST_SEEK_JUMP_MS) player.seek(position);
     return;
   }
 

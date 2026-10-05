@@ -876,6 +876,40 @@ test("the host is never seeked onto the room's clock, nor stopped short of their
   assert.equal(player.isPaused(), false, "the host plays to the end of their own file");
 });
 
+test("a seek moves this member's own file, not only the room's idea of where they are", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const client = fakeClient({ sources: ONE_VARIANT });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1" });
+  const socket = client.calls.sockets[0];
+  const track = item("a1", "first", KYLE);
+
+  client.roomData = roomPrepared(track);
+  socket.onEvent({ type: "track_prepared", roomId: "room-1", atMs: Date.now(), data: { item: track } });
+  await waitFor(() => player.plays.length === 1);
+
+  const startedAt = Date.now() - 500;
+  client.roomData = roomStarted(track, startedAt, 30000);
+  socket.onEvent({
+    type: "track_started",
+    roomId: "room-1",
+    atMs: Date.now(),
+    data: { item: track, startedAt, timelineMs: 30000 },
+  });
+  await waitFor(() => !player.isPaused());
+
+  await seek(20000);
+  assert.deepEqual(
+    client.calls.commands.find((command) => command.name === "roomSeek").args,
+    ["room-1", 20000],
+    "the room is asked to move"
+  );
+  // The answer is a room position, not a moved file: without this the bar says
+  // the seek happened and the audio carries on where it was.
+  assert.deepEqual(player.seeks, [20000], "the member's own file moves with the room");
+});
+
 test("the host's file reaching its end tells the room to move on", async (t) => {
   t.after(closeRoom);
   const player = new FakePlayer();
