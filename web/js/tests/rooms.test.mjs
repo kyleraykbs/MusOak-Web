@@ -1543,3 +1543,36 @@ test("every step of a song change is said out loud", async (t) => {
   await new Promise((resolve) => setTimeout(resolve, 1200));
   assert.equal(steps.length, said, `repeated itself: ${JSON.stringify(steps.slice(said))}`);
 });
+
+test("the clock is taken from the quickest sample, not the latest", () => {
+  // The offset is arithmetic on the assumption that the trip out and the trip
+  // back took the same time. A pong delayed on the way out looks like a clock
+  // that is ahead; delayed on the way back, behind. Either way it is wrong, and
+  // a client that believed the latest one would move the room's position for a
+  // whole resync interval - which is heard as the song jumping.
+  const pong = (sent, received, serverReceived, state) =>
+    applyEvent(state, {
+      type: "pong",
+      roomId: "room-1",
+      clientSentAt: sent,
+      clientReceivedAt: received,
+      serverReceivedAt: serverReceived,
+    });
+
+  let state = createRoomState({ me: KYLE });
+  // Slow, delayed outbound: a 400ms round trip, offset reads 200 too high.
+  state = pong(1000, 1400, 1400, state);
+  assert.equal(state.serverOffsetMs, 200, "a single slow sample is all there is to go on");
+
+  // Quick and clean: a 20ms round trip, which is the one to believe.
+  state = pong(2000, 2020, 2010, state);
+  assert.equal(state.serverOffsetMs, 0, "the quickest sample wins");
+
+  // Slow again, delayed the other way, and it arrives last.
+  state = pong(3000, 3400, 3100, state);
+  assert.equal(state.serverOffsetMs, 0, "a slow sample arriving last does not move the clock");
+
+  // The window is bounded: five kept, and the best of those.
+  for (let i = 0; i < 6; i += 1) state = pong(4000 + i * 1000, 4000 + i * 1000 + 400, 4000 + i * 1000 + 200, state);
+  assert.equal(state.clockSamples.length, 5, "the window is bounded");
+});

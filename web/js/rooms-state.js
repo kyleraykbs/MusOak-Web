@@ -44,6 +44,13 @@ const RESYNC_DEBOUNCE_MS = 400;
 /** How often the server clock is sampled while a room is followed. */
 export const CLOCK_RESYNC_MS = 15000;
 
+/** How many clock samples to keep, and how many pings to send in a burst. The
+ *  offset is taken from the quickest of the recent samples: the arithmetic
+ *  assumes a symmetric trip, so a pong that took the long way round - a busy
+ *  socket, a stalled frame - is the one most likely to be wrong. */
+const CLOCK_SAMPLES = 5;
+const CLOCK_BURST = 3;
+
 /** How far the local position may run from the room's before it is seeked. */
 export const DRIFT_TOLERANCE_MS = 1500;
 
@@ -238,6 +245,7 @@ export function createRoomState(initial = {}) {
     skip: { ...DEFAULT_SKIP },
     serverNowMs: 0,
     serverOffsetMs: 0,
+    clockSamples: [],
     atMs: 0,
     me: "",
     connected: false,
@@ -486,7 +494,23 @@ export function applyEvent(state, event) {
 
     case EVENTS.pong: {
       if (!event || event.clientSentAt === undefined || event.serverReceivedAt === undefined) return state;
-      return { ...state, serverOffsetMs: offsetFrom(num(event.clientSentAt), Date.now(), num(event.serverReceivedAt)) };
+      const sent = num(event.clientSentAt);
+      // When the frame arrived, not when this ran: a reducer that runs late is
+      // not a slow network, and counting it as one moves the clock by half of
+      // whatever the delay was.
+      const received = num(event.clientReceivedAt, Date.now());
+      const sample = {
+        offset: offsetFrom(sent, received, num(event.serverReceivedAt)),
+        rtt: Math.max(0, received - sent),
+      };
+      // The quickest of the recent samples is the one to believe: the arithmetic
+      // assumes the trip out and the trip back took the same time, so a pong
+      // that took the long way round - a busy socket, a stalled frame - is the
+      // one most likely to be wrong, and a single bad sample moves the room's
+      // position for a whole resync interval.
+      const recent = [...list(state.clockSamples), sample].slice(-CLOCK_SAMPLES);
+      const best = recent.reduce((a, b) => (b.rtt < a.rtt ? b : a));
+      return { ...state, clockSamples: recent, serverOffsetMs: best.offset };
     }
 
     default:
@@ -759,7 +783,10 @@ export function connect(connection = active) {
 
 /** Ask the server for its clock; the pong that comes back carries the offset. */
 function syncClock(connection) {
-  connection.socket?.send?.("ping", { clientSentAt: Date.now() });
+  // A burst, not one: the offset is taken from the quickest sample of the
+  // recent ones, so several in a row are worth more than one - and the first
+  // estimate after joining is the one a song's start is measured against.
+  for (let i = 0; i < CLOCK_BURST; i += 1) connection.socket?.send?.("ping", { clientSentAt: Date.now() });
   if (connection.clockTimer) return;
   connection.clockTimer = setInterval(() => {
     if (active !== connection || !connection.state.connected) {
@@ -785,6 +812,9 @@ function onMessage(connection, message) {
     data: message.data,
     clientSentAt: message.clientSentAt,
     serverReceivedAt: message.serverReceivedAt,
+    // Stamped here, where the frame actually arrived: the reducer may run a
+    // tick later, and that delay is not the network's.
+    clientReceivedAt: Date.now(),
   };
   const mine = !event.roomId || !connection.state.roomId || event.roomId === connection.state.roomId;
   if (type === EVENTS.roomClosed && mine) {
