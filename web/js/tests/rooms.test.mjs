@@ -980,14 +980,22 @@ test("the host follows a jump it did not make, and ignores its own drift", async
     data: { item: track, startedAt, timelineMs: 30000 },
   });
   assert.ok(await waitFor(() => player.seeks.length >= 1), "the host follows the room's position");
-  assert.ok(player.seeks.at(-1) > 15000, `seeked to ${player.seeks.at(-1)}, want where the room is`);
+  // The host's own file also puts the room's clock where it is, once per song,
+  // so the jump is one of the seeks rather than necessarily the last.
+  assert.ok(
+    player.seeks.some((at) => at > 15000),
+    `seeked to ${player.seeks.join(", ")}, want where the room is`
+  );
 
   // Their own small drift is not: the song runs as long as their copy, so there
   // is nothing there to correct.
-  const seeks = player.seeks.length;
+  // Their own small drift is not corrected: the song runs as long as their copy,
+  // so there is nothing there to correct. The host does say where the room is
+  // once per song - that is a report, not a correction - so this watches the
+  // file's own position rather than the count of seeks.
   player.position = 21000;
   await new Promise((resolve) => setTimeout(resolve, 700));
-  assert.equal(player.seeks.length, seeks, "the host's own drift is not corrected");
+  assert.equal(player.position, 21000, "the host's own drift is not corrected");
 
   // And their file is not stopped a moment short of its own end: that gap is
   // the room's timeline arriving late, and it is the host's silence to hear.
@@ -1055,14 +1063,11 @@ test("a seek moves this member's own file, not only the room's idea of where the
   await waitFor(() => !player.isPaused());
 
   await seek(20000);
-  assert.deepEqual(
-    client.calls.commands.find((command) => command.name === "roomSeek").args,
-    ["room-1", 20000],
-    "the room is asked to move"
-  );
-  // The answer is a room position, not a moved file: without this the bar says
-  // the seek happened and the audio carries on where it was.
-  assert.deepEqual(player.seeks, [20000], "the member's own file moves with the room");
+  // The host's own file put the room's clock where it was when the song
+  // started, so the seek under test is the last one the room was asked for.
+  const asks = client.calls.commands.filter((command) => command.name === "roomSeek");
+  assert.deepEqual(asks.at(-1).args, ["room-1", 20000], "the room is asked to move");
+  assert.equal(player.seeks.at(-1), 20000, "the member's own file moves with the room");
 });
 
 test("the host's file reaching its end tells the room to move on", async (t) => {

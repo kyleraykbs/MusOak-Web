@@ -1045,6 +1045,10 @@ export function followWithPlayer(playbackPlayer) {
     // the track behind the item, for the artist and artwork the bar shows
     track: null,
     reportedKey: "",
+    alignedItemId: "",
+    preReadyFor: "",
+    preReadyAt: 0,
+    preReadyDone: "",
     failedItemId: "",
     failedAt: 0,
     resolving: "",
@@ -1126,6 +1130,10 @@ function forgetTrack() {
   plugin.variantId = "";
   plugin.track = null;
   plugin.reportedKey = "";
+  plugin.alignedItemId = "";
+  plugin.preReadyFor = "";
+  plugin.preReadyAt = 0;
+  plugin.preReadyDone = "";
   plugin.failedItemId = "";
   plugin.failedAt = 0;
   plugin.resolving = "";
@@ -1253,9 +1261,31 @@ async function followRoom(running) {
 
   reportReady(running, room, item, trackId, player);
 
-  if (mode === "play") followTimeline(player, room);
-  else if (!player.isPaused()) player.pause();
+  if (mode === "play") {
+    // The host is the room's clock, so the room's clock is where their file is.
+    // Their player starts when it is ready and says so once per song, and
+    // everybody else follows that: this is a listen-along, not a room waiting
+    // on a file. Without it the room's clock is wherever the song was prepared,
+    // and the host - who never corrects their own drift - hears the song behind
+    // everyone following them.
+    //
+    // Only at the beginning of a song, though: a host arriving part-way in - a
+    // reload, a room they just joined - has a file at zero and a room that is
+    // already playing, and rewinding the room to their file would be the host
+    // arguing with the room they are supposed to lead. There they follow it,
+    // like anybody else.
+    const atStart = positionMs(room, Date.now()) < HOST_ALIGN_MS;
+    if (isHost(room) && atStart && !player.isPaused() && running.alignedItemId !== itemId) {
+      running.alignedItemId = itemId;
+      seek(player.positionMs()).catch(() => {});
+    }
+    followTimeline(player, room);
+  } else if (!player.isPaused()) player.pause();
 }
+
+/** How near the room's start a song must still be for the host to pin the clock
+ *  to their own file. Past this they are joining a song already under way. */
+const HOST_ALIGN_MS = 2000;
 
 /**
  * Get the room's next songs ready, and say so for the one it has prepared.
@@ -1278,14 +1308,29 @@ function warmAhead(player, room, itemId, running) {
   // the gap, and a download that begins at the end is the gap.
   const prepared = room.next;
   const preparedId = str(prepared?.id);
-  if (preparedId && running.preReadyFor !== preparedId) {
-    running.preReadyFor = preparedId;
-    player.warm?.(
-      { id: str(prepared.trackId), title: prepared.title },
-      { onReady: (variantId, durationMs) => reportReadyAhead(prepared, variantId, durationMs) }
-    );
-  }
+  if (!preparedId) return;
+  // A fetch that failed once is the difference between the next song starting
+  // on the instant and the room waiting for a download at the gap, so it is
+  // tried again while the room still has this song prepared. It stops once the
+  // room has been told: from there the file is the room's business, not this
+  // member's.
+  if (running.preReadyDone === preparedId) return;
+  if (running.preReadyFor === preparedId && Date.now() - running.preReadyAt < PRELOAD_RETRY_MS) return;
+  running.preReadyFor = preparedId;
+  running.preReadyAt = Date.now();
+  player.warm?.(
+    { id: str(prepared.trackId), title: prepared.title },
+    {
+      onReady: (variantId, durationMs) => {
+        running.preReadyDone = preparedId;
+        reportReadyAhead(prepared, variantId, durationMs);
+      },
+    }
+  );
 }
+
+/** How long to wait before trying a failed fetch for the prepared song again. */
+const PRELOAD_RETRY_MS = 15000;
 
 /** How many of the room's upcoming items to have ready, as the player keeps its
  *  own queue: the next two songs, so a switchover costs nothing. */
