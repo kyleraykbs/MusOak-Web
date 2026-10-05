@@ -712,6 +712,11 @@ export class Client {
     return this.post(`/api/v1/rooms/${roomId}/skip`).then(this.roomSnapshot);
   }
 
+  /** The host's copy of the song has run out: the room moves on from their end. */
+  roomEnded(roomId) {
+    return this.post(`/api/v1/rooms/${roomId}/ended`).then(this.roomSnapshot);
+  }
+
   roomSeek(roomId, positionMs) {
     return this.post(`/api/v1/rooms/${roomId}/seek`, { positionMs }).then(this.roomSnapshot);
   }

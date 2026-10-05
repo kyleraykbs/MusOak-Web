@@ -382,6 +382,10 @@ function fakeClient({ room = HOST, joinError = null, sources = null, memberId = 
       calls.commands.push({ name: "roomSkip", args: [roomId] });
       return Promise.resolve(client.roomData);
     },
+    roomEnded(roomId) {
+      calls.commands.push({ name: "roomEnded", args: [roomId] });
+      return Promise.resolve(client.roomData);
+    },
     roomSeek(roomId, positionMs) {
       calls.commands.push({ name: "roomSeek", args: [roomId, positionMs] });
       return Promise.resolve(client.roomData);
@@ -872,10 +876,76 @@ test("the host is never seeked onto the room's clock, nor stopped short of their
   assert.equal(player.isPaused(), false, "the host plays to the end of their own file");
 });
 
-test("past the room's timeline the file is held, and leaving gives the player back", async (t) => {
+test("the host's file reaching its end tells the room to move on", async (t) => {
   t.after(closeRoom);
   const player = new FakePlayer();
   const client = fakeClient({ sources: ONE_VARIANT });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1" });
+  const socket = client.calls.sockets[0];
+  const track = item("a1", "first", KYLE);
+
+  client.roomData = roomPrepared(track);
+  socket.onEvent({ type: "track_prepared", roomId: "room-1", atMs: Date.now(), data: { item: track } });
+  await waitFor(() => player.plays.length === 1);
+
+  const startedAt = Date.now() - 500;
+  client.roomData = roomStarted(track, startedAt, 30000);
+  socket.onEvent({
+    type: "track_started",
+    roomId: "room-1",
+    atMs: Date.now(),
+    data: { item: track, startedAt, timelineMs: 30000 },
+  });
+  await waitFor(() => !player.isPaused());
+
+  // The room runs on the host's copy, so their file reaching its end is the
+  // song reaching its end: the room is told, rather than left to a length it
+  // worked out before the song started.
+  assert.equal(typeof player.room?.ended, "function", "the player was given the room's end hook");
+  player.room.ended();
+  assert.ok(
+    await waitFor(() => client.calls.commands.some((command) => command.name === "roomEnded")),
+    "the room is told the song is over"
+  );
+});
+
+test("a member who is not the host does not tell the room the song is over", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const client = fakeClient({ sources: ONE_VARIANT, room: FOLLOWER, memberId: SAM });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1" });
+  const socket = client.calls.sockets[0];
+  const track = item("a1", "first", KYLE);
+
+  client.roomData = roomPrepared(track);
+  socket.onEvent({ type: "track_prepared", roomId: "room-1", atMs: Date.now(), data: { item: track } });
+  await waitFor(() => player.plays.length === 1);
+
+  const startedAt = Date.now() - 500;
+  client.roomData = roomStarted(track, startedAt, 30000);
+  socket.onEvent({
+    type: "track_started",
+    roomId: "room-1",
+    atMs: Date.now(),
+    data: { item: track, startedAt, timelineMs: 30000 },
+  });
+  await waitFor(() => !player.isPaused());
+
+  player.room?.ended?.();
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(
+    client.calls.commands.some((command) => command.name === "roomEnded"),
+    false,
+    "somebody the room is not waiting for does not move it on"
+  );
+});
+
+test("past the room's timeline the file is held, and leaving gives the player back", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const client = fakeClient({ sources: ONE_VARIANT, room: FOLLOWER, memberId: SAM });
   t.after(followWithPlayer(player));
   await enterRoom({ client, roomId: "room-1" });
   const socket = client.calls.sockets[0];

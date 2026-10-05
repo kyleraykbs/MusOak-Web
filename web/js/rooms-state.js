@@ -1212,8 +1212,26 @@ async function followRoom(running) {
 }
 
 /** How many of the room's upcoming items to have ready, as the player keeps its
- *  own queue: enough that a skip or two costs nothing. */
-const PREFETCH_AHEAD = 3;
+ *  own queue: the next two songs, so a switchover costs nothing. */
+const PREFETCH_AHEAD = 2;
+
+/**
+ * Say that this member's copy of the song has run out.
+ *
+ * Only the host's word means anything: the room runs on their copy, so their
+ * file reaching its end is the end of the song - and it is the one length the
+ * room cannot work out for itself, because it is the length of a file only this
+ * client has. Anybody else saying so is ignored by the room, and the room's own
+ * timer covers a host who has gone.
+ */
+function endedNow() {
+  const live = currentRoom();
+  const connection = active;
+  if (!live || !connection || !isHost(live)) return;
+  connection.client.roomEnded(connection.roomId).catch(() => {
+    /* the room's own timer is the backstop */
+  });
+}
 
 /** The room's items after the current one, in the room's own play order. */
 function upcomingItems(room, currentItemId) {
@@ -1242,6 +1260,8 @@ function ensureRoomMode(player, room) {
     resume: () => resume().catch(() => {}),
     skip: () => skip().catch(() => {}),
     seek: (ms) => seek(ms).catch(() => {}),
+    // The host's file reaching its end is the song reaching its end.
+    ended: () => endedNow(),
   });
 }
 
@@ -1309,6 +1329,15 @@ async function resolveVariant(room, trackId, player) {
  * not do that, and neither does this.
  */
 function followTimeline(player, room) {
+  // The host is the room's clock, so there is nothing here to correct: the song
+  // runs as long as their copy, their file reaching its end is what moves the
+  // room on, and seeking or pausing them would be the room arguing with itself.
+  // Starting it is still the room's business: the file was fetched and held.
+  if (isHost(room)) {
+    if (player.isPaused()) player.resume();
+    return;
+  }
+
   const position = positionMs(room, Date.now());
   const timeline = num(room.current.timelineMs);
 
@@ -1320,16 +1349,14 @@ function followTimeline(player, room) {
 
   const local = player.positionMs();
   const duration = player.durationMs();
-  const host = isHost(room);
   // A file shorter than the timeline has already run out: it waits, silent,
-  // for the room to move on. The host's file is what the timeline is, so
-  // stopping them a moment short of their own end is a gap they can hear.
-  if (!host && duration > 0 && local >= duration - 250) {
+  // for the room to move on.
+  if (duration > 0 && local >= duration - 250) {
     if (!player.isPaused()) player.pause();
     return;
   }
 
-  if (!host && driftDecision(local, position) !== "hold") player.seek(position);
+  if (driftDecision(local, position) !== "hold") player.seek(position);
   if (player.isPaused()) player.resume();
 }
 

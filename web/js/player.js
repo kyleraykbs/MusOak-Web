@@ -603,6 +603,7 @@ class Player {
           resume: room.resume,
           skip: room.skip,
           seek: room.seek,
+          ended: room.ended,
         }
       : null;
     this.renderBar();
@@ -955,7 +956,12 @@ class Player {
     audio.addEventListener("pause", () => this._setBuffering(false));
     audio.addEventListener("ended", () => {
       this._setBuffering(false);
-      this.next();
+      // In a room the host's copy is what the room runs on, so their file
+      // reaching its end is the song reaching its end: the room is told, and
+      // moves on from there. Anybody else's file ending is their own business -
+      // the room is not waiting on it.
+      if (this._room?.ended) this._room.ended();
+      else this.next();
     });
     audio.addEventListener("error", () => {
       if (!this._variant) return;
