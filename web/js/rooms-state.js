@@ -38,6 +38,10 @@ export const EVENTS = {
 export const RECONNECT_BASE_MS = 500;
 export const RECONNECT_MAX_MS = 15000;
 
+/** How long a connection must last before the backoff is reset. A drop after
+ *  this is a fresh outage; a drop before it is the same one continuing. */
+const RECONNECT_STABLE_MS = 10000;
+
 /** A burst of events costs one snapshot refetch, not one each. */
 const RESYNC_DEBOUNCE_MS = 400;
 
@@ -697,6 +701,7 @@ export async function enterRoom({ client, roomId, password = "", onLeave = null,
     retryTimer: 0,
     clockTimer: 0,
     attempts: 0,
+    openedAt: 0,
     closed: false,
     state: createRoomState({ me: memberId, connected: false }),
   };
@@ -766,7 +771,7 @@ export function connect(connection = active) {
     roomId: connection.roomId,
     onOpen: () => {
       if (active !== connection) return;
-      connection.attempts = 0;
+      connection.openedAt = Date.now();
       setState({ ...connection.state, connected: true, error: "" });
       syncClock(connection);
     },
@@ -888,6 +893,12 @@ function scheduleResync(connection) {
 
 function scheduleReconnect(connection) {
   if (!connection || connection.closed || connection.retryTimer) return;
+  // A connection that stayed up is a connection that worked, so the backoff
+  // starts again from the bottom. One that dropped straight away does not reset
+  // it: a flaky link, or a proxy that hangs up after a second, would otherwise
+  // retry every half second for the rest of the session.
+  const lasted = Date.now() - num(connection.openedAt);
+  if (connection.openedAt && lasted >= RECONNECT_STABLE_MS) connection.attempts = 0;
   connection.attempts += 1;
   const delay = Math.min(RECONNECT_BASE_MS * 2 ** (connection.attempts - 1), RECONNECT_MAX_MS);
   setState({
@@ -909,7 +920,6 @@ async function rejoin(connection) {
     if (active !== connection || connection.closed) return;
     const memberId = str(payload && payload.memberId);
     if (memberId) connection.client.memberId = memberId;
-    connection.attempts = 0;
     connection.state = mergeSnapshot(connection.state, (payload && payload.room) || {});
     publish();
   } catch (error) {

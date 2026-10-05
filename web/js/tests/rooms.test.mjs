@@ -376,20 +376,23 @@ const FOLLOWER = {
   memberCount: 2,
 };
 
-function fakeClient({ room = HOST, joinError = null, sources = null, memberId = KYLE } = {}) {
+function fakeClient({ room = HOST, joinError = null, roomError = null, sources = null, memberId = KYLE } = {}) {
   const calls = { joins: [], commands: [], leaves: [], ready: [], sockets: [], rooms: [] };
   const client = {
     memberId,
     calls,
     joinError,
+    roomError,
     roomData: room,
     joinRoom(roomId, password) {
       calls.joins.push({ roomId, password });
+      client.joinError = client.joinErrorNext ?? client.joinError;
       if (client.joinError) return Promise.reject(client.joinError);
       return Promise.resolve({ room: client.roomData, memberId });
     },
     room() {
       calls.rooms.push({ roomId: client.roomId });
+      if (client.roomError) return Promise.reject(client.roomError);
       return Promise.resolve(client.roomData);
     },
     sources(trackId) {
@@ -1575,4 +1578,120 @@ test("the clock is taken from the quickest sample, not the latest", () => {
   // The window is bounded: five kept, and the best of those.
   for (let i = 0; i < 6; i += 1) state = pong(4000 + i * 1000, 4000 + i * 1000 + 400, 4000 + i * 1000 + 200, state);
   assert.equal(state.clockSamples.length, 5, "the window is bounded");
+});
+
+// --- a bad connection ------------------------------------------------------
+//
+// Everything about a room that has ever gone wrong went wrong on a link that is
+// not the one it was written on. The room is the server's, the clock is
+// arithmetic on round trips, and the socket is a thing that drops: these are the
+// cases latency, jitter and losses actually produce.
+
+test("a wild clock sample does not move the room's position", () => {
+  const pong = (sent, received, serverReceived, state) =>
+    applyEvent(state, { type: "pong", roomId: "room-1", clientSentAt: sent, clientReceivedAt: received, serverReceivedAt: serverReceived });
+
+  let state = createRoomState({ me: KYLE });
+  // A clean sample: 20ms round trip, no skew.
+  state = pong(1000, 1020, 1010, state);
+  assert.equal(state.serverOffsetMs, 0, "a clean sample reads the true offset");
+
+  // Then a burst of the sort a congested link produces: 600ms out, 600ms back,
+  // each skewing the arithmetic by hundreds of milliseconds in either direction.
+  state = pong(2000, 2600, 2500, state);
+  state = pong(3000, 3600, 3200, state);
+  state = pong(4000, 4600, 4400, state);
+  assert.equal(state.serverOffsetMs, 0, "a wild sample never becomes the clock");
+});
+
+test("a long outage backs off instead of hammering the room", async (t) => {
+  t.after(closeRoom);
+  const client = fakeClient();
+  await enterRoom({ client, roomId: "room-1" });
+  client.calls.sockets[0].onOpen();
+
+  // Each drop waits longer than the last: a room that is gone, or a page left
+  // open on a train, must not turn into a request every half second.
+  const waitOf = () => {
+    const found = /retrying in (\d+)s/.exec(currentRoom().error || "");
+    return found ? Number(found[1]) : 0;
+  };
+
+  client.calls.sockets[0].onClose();
+  const firstWait = waitOf();
+  assert.ok(firstWait >= 1, `said: ${currentRoom().error}`);
+  assert.ok(await waitFor(() => client.calls.sockets.length === 2), "it tries again");
+
+  client.calls.sockets[1].onClose();
+  const secondWait = waitOf();
+  assert.ok(secondWait >= firstWait, `waits went backwards: ${firstWait} then ${secondWait}`);
+  assert.ok(await waitFor(() => client.calls.sockets.length === 3), "and again, later");
+
+  client.calls.sockets[2].onClose();
+  const thirdWait = waitOf();
+  assert.ok(thirdWait > firstWait, `the wait did not grow: ${firstWait}, ${secondWait}, ${thirdWait}`);
+});
+
+test("a rejoin that fails keeps trying rather than giving up", async (t) => {
+  t.after(closeRoom);
+  const client = fakeClient();
+  await enterRoom({ client, roomId: "room-1" });
+  const first = client.calls.sockets[0];
+  first.onOpen();
+
+  // The network is down, not the room: the join fails with something that is not
+  // the room being gone, so the client waits and tries again.
+  client.joinError = Object.assign(new Error("network unreachable"), { status: 0 });
+  first.onClose();
+  assert.equal(currentRoom().connected, false);
+  assert.ok(await waitFor(() => client.calls.joins.length >= 2), "it tried to rejoin");
+  assert.ok(currentRoom(), "and kept the room rather than giving up on it");
+  assert.match(currentRoom().error, /retrying/, `said: ${currentRoom().error}`);
+});
+
+test("a room that has gone closes rather than retrying for ever", async (t) => {
+  t.after(closeRoom);
+  const client = fakeClient();
+  await enterRoom({ client, roomId: "room-1" });
+  const first = client.calls.sockets[0];
+  first.onOpen();
+
+  // A 404 is not the network: the room is over, and a client that kept retrying
+  // would sit on a dead room for the rest of the session.
+  client.joinError = Object.assign(new Error("room not found"), { status: 404 });
+  first.onClose();
+  assert.ok(await waitFor(() => currentRoom() === null), "the room is let go");
+});
+
+test("a resync that fails keeps the room it had", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const client = fakeClient({ sources: ONE_VARIANT });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1" });
+  const socket = client.calls.sockets[0];
+  const track = item("a1", "first", KYLE);
+
+  client.roomData = roomStarted(track, Date.now() - 1000, 30000);
+  socket.onEvent({
+    type: "track_started",
+    roomId: "room-1",
+    atMs: Date.now(),
+    data: { item: track, startedAt: Date.now() - 1000, timelineMs: 30000 },
+  });
+  await waitFor(() => player.plays.length === 1);
+
+  // The refresh fails - the link dropped again between the event and the ask.
+  // The room it already had is better than no room: the song keeps playing, and
+  // the failure is said rather than swallowed.
+  client.roomError = new Error("network unreachable");
+  socket.onEvent({
+    type: "track_started",
+    roomId: "room-1",
+    atMs: Date.now(),
+    data: { item: track, startedAt: Date.now() - 1000, timelineMs: 30000 },
+  });
+  assert.ok(await waitFor(() => /could not refresh the room/.test(currentRoom().error || "")), `said: ${currentRoom() && currentRoom().error}`);
+  assert.equal(currentRoom().current.item.id, "a1", "the room it had is still the room");
+  assert.equal(player.plays.length, 1, "and the song was not restarted");
 });
