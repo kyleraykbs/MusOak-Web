@@ -712,9 +712,10 @@ export class Client {
     return this.post(`/api/v1/rooms/${roomId}/skip`).then(this.roomSnapshot);
   }
 
-  /** The host's copy of the song has run out: the room moves on from their end. */
-  roomEnded(roomId) {
-    return this.post(`/api/v1/rooms/${roomId}/ended`).then(this.roomSnapshot);
+  /** The host's copy of a song has run out: the room moves on from their end.
+   *  The track is named so an end that lands late cannot cut the one playing. */
+  roomEnded(roomId, trackId = "") {
+    return this.post(`/api/v1/rooms/${roomId}/ended`, { trackId }).then(this.roomSnapshot);
   }
 
   roomSeek(roomId, positionMs) {

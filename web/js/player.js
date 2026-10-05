@@ -969,7 +969,10 @@ class Player {
       // reaching its end is the song reaching its end: the room is told, and
       // moves on from there. Anybody else's file ending is their own business -
       // the room is not waiting on it.
-      if (this._room?.ended) this._room.ended();
+      // The track that ended is named: by the time this lands the room may
+      // already have moved on, and an end that arrives late must not cut the
+      // song that is playing now.
+      if (this._room?.ended) this._room.ended(this.current()?.id || "");
       else this.next();
     });
     audio.addEventListener("error", () => {

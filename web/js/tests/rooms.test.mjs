@@ -382,8 +382,8 @@ function fakeClient({ room = HOST, joinError = null, sources = null, memberId = 
       calls.commands.push({ name: "roomSkip", args: [roomId] });
       return Promise.resolve(client.roomData);
     },
-    roomEnded(roomId) {
-      calls.commands.push({ name: "roomEnded", args: [roomId] });
+    roomEnded(roomId, trackId) {
+      calls.commands.push({ name: "roomEnded", args: [roomId, trackId] });
       return Promise.resolve(client.roomData);
     },
     roomSeek(roomId, positionMs) {
@@ -979,10 +979,16 @@ test("the host's file reaching its end tells the room to move on", async (t) => 
   // song reaching its end: the room is told, rather than left to a length it
   // worked out before the song started.
   assert.equal(typeof player.room?.ended, "function", "the player was given the room's end hook");
-  player.room.ended();
+  player.room.ended("track-a1");
   assert.ok(
     await waitFor(() => client.calls.commands.some((command) => command.name === "roomEnded")),
     "the room is told the song is over"
+  );
+  // The track is named: an end that lands after the room has moved on must not
+  // cut the song that is playing by then.
+  assert.deepEqual(
+    client.calls.commands.find((command) => command.name === "roomEnded").args,
+    ["room-1", "track-a1"]
   );
 });
 
