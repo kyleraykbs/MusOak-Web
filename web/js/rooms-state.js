@@ -1242,11 +1242,11 @@ const PREFETCH_AHEAD = 2;
  * client has. Anybody else saying so is ignored by the room, and the room's own
  * timer covers a host who has gone.
  */
-function endedNow(trackId = "") {
+function endedNow(trackId = "", positionMs = 0) {
   const live = currentRoom();
   const connection = active;
   if (!live || !connection || !isHost(live)) return;
-  connection.client.roomEnded(connection.roomId, str(trackId)).catch(() => {
+  connection.client.roomEnded(connection.roomId, str(trackId), Math.max(0, Math.round(num(positionMs)))).catch(() => {
     /* the room's own timer is the backstop */
   });
 }
@@ -1279,7 +1279,7 @@ function ensureRoomMode(player, room) {
     skip: () => skip().catch(() => {}),
     seek: (ms) => seek(ms).catch(() => {}),
     // The host's file reaching its end is the song reaching its end.
-    ended: (trackId) => endedNow(trackId),
+    ended: (trackId, positionMs) => endedNow(trackId, positionMs),
   });
 }
 

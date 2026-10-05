@@ -972,7 +972,7 @@ class Player {
       // The track that ended is named: by the time this lands the room may
       // already have moved on, and an end that arrives late must not cut the
       // song that is playing now.
-      if (this._room?.ended) this._room.ended(this.current()?.id || "");
+      if (this._room?.ended) this._room.ended(this.current()?.id || "", this.positionMs());
       else this.next();
     });
     audio.addEventListener("error", () => {
