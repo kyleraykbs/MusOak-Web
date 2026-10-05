@@ -30,6 +30,7 @@ import {
   followWithPlayer,
   transportNotice,
   setStepNotice,
+  hostPinDecision,
 } from "../rooms-state.js";
 import { state } from "../state.js";
 
@@ -1537,7 +1538,7 @@ test("every step of a song change is said out loud", async (t) => {
 
   // And the room's clock is put onto this file, which is the host's job.
   assert.ok(
-    await waitFor(() => steps.some((text) => text.includes("Putting the room's clock"))),
+    await waitFor(() => steps.some((text) => /clock back onto this file/.test(text))),
     `said: ${JSON.stringify(steps)}`
   );
 
@@ -1694,4 +1695,30 @@ test("a resync that fails keeps the room it had", async (t) => {
   assert.ok(await waitFor(() => /could not refresh the room/.test(currentRoom().error || "")), `said: ${currentRoom() && currentRoom().error}`);
   assert.equal(currentRoom().current.item.id, "a1", "the room it had is still the room");
   assert.equal(player.plays.length, 1, "and the song was not restarted");
+});
+
+test("the host's drift is corrected as the song goes on, not only at its start", () => {
+  // The room follows the host's file, so a real gap is pinned back - and it has
+  // to keep happening: a correction made only in the first seconds of a song
+  // leaves the rest of it running further and further behind, which is heard as
+  // a delay that grows the longer it plays.
+  const at = (over) => hostPinDecision({ roomMs: 0, fileMs: 0, led: false, sincePinMs: Infinity, foreignSeek: false, ...over });
+
+  // A song's first correction, at its start, with the room ahead of the file.
+  assert.equal(at({ roomMs: 2000, fileMs: 0 }), true, "the room is put back onto the file");
+
+  // A host arriving part-way in - a reload, a room just joined - follows the
+  // room instead of rewinding it to a file that starts at zero.
+  assert.equal(at({ roomMs: 20000, fileMs: 0 }), false, "a late arrival does not rewind the room");
+
+  // Once this client has led the song, drift later in it is corrected too - but
+  // no more often than the cooldown, or the corrections are the noise.
+  assert.equal(at({ roomMs: 60000, fileMs: 58000, led: true, sincePinMs: 20000 }), true, "drift later in the song is corrected");
+  assert.equal(at({ roomMs: 60000, fileMs: 58000, led: true, sincePinMs: 100 }), false, "but not twice in a row");
+
+  // And nothing is pinned while somebody's hand is on the room.
+  assert.equal(at({ roomMs: 60000, fileMs: 58000, led: true, sincePinMs: 20000, foreignSeek: true }), false, "a seek is followed, not undone");
+
+  // A gap too small to hear is not worth a seek that everybody hears.
+  assert.equal(at({ roomMs: 60010, fileMs: 60000, led: true, sincePinMs: 20000 }), false, "a hair of drift is left alone");
 });

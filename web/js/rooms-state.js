@@ -822,6 +822,12 @@ function onMessage(connection, message) {
     clientReceivedAt: Date.now(),
   };
   const mine = !event.roomId || !connection.state.roomId || event.roomId === connection.state.roomId;
+  // A seek somebody else made is a decision, and the host follows it rather than
+  // pinning the room straight back. Remembering when keeps the two apart.
+  if (mine && type === EVENTS.seeked) {
+    const by = str(event.data && event.data.by && event.data.by.id);
+    if (by && by !== str(connection.state.me)) connection.foreignSeekAt = Date.now();
+  }
   if (type === EVENTS.roomClosed && mine) {
     closeRoom("the room was closed");
     return;
@@ -1086,7 +1092,8 @@ export function followWithPlayer(playbackPlayer) {
     // the track behind the item, for the artist and artwork the bar shows
     track: null,
     reportedKey: "",
-    alignedItemId: "",
+    ledItemId: "",
+    pinnedAt: 0,
     endedAskedFor: "",
     preReadyFor: "",
     preReadyAt: 0,
@@ -1172,7 +1179,8 @@ function forgetTrack() {
   plugin.variantId = "";
   plugin.track = null;
   plugin.reportedKey = "";
-  plugin.alignedItemId = "";
+  plugin.ledItemId = "";
+  plugin.pinnedAt = 0;
   plugin.endedAskedFor = "";
   plugin.preReadyFor = "";
   plugin.preReadyAt = 0;
@@ -1343,15 +1351,20 @@ async function followRoom(running) {
     // like anybody else.
     const mine = player.positionMs();
     const roomAt = positionMs(room, Date.now());
-    // The file starts when it is ready and the room's clock starts when the song
-    // does, so the two differ by however long the load took - and the room is the
-    // one that has run ahead. Pinning it back is worth a seek only when the gap
-    // is real: a seek is heard by everybody, and one that moves nothing is noise.
-    const behind = roomAt - mine > HOST_PIN_MS;
-    const atStart = roomAt < HOST_ALIGN_MS * 2 && mine < HOST_ALIGN_MS;
-    if (isHost(room) && atStart && behind && !player.isPaused() && running.alignedItemId !== itemId) {
-      running.alignedItemId = itemId;
-      sayStep(`pin:${itemId}`, `Putting the room's clock onto this file (${shortLength(mine)})`);
+    const led = running.ledItemId === itemId;
+    const sincePinMs = running.pinnedAt ? Date.now() - running.pinnedAt : Infinity;
+    const foreignSeek = Date.now() - num(active && active.foreignSeekAt) < HOST_FOLLOW_SEEK_MS;
+    if (
+      isHost(room) &&
+      !player.isPaused() &&
+      hostPinDecision({ roomMs: roomAt, fileMs: mine, led, sincePinMs, foreignSeek })
+    ) {
+      running.ledItemId = itemId;
+      running.pinnedAt = Date.now();
+      sayStep(
+        `pin:${itemId}:${Math.round(roomAt - mine)}`,
+        `Room was ${((roomAt - mine) / 1000).toFixed(1)}s ahead — putting its clock back onto this file (${shortLength(mine)})`
+      );
       seek(mine).catch(() => {});
       // The room is on its way back to where this file is. Correcting the file
       // to the room in the same breath would drag it forward - the song starting
@@ -1362,6 +1375,26 @@ async function followRoom(running) {
   } else if (!player.isPaused()) player.pause();
 }
 
+/**
+ * Whether the host's file should put the room's clock back onto itself.
+ *
+ * The room follows this file, so a real gap is corrected - but the first
+ * correction of a song counts only when the song has just begun: a host who
+ * arrived part-way in (a reload, a room they just joined) follows the room
+ * rather than rewinding it. After that, corrections continue for as long as the
+ * song runs, spaced out so they are not themselves the noise - drift grows, and
+ * correcting only at the start is a delay that gets longer the longer it plays.
+ *
+ * None is made while somebody's hand is on the room: a seek is a decision, and
+ * the host follows it like anybody else.
+ */
+export function hostPinDecision({ roomMs = 0, fileMs = 0, led = false, sincePinMs = Infinity, foreignSeek = false } = {}) {
+  if (foreignSeek) return false;
+  if (num(roomMs) - num(fileMs) <= HOST_PIN_MS) return false;
+  if (led) return num(sincePinMs) >= HOST_PIN_COOLDOWN_MS;
+  return num(roomMs) < HOST_ALIGN_MS * 2 && num(fileMs) < HOST_ALIGN_MS;
+}
+
 /** How near the room's start a song must still be for the host to pin the clock
  *  to their own file. Past this they are joining a song already under way. */
 const HOST_ALIGN_MS = 2000;
@@ -1369,6 +1402,15 @@ const HOST_ALIGN_MS = 2000;
 /** How far the room must have run ahead of the host's file before pinning it
  *  back is worth a seek. Below this the two are where they should be. */
 const HOST_PIN_MS = 250;
+
+/** How often the host may pin the room back onto their file. Drift is corrected
+ *  for as long as the song runs, but not so often that the corrections are
+ *  themselves the noise. */
+const HOST_PIN_COOLDOWN_MS = 10000;
+
+/** How long after somebody else's seek the host leaves the room where it was put.
+ *  A seek is a decision; the host follows it rather than pinning it back. */
+const HOST_FOLLOW_SEEK_MS = 12000;
 
 /**
  * Get the room's next songs ready, and say so for the one it has prepared.
