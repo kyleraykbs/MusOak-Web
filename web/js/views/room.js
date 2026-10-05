@@ -22,6 +22,9 @@ import {
   myQueue,
   nameOf,
   mayDrive,
+  setMode,
+  MODE_HOST,
+  MODE_SERVER,
   positionMs,
   remove,
   reorder,
@@ -112,21 +115,7 @@ function paint() {
 
 function header(room) {
   const policy = room.controls === "everyone" ? "everyone can control playback" : "the host controls playback";
-  return h(
-    "div",
-    { class: "card row", style: { padding: "14px 16px" } },
-    // The way back to the list this room was chosen from. Backing out is what
-    // the Rooms tab remembers, so pressing it again shows the list rather than
-    // dropping straight back in here.
-    h("button", {
-      class: "btn flat small",
-      title: "Back to the rooms list",
-      onclick: () => {
-        state.roomsShowing = "list";
-        saveLocal();
-        navigate("rooms");
-      },
-    }, icon("prev", 16), "Rooms"),
+  const pieces = [
     h(
       "div",
       { class: "grow" },
@@ -139,8 +128,49 @@ function header(room) {
       title: `Invite friends to “${room.name}”`,
       onclick: () => inviteFriendsToRoom(room),
     }),
-    h("button", { class: "btn destructive", text: "Leave", title: `Leave “${room.name}”`, onclick: () => leave() })
-  );
+  ];
+  // Who holds the song is the host's checkbox, and a live one: the song in
+  // flight changes hands with it. In host mode the room's clock is this
+  // member's player — the party-in-one-room setting; in server mode the room
+  // waits for every member's file and plays on its own clock.
+  if (isHost(room)) {
+    pieces.push(
+      h(
+        "label",
+        {
+          class: "row btn flat small",
+          style: { alignItems: "center", gap: "6px", cursor: "pointer" },
+          title:
+            room.mode === MODE_HOST
+              ? "Your player holds the song: it says where the song is and when it is over"
+              : "The room waits for every member's file, then plays on the server's clock",
+        },
+        h("input", {
+          type: "checkbox",
+          checked: room.mode === MODE_HOST,
+          onchange: (event) => {
+            const target = event.currentTarget.checked ? MODE_HOST : MODE_SERVER;
+            setMode(target).catch((error) => {
+              toast(`could not change who holds the song: ${error.message}`);
+              // Put the checkbox back with the room's answer.
+              paint();
+            });
+          },
+        }),
+        h("span", { text: "My player leads" })
+      )
+    );
+  }
+  pieces.push(h("button", { class: "btn destructive", text: "Leave", title: `Leave “${room.name}”`, onclick: () => leave() }));
+  return h("div", { class: "card row", style: { padding: "14px 16px" } }, h("button", {
+    class: "btn flat small",
+    title: "Back to the rooms list",
+    onclick: () => {
+      state.roomsShowing = "list";
+      saveLocal();
+      navigate("rooms");
+    },
+  }, icon("prev", 16), "Rooms"), ...pieces);
 }
 
 /** The room's control policy is the host's to set: say so, and say the way out.

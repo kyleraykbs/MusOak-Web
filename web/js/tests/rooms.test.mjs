@@ -30,7 +30,6 @@ import {
   followWithPlayer,
   transportNotice,
   setStepNotice,
-  hostPinDecision,
 } from "../rooms-state.js";
 import { state } from "../state.js";
 
@@ -453,6 +452,10 @@ function fakeClient({ room = HOST, joinError = null, roomError = null, sources =
     },
     roomOut(roomId, out) {
       calls.commands.push({ name: "roomOut", args: [roomId, out] });
+      return Promise.resolve(client.roomData);
+    },
+    roomStarted(roomId, trackId, positionMs, durationMs) {
+      calls.commands.push({ name: "roomStarted", args: [roomId, trackId, positionMs, durationMs] });
       return Promise.resolve(client.roomData);
     },
     roomReady(roomId, trackId, variantId, durationMs) {
@@ -967,7 +970,7 @@ test("a member who is not playing still fetches the room's next song", async (t)
   );
 });
 
-test("the host follows a jump it did not make, and ignores its own drift", async (t) => {
+test("in host mode the host's player is the clock they follow, and nobody drifts around them", async (t) => {
   t.after(closeRoom);
   const player = new FakePlayer();
   const client = fakeClient({ sources: ONE_VARIANT });
@@ -976,15 +979,15 @@ test("the host follows a jump it did not make, and ignores its own drift", async
   const socket = client.calls.sockets[0];
   const track = item("a1", "first", KYLE);
 
-  client.roomData = roomPrepared(track);
+  const held = (doc) => ({ ...doc, mode: "host" });
+  client.roomData = held(roomPrepared(track));
   socket.onEvent({ type: "track_prepared", roomId: "room-1", atMs: Date.now(), data: { item: track } });
   await waitFor(() => player.plays.length === 1);
 
-  // The room is already twenty seconds in: the host arrived late, or somebody
-  // seeked. Either way it is the room's position like any other, and a jump
-  // this size is not drift.
+  // The room is already twenty seconds in: the host's file says where the song
+  // is, and a jump this size is not drift.
   const startedAt = Date.now() - 20000;
-  client.roomData = roomStarted(track, startedAt, 30000);
+  client.roomData = held(roomStarted(track, startedAt, 30000));
   socket.onEvent({
     type: "track_started",
     roomId: "room-1",
@@ -992,19 +995,12 @@ test("the host follows a jump it did not make, and ignores its own drift", async
     data: { item: track, startedAt, timelineMs: 30000 },
   });
   assert.ok(await waitFor(() => player.seeks.length >= 1), "the host follows the room's position");
-  // The host's own file also puts the room's clock where it is, once per song,
-  // so the jump is one of the seeks rather than necessarily the last.
   assert.ok(
     player.seeks.some((at) => at > 15000),
     `seeked to ${player.seeks.join(", ")}, want where the room is`
   );
 
-  // Their own small drift is not: the song runs as long as their copy, so there
-  // is nothing there to correct.
-  // Their own small drift is not corrected: the song runs as long as their copy,
-  // so there is nothing there to correct. The host does say where the room is
-  // once per song - that is a report, not a correction - so this watches the
-  // file's own position rather than the count of seeks.
+  // Their own small drift is not corrected: the song runs as long as their copy.
   player.position = 21000;
   await new Promise((resolve) => setTimeout(resolve, 700));
   assert.equal(player.position, 21000, "the host's own drift is not corrected");
@@ -1091,12 +1087,13 @@ test("the host's file reaching its end tells the room to move on", async (t) => 
   const socket = client.calls.sockets[0];
   const track = item("a1", "first", KYLE);
 
-  client.roomData = roomPrepared(track);
+  const held = (doc) => ({ ...doc, mode: "host" });
+  client.roomData = held(roomPrepared(track));
   socket.onEvent({ type: "track_prepared", roomId: "room-1", atMs: Date.now(), data: { item: track } });
   await waitFor(() => player.plays.length === 1);
 
   const startedAt = Date.now() - 500;
-  client.roomData = roomStarted(track, startedAt, 30000);
+  client.roomData = held(roomStarted(track, startedAt, 30000));
   socket.onEvent({
     type: "track_started",
     roomId: "room-1",
@@ -1369,7 +1366,7 @@ test("the host follows the room onto the next song instead of parking on the fin
   assert.ok(player.positionMs() < 3000, `began at ${player.positionMs()}ms, want the room's position`);
 });
 
-test("the follower moves the room only to pin the host's clock, once, at the start", async (t) => {
+test("in host mode the host's player starts the song, and nobody else's does", async (t) => {
   t.after(closeRoom);
   const player = new FakePlayer();
   const client = fakeClient({ sources: ONE_VARIANT });
@@ -1378,36 +1375,29 @@ test("the follower moves the room only to pin the host's clock, once, at the sta
   const socket = client.calls.sockets[0];
   const track = item("a1", "first", KYLE);
 
-  client.roomData = roomPrepared(track);
+  const held = (doc) => ({ ...doc, mode: "host" });
+  client.roomData = held(roomPrepared(track));
   socket.onEvent({ type: "track_prepared", roomId: "room-1", atMs: Date.now(), data: { item: track } });
   await waitFor(() => player.plays.length === 1);
+  assert.ok(player.isPaused(), "the file is held until the host's player starts it");
 
-  // A prepared song is not a reason to move the room: it is not playing yet.
-  const asks = () => client.calls.commands.filter((command) => command.name === "roomSeek");
-  assert.equal(asks().length, 0, "a prepared song does not move the room");
+  // In host mode everybody's readiness starts nothing: the host's player does.
+  const starts = () => client.calls.commands.filter((command) => command.name === "roomStarted");
+  assert.equal(starts().length, 0, "nobody has put the room's clock on anything");
 
-  // The room starts the song as soon as it is prepared, and this client's file
-  // begins when it is ready - so the room is a couple of seconds ahead of the
-  // file by then. That gap is the one thing the host's own file is allowed to
-  // correct.
-  const startedAt = Date.now() - 2000;
-  client.roomData = roomStarted(track, startedAt, 30000);
-  socket.onEvent({
-    type: "track_started",
-    roomId: "room-1",
-    atMs: Date.now(),
-    data: { item: track, startedAt, timelineMs: 30000 },
-  });
-  await waitFor(() => !player.isPaused());
+  // The host presses play on their own player, and the room follows: where
+  // their file is, for as long as their file says the song is.
+  player.paused = false;
+  player.position = 0;
+  player.measured = 180000;
+  assert.ok(await waitFor(() => starts().length === 1), "the host's player is the room's clock");
+  assert.equal(starts()[0].args[1], "track-a1", "the song on this player");
+  assert.equal(starts()[0].args[2], 0, "from where the file has got to");
+  assert.equal(starts()[0].args[3], 180000, "for as long as the file says it is");
 
-  assert.ok(await waitFor(() => asks().length === 1), "the host's clock is pinned to their file");
-  assert.ok(asks()[0].args[1] < 3000, `pinned the room to ${asks()[0].args[1]}ms, want where the file is`);
-
-  // And not again: the room is the authority from there, and a client that kept
-  // re-pinning it would drag the song around for everybody.
-  player.position = 12000;
-  await new Promise((resolve) => setTimeout(resolve, 1500));
-  assert.equal(asks().length, 1, "the room is not moved again for the same song");
+  // And it is said once per song: a stream of ticks is not a stream of reports.
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  assert.equal(starts().length, 1, "the clock is not re-pinned every tick");
 });
 
 test("the host's clock is not pinned from a stale position", async (t) => {
@@ -1536,15 +1526,20 @@ test("every step of a song change is said out loud", async (t) => {
     `said: ${JSON.stringify(steps)}`
   );
 
-  // And the room's clock is put onto this file, which is the host's job.
-  assert.ok(
-    await waitFor(() => steps.some((text) => /clock back onto this file/.test(text))),
+  // In server mode the room starts the song itself: the host's player is not
+  // what a song waits for, so that step is not said here.
+  assert.equal(
+    steps.some((text) => /Starting the room on this player/.test(text)),
+    false,
     `said: ${JSON.stringify(steps)}`
   );
 
-  // Each step is said once: a stream of ticks is not a stream of toasts.
+  // Let the catch-up seek land (this fake's file is held at the room's older
+  // position, so the follower rightly seeks it forward once), then count: each
+  // step is said once per song, and a stream of ticks is not a stream of toasts.
+  await new Promise((resolve) => setTimeout(resolve, 800));
   const said = steps.length;
-  await new Promise((resolve) => setTimeout(resolve, 1200));
+  await new Promise((resolve) => setTimeout(resolve, 900));
   assert.equal(steps.length, said, `repeated itself: ${JSON.stringify(steps.slice(said))}`);
 });
 
@@ -1697,28 +1692,14 @@ test("a resync that fails keeps the room it had", async (t) => {
   assert.equal(player.plays.length, 1, "and the song was not restarted");
 });
 
-test("the host's drift is corrected as the song goes on, not only at its start", () => {
-  // The room follows the host's file, so a real gap is pinned back - and it has
-  // to keep happening: a correction made only in the first seconds of a song
-  // leaves the rest of it running further and further behind, which is heard as
-  // a delay that grows the longer it plays.
-  const at = (over) => hostPinDecision({ roomMs: 0, fileMs: 0, led: false, sincePinMs: Infinity, foreignSeek: false, ...over });
-
-  // A song's first correction, at its start, with the room ahead of the file.
-  assert.equal(at({ roomMs: 2000, fileMs: 0 }), true, "the room is put back onto the file");
-
-  // A host arriving part-way in - a reload, a room just joined - follows the
-  // room instead of rewinding it to a file that starts at zero.
-  assert.equal(at({ roomMs: 20000, fileMs: 0 }), false, "a late arrival does not rewind the room");
-
-  // Once this client has led the song, drift later in it is corrected too - but
-  // no more often than the cooldown, or the corrections are the noise.
-  assert.equal(at({ roomMs: 60000, fileMs: 58000, led: true, sincePinMs: 20000 }), true, "drift later in the song is corrected");
-  assert.equal(at({ roomMs: 60000, fileMs: 58000, led: true, sincePinMs: 100 }), false, "but not twice in a row");
-
-  // And nothing is pinned while somebody's hand is on the room.
-  assert.equal(at({ roomMs: 60000, fileMs: 58000, led: true, sincePinMs: 20000, foreignSeek: true }), false, "a seek is followed, not undone");
-
-  // A gap too small to hear is not worth a seek that everybody hears.
-  assert.equal(at({ roomMs: 60010, fileMs: 60000, led: true, sincePinMs: 20000 }), false, "a hair of drift is left alone");
+test("the room's mode is part of its state, and changes are applied", () => {
+  // Who holds the song decides what this client does with its player, so it is
+  // in the state and an event moves it, rather than waiting for a snapshot.
+  let state = createRoomState({ me: KYLE });
+  state = mergeSnapshot(state, { ...HOST, host: KYLE });
+  assert.equal(state.mode, "server", "a room that says nothing is held by the server");
+  state = mergeSnapshot(state, { ...HOST, host: KYLE, mode: "host" });
+  assert.equal(state.mode, "host", "the mode is read from the room");
+  state = applyEvent(state, { type: "mode_changed", roomId: "room-1", atMs: 1, data: { mode: "server" } });
+  assert.equal(state.mode, "server", "mode_changed moves it");
 });

@@ -16,11 +16,15 @@ import { toast } from "./dom.js";
 export const CONTROLS_HOST = "host";
 export const CONTROLS_EVERYONE = "everyone";
 
+/** Who holds the song: the server's clock, or the host's player. */
+export const MODE_SERVER = "server";
+export const MODE_HOST = "host";
 /** The event names the server publishes. */
 export const EVENTS = {
   memberJoined: "member_joined",
   memberLeft: "member_left",
   hostChanged: "host_changed",
+  modeChanged: "mode_changed",
   queueUpdated: "queue_updated",
   trackPrepared: "track_prepared",
   trackStarted: "track_started",
@@ -234,8 +238,8 @@ export function createRoomState(initial = {}) {
   return {
     roomId: "",
     name: "",
-    host: "",
     controls: CONTROLS_HOST,
+    mode: MODE_SERVER,
     createdAtMs: 0,
     members: [],
     memberCount: 0,
@@ -270,6 +274,7 @@ export function normalizeSnapshot(raw) {
     name: str(room.name),
     host: str(room.host),
     controls: room.controls === CONTROLS_EVERYONE ? CONTROLS_EVERYONE : CONTROLS_HOST,
+    mode: room.mode === MODE_HOST ? MODE_HOST : MODE_SERVER,
     createdAtMs: num(room.createdAtMs),
     members,
     memberCount: num(room.memberCount, members.length),
@@ -345,6 +350,15 @@ export function applyEvent(state, event) {
       // Who leads the room decides who may drive it, so it is not something the
       // view can wait for the next snapshot to find out.
       return { ...state, atMs, host };
+    }
+
+    case EVENTS.modeChanged: {
+      const mode = str(data.mode);
+      if (mode !== MODE_HOST && mode !== MODE_SERVER) return state;
+      // Who holds the song decides what this client does with its player, so it
+      // is not something to wait a snapshot for either. The song in flight
+      // changes hands with it.
+      return { ...state, atMs, mode };
     }
 
     case EVENTS.memberLeft: {
@@ -822,12 +836,6 @@ function onMessage(connection, message) {
     clientReceivedAt: Date.now(),
   };
   const mine = !event.roomId || !connection.state.roomId || event.roomId === connection.state.roomId;
-  // A seek somebody else made is a decision, and the host follows it rather than
-  // pinning the room straight back. Remembering when keeps the two apart.
-  if (mine && type === EVENTS.seeked) {
-    const by = str(event.data && event.data.by && event.data.by.id);
-    if (by && by !== str(connection.state.me)) connection.foreignSeekAt = Date.now();
-  }
   if (type === EVENTS.roomClosed && mine) {
     closeRoom("the room was closed");
     return;
@@ -838,6 +846,7 @@ function onMessage(connection, message) {
     publish();
   }
   if (mine) notifyTransport(event);
+  if (mine && type === EVENTS.readyState) sayReadyWait(event.data);
   if (mine && RESYNC_EVENTS.has(type)) scheduleResync(connection);
 }
 
@@ -875,6 +884,19 @@ function notifyTransport(event) {
   toast(text);
 }
 
+/** Say how the room's wait is going: who has their file, and how much of the
+ *  window is left. This is the countdown - a member waiting on somebody else's
+ *  download watches a number come down rather than a play button that does
+ *  nothing. Said while it changes: the number is the news. */
+function sayReadyWait(data) {
+  if (!data || typeof data !== "object") return;
+  const ready = num(data.ready);
+  const members = num(data.members);
+  if (members <= 0) return;
+  const left = Math.round(num(data.remainingMs) / 1000);
+  if (left > 0 && ready < members) toast(`${ready}/${members} ready — starting in ${left}s`);
+}
+
 /** Events whose payload is a summary: the snapshot is the fuller truth. */
 const RESYNC_EVENTS = new Set([
   EVENTS.trackStarted,
@@ -883,6 +905,7 @@ const RESYNC_EVENTS = new Set([
   EVENTS.readyState,
   EVENTS.memberJoined,
   EVENTS.memberLeft,
+  EVENTS.modeChanged,
 ]);
 
 function scheduleResync(connection) {
@@ -1056,6 +1079,16 @@ export function ready({ trackId = "", variantId = "", durationMs = 0 } = {}) {
     client.roomReady(roomId, str(trackId), str(variantId), Math.round(num(durationMs))));
 }
 
+/** Who holds the song: the server's clock, or the host's player. The host's
+ *  checkbox - their choice, live, and the song in flight changes hands with it. */
+export function setMode(mode) {
+  const target = str(mode);
+  if (target !== MODE_SERVER && target !== MODE_HOST) {
+    throw new Error('mode must be "server" or "host"');
+  }
+  return command(({ client, roomId }) => client.roomMode(roomId, target));
+}
+
 // --- following the room with the player ------------------------------------
 //
 // The room is the authority on what plays and where it is; the player only has
@@ -1092,8 +1125,7 @@ export function followWithPlayer(playbackPlayer) {
     // the track behind the item, for the artist and artwork the bar shows
     track: null,
     reportedKey: "",
-    ledItemId: "",
-    pinnedAt: 0,
+    startedKey: "",
     endedAskedFor: "",
     preReadyFor: "",
     preReadyAt: 0,
@@ -1179,8 +1211,7 @@ function forgetTrack() {
   plugin.variantId = "";
   plugin.track = null;
   plugin.reportedKey = "";
-  plugin.ledItemId = "";
-  plugin.pinnedAt = 0;
+  plugin.startedKey = "";
   plugin.endedAskedFor = "";
   plugin.preReadyFor = "";
   plugin.preReadyAt = 0;
@@ -1220,6 +1251,7 @@ async function followRoom(running) {
     running.variantId = "";
     running.track = null;
     running.reportedKey = "";
+    running.startedKey = "";
     running.failedItemId = "";
     running.failedAt = 0;
     sayStep(`song:${itemId}`, `Room: ${item.title || "next song"}`);
@@ -1332,85 +1364,60 @@ async function followRoom(running) {
 
   reportReady(running, room, item, trackId, player);
 
+  // In host mode the host's player is the clock: the room starts nothing and
+  // waits on nobody, so the moment their file is really playing they say so -
+  // once per song, with where their file is and how long it says the song is -
+  // and the room's clock is that. A party in one room sounds exactly as smooth
+  // as the host's own player, and their file running out is the song ending.
+  if (
+    room.mode === MODE_HOST &&
+    isHost(room) &&
+    player.current()?.id === trackId &&
+    !player.isPaused() &&
+    !player.hasEnded?.() &&
+    running.startedKey !== itemId
+  ) {
+    const measured = typeof player.measuredDurationMs === "function" ? player.measuredDurationMs() : 0;
+    running.startedKey = itemId;
+    sayStep(`started:${itemId}`, `Starting the room on this player (${shortLength(measured || 0)})`);
+    startedNow(trackId, player.positionMs(), measured);
+  }
+
   if (mode === "play") {
     sayStep(
       `play:${itemId}`,
       `Playing ${item.title || "the song"} — the room is at ${shortLength(positionMs(room, Date.now()))}`
     );
-    // The host is the room's clock, so the room's clock is where their file is.
-    // Their player starts when it is ready and says so once per song, and
-    // everybody else follows that: this is a listen-along, not a room waiting
-    // on a file. Without it the room's clock is wherever the song was prepared,
-    // and the host - who never corrects their own drift - hears the song behind
-    // everyone following them.
-    //
-    // Only at the beginning of a song, though: a host arriving part-way in - a
-    // reload, a room they just joined - has a file at zero and a room that is
-    // already playing, and rewinding the room to their file would be the host
-    // arguing with the room they are supposed to lead. There they follow it,
-    // like anybody else.
-    const mine = player.positionMs();
-    const roomAt = positionMs(room, Date.now());
-    const led = running.ledItemId === itemId;
-    const sincePinMs = running.pinnedAt ? Date.now() - running.pinnedAt : Infinity;
-    const foreignSeek = Date.now() - num(active && active.foreignSeekAt) < HOST_FOLLOW_SEEK_MS;
-    if (
-      isHost(room) &&
-      !player.isPaused() &&
-      hostPinDecision({ roomMs: roomAt, fileMs: mine, led, sincePinMs, foreignSeek })
-    ) {
-      running.ledItemId = itemId;
-      running.pinnedAt = Date.now();
-      sayStep(
-        `pin:${itemId}:${Math.round(roomAt - mine)}`,
-        `Room was ${((roomAt - mine) / 1000).toFixed(1)}s ahead — putting its clock back onto this file (${shortLength(mine)})`
-      );
-      seek(mine).catch(() => {});
-      // The room is on its way back to where this file is. Correcting the file
-      // to the room in the same breath would drag it forward - the song starting
-      // a couple of seconds in, for the one person who is the clock.
-      return;
-    }
     followTimeline(player, room);
-  } else if (!player.isPaused()) player.pause();
+  } else if (!player.isPaused() && room.mode !== MODE_HOST) {
+    // The room has not started this song, so this member's file is held for it.
+    // In host mode the host's own player is the start: them playing it is what
+    // the room is waiting for, so it is not paused back out from under them.
+    player.pause();
+  }
 }
 
 /**
- * Whether the host's file should put the room's clock back onto itself.
- *
- * The room follows this file, so a real gap is corrected - but the first
- * correction of a song counts only when the song has just begun: a host who
- * arrived part-way in (a reload, a room they just joined) follows the room
- * rather than rewinding it. After that, corrections continue for as long as the
- * song runs, spaced out so they are not themselves the noise - drift grows, and
- * correcting only at the start is a delay that gets longer the longer it plays.
- *
- * None is made while somebody's hand is on the room: a seek is a decision, and
- * the host follows it like anybody else.
+ * The host's player saying the song is playing: the room's clock is put where
+ * their file is, and it runs as long as their file says it is. In host mode this
+ * is the whole start of a song - the room starts nothing, their player does,
+ * and this is the word for it.
  */
-export function hostPinDecision({ roomMs = 0, fileMs = 0, led = false, sincePinMs = Infinity, foreignSeek = false } = {}) {
-  if (foreignSeek) return false;
-  if (num(roomMs) - num(fileMs) <= HOST_PIN_MS) return false;
-  if (led) return num(sincePinMs) >= HOST_PIN_COOLDOWN_MS;
-  return num(roomMs) < HOST_ALIGN_MS * 2 && num(fileMs) < HOST_ALIGN_MS;
+function startedNow(trackId = "", positionMs = 0, durationMs = 0) {
+  const live = currentRoom();
+  const connection = active;
+  if (!live || !connection || !isHost(live) || live.mode !== MODE_HOST) return;
+  connection.client
+    .roomStarted(
+      connection.roomId,
+      str(trackId),
+      Math.max(0, Math.round(num(positionMs))),
+      Math.max(0, Math.round(num(durationMs)))
+    )
+    .catch(() => {
+      /* their player is still playing; they say so again on the next song */
+    });
 }
-
-/** How near the room's start a song must still be for the host to pin the clock
- *  to their own file. Past this they are joining a song already under way. */
-const HOST_ALIGN_MS = 2000;
-
-/** How far the room must have run ahead of the host's file before pinning it
- *  back is worth a seek. Below this the two are where they should be. */
-const HOST_PIN_MS = 250;
-
-/** How often the host may pin the room back onto their file. Drift is corrected
- *  for as long as the song runs, but not so often that the corrections are
- *  themselves the noise. */
-const HOST_PIN_COOLDOWN_MS = 10000;
-
-/** How long after somebody else's seek the host leaves the room where it was put.
- *  A seek is a decision; the host follows it rather than pinning it back. */
-const HOST_FOLLOW_SEEK_MS = 12000;
 
 /**
  * Get the room's next songs ready, and say so for the one it has prepared.
@@ -1465,16 +1472,15 @@ const PREFETCH_AHEAD = 2;
 /**
  * Say that this member's copy of the song has run out.
  *
- * Only the host's word means anything: the room runs on their copy, so their
- * file reaching its end is the end of the song - and it is the one length the
- * room cannot work out for itself, because it is the length of a file only this
- * client has. Anybody else saying so is ignored by the room, and the room's own
- * timer covers a host who has gone.
+ * Only in host mode, and only the host's word: their player is the clock, so
+ * their file reaching its end is the end of the song - and it is the one length
+ * the room cannot work out for itself. In server mode the server's own clock
+ * says when a song is over, and nobody's file ending moves it.
  */
 function endedNow(trackId = "", positionMs = 0) {
   const live = currentRoom();
   const connection = active;
-  if (!live || !connection || !isHost(live)) return;
+  if (!live || !connection || !isHost(live) || live.mode !== MODE_HOST) return;
   connection.client.roomEnded(connection.roomId, str(trackId), Math.max(0, Math.round(num(positionMs)))).catch(() => {
     /* the room's own timer is the backstop */
   });
@@ -1550,8 +1556,13 @@ export function setStepNotice(handler) {
 }
 
 function sayStep(key, text) {
-  if (!text || key === lastStep) return;
-  lastStep = key;
+  if (!text) return;
+  // A new song opens a fresh stream of steps. Within one song each step is said
+  // once: a stream of ticks is not a stream of toasts, and steps that alternate
+  // - playing, syncing, playing - would otherwise never stop.
+  if (key.startsWith("song:")) saidSteps.clear();
+  if (saidSteps.has(key)) return;
+  saidSteps.add(key);
   try {
     if (stepNotice) stepNotice(text);
     else toast(text);
@@ -1560,8 +1571,8 @@ function sayStep(key, text) {
   }
 }
 
-/** The last step said, so a stream of ticks says one thing once. */
-let lastStep = "";
+/** The steps already said for this song, so a stream of ticks says one thing once. */
+const saidSteps = new Set();
 
 /** A room's member by id, for naming who the room is waiting for. */
 function memberNameOf(room, memberId) {
@@ -1622,11 +1633,12 @@ function followTimeline(player, room) {
   const position = positionMs(room, Date.now());
   const timeline = num(room.current.timelineMs);
 
-  // The host is the room's clock, so there is nothing here to correct: the song
-  // runs as long as their copy, their file reaching its end is what moves the
-  // room on, and seeking or pausing them would be the room arguing with itself.
-  // Starting it is still the room's business: the file was fetched and held.
-  if (isHost(room)) {
+  // In host mode the host's player is the clock, so there is nothing here to
+  // correct: the song runs as long as their file, their file reaching its end
+  // is what moves the room on, and seeking or pausing them would be the room
+  // arguing with itself. In server mode they are a member like any other: the
+  // server's clock is the one everybody follows, theirs included.
+  if (isHost(room) && room.mode === MODE_HOST) {
     // An ended file is not a paused one: the element stops itself when it runs
     // out, and play() would start it over from the beginning - which is what a
     // room that is about to move on would hear. Resuming is for the file that

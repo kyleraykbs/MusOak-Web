@@ -743,6 +743,20 @@ export class Client {
     return this.post(`/api/v1/rooms/${roomId}/out`, { out }).then(this.roomSnapshot);
   }
 
+  /** Who holds the song: the server's clock, or the host's player. The host's
+   *  choice - the song in flight changes hands with it. */
+  roomMode(roomId, mode) {
+    return this.post(`/api/v1/rooms/${roomId}/mode`, { mode }).then(this.roomSnapshot);
+  }
+
+  /** The host's player has started the song: the room's clock is put where
+   *  their file is, for as long as their file says it is. Host mode only. */
+  roomStarted(roomId, trackId, positionMs = 0, durationMs = 0) {
+    const body = { trackId, positionMs: Math.max(0, Math.round(positionMs)) };
+    if (durationMs) body.durationMs = Math.round(durationMs);
+    return this.post(`/api/v1/rooms/${roomId}/started`, body).then(this.roomSnapshot);
+  }
+
   /** The room's own state, whether the endpoint wrapped it or not. */
   roomSnapshot(payload) {
     return payload?.room || payload || {};
