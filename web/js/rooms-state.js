@@ -1174,6 +1174,7 @@ async function followRoom(running) {
     running.reportedKey = "";
     running.failedItemId = "";
     running.failedAt = 0;
+    sayStep(`song:${itemId}`, `Room: ${item.title || "next song"}`);
   }
 
   // The file this member was playing has run out. The room's clock is that file,
@@ -1184,6 +1185,7 @@ async function followRoom(running) {
   // this, which is why a skip was always instant: its answer carries the room.
   if (player.hasEnded?.() && running.endedAskedFor !== itemId) {
     running.endedAskedFor = itemId;
+    sayStep(`ended:${itemId}`, "This file has run out — asking the room where it is");
     scheduleResync(active);
   }
 
@@ -1199,6 +1201,7 @@ async function followRoom(running) {
     if (running.failedItemId === itemId && Date.now() - running.failedAt < RESOLVE_BACKOFF_MS) return;
     running.resolving = trackId;
     sayStatus("Finding a source…");
+    sayStep(`resolve:${itemId}`, `Finding a source for ${item.title || "the song"}…`);
     let variant = "";
     try {
       // The room's item carries a title and nothing else, so the track itself
@@ -1265,6 +1268,12 @@ async function followRoom(running) {
       // carries the artist and artwork the bar shows; the item alone would only
       // give it a title.
       const autoplay = mode === "play";
+      sayStep(
+        `load:${itemId}:${autoplay ? "play" : "hold"}`,
+        autoplay
+          ? `Playing ${item.title || "the song"} — the room is at ${shortLength(positionMs(room, Date.now()))}`
+          : `Loading ${item.title || "the song"}…`
+      );
       player.playVariant(running.track || { id: trackId, title: item.title }, running.variantId, {
         positionMs: autoplay ? positionMs(room, Date.now()) : 0,
         autoplay,
@@ -1276,6 +1285,10 @@ async function followRoom(running) {
   reportReady(running, room, item, trackId, player);
 
   if (mode === "play") {
+    sayStep(
+      `play:${itemId}`,
+      `Playing ${item.title || "the song"} — the room is at ${shortLength(positionMs(room, Date.now()))}`
+    );
     // The host is the room's clock, so the room's clock is where their file is.
     // Their player starts when it is ready and says so once per song, and
     // everybody else follows that: this is a listen-along, not a room waiting
@@ -1298,6 +1311,7 @@ async function followRoom(running) {
     const atStart = roomAt < HOST_ALIGN_MS * 2 && mine < HOST_ALIGN_MS;
     if (isHost(room) && atStart && behind && !player.isPaused() && running.alignedItemId !== itemId) {
       running.alignedItemId = itemId;
+      sayStep(`pin:${itemId}`, `Putting the room's clock onto this file (${shortLength(mine)})`);
       seek(mine).catch(() => {});
       // The room is on its way back to where this file is. Correcting the file
       // to the room in the same breath would drag it forward - the song starting
@@ -1347,6 +1361,7 @@ function warmAhead(player, room, itemId, running) {
   if (running.preReadyFor === preparedId && Date.now() - running.preReadyAt < PRELOAD_RETRY_MS) return;
   running.preReadyFor = preparedId;
   running.preReadyAt = Date.now();
+  sayStep(`next:${preparedId}`, `Next: ${prepared.title || "the song after this one"} — fetching it now`);
   player.warm?.(
     { id: str(prepared.trackId), title: prepared.title },
     {
@@ -1435,6 +1450,49 @@ function sayStatus(message) {
   statusNotice?.(message);
 }
 
+/**
+ * Every step of a room's song-to-song life, said out loud.
+ *
+ * The room is a machine with several parts - this member's file, the files of
+ * the others, the room's clock, the socket - and when one of them is slow, all
+ * a listener sees is a play button that does nothing. So each part says what it
+ * is doing as it does it: what the room is waiting for, what this client is
+ * fetching, who has still to arrive, when the room starts and where, when the
+ * room's clock is put onto this file, and what comes next. Each step is said
+ * once per song; a step that repeats is not news.
+ */
+let stepNotice = null;
+
+export function setStepNotice(handler) {
+  stepNotice = typeof handler === "function" ? handler : null;
+}
+
+function sayStep(key, text) {
+  if (!text || key === lastStep) return;
+  lastStep = key;
+  try {
+    if (stepNotice) stepNotice(text);
+    else toast(text);
+  } catch {
+    /* a notice that fails is not worth the room */
+  }
+}
+
+/** The last step said, so a stream of ticks says one thing once. */
+let lastStep = "";
+
+/** A room's member by id, for naming who the room is waiting for. */
+function memberNameOf(room, memberId) {
+  const member = list(room && room.members).find((entry) => str(entry.id) === str(memberId));
+  return str(member && member.name) || "a listener";
+}
+
+/** A length as m:ss, for saying how long a file runs. */
+function shortLength(ms) {
+  const total = Math.max(0, Math.round(num(ms) / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
 /** The track behind a room item. The item carries only a title, and the bar
  *  needs the artist and the artwork too. Failing is not fatal: the bar falls
  *  back to the title alone. */
@@ -1514,7 +1572,10 @@ function followTimeline(player, room) {
     return;
   }
 
-  if (driftDecision(local, position) !== "hold") player.seek(position);
+  if (driftDecision(local, position) !== "hold") {
+    sayStep(`sync:${str(room.current && room.current.item && room.current.item.id)}`, `Syncing to the room (${shortLength(position)})`);
+    player.seek(position);
+  }
   if (player.isPaused() && !player.hasEnded?.()) player.resume();
 }
 
@@ -1558,6 +1619,12 @@ async function reportLoading(room, running) {
     const status = statuses[index];
     if (status) loading[id] = { state: str(status.state), progress: num(status.progress) };
   });
+  const parts = waiting.map((id) => {
+    const status = loading[id];
+    const how = status && status.state === "downloading" ? ` (${Math.round(Math.max(0, Math.min(1, num(status.progress))) * 100)}%)` : "";
+    return `${memberNameOf(room, id)}${how}`;
+  });
+  sayStep(`waiting:${str(current.item.id)}:${parts.join("|")}`, `Waiting on: ${parts.join(", ")}`);
   setLoading(connection, loading);
 }
 
@@ -1608,6 +1675,7 @@ function reportReady(running, room, item, trackId, player) {
   const key = itemId + "/" + playing + "/measured";
   if (running.reportedKey === key) return;
   running.reportedKey = key;
+  sayStep(`ready:${key}`, `${item.title || "This file"} is ready here (${shortLength(measured)})`);
 
   const connection = active;
   if (!connection) return;

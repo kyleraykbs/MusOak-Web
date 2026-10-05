@@ -29,6 +29,7 @@ import {
   driftDecision,
   followWithPlayer,
   transportNotice,
+  setStepNotice,
 } from "../rooms-state.js";
 import { state } from "../state.js";
 
@@ -1487,4 +1488,58 @@ test("a client whose file has ended asks the room rather than sitting on the fin
   assert.ok(await waitFor(() => player.plays.length === 2), "and the next song is played");
   assert.equal(player.plays[1].track.id, "track-a2", "the room's next song, not the finished one");
   assert.ok(await waitFor(() => !player.isPaused()), "and it is playing");
+});
+
+test("every step of a song change is said out loud", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const client = fakeClient({ sources: ONE_VARIANT });
+  const steps = [];
+  setStepNotice((text) => steps.push(text));
+  t.after(() => setStepNotice(null));
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1" });
+  const socket = client.calls.sockets[0];
+  const first = item("a1", "first", KYLE);
+  const second = item("a2", "second", KYLE);
+
+  // The room prepares the first song and this client fetches it: the source
+  // lookup, the fetch and the readiness report each say so.
+  client.roomData = roomPrepared(first);
+  socket.onEvent({ type: "track_prepared", roomId: "room-1", atMs: Date.now(), data: { item: first } });
+  await waitFor(() => steps.some((text) => text.includes("first") && text.includes("Loading")));
+
+  // The room has the next song prepared behind this one, and this client says
+  // it is fetching it - which is what makes the change cost nothing.
+  client.roomData = { ...roomPrepared(first), next: second };
+  socket.onEvent({ type: "queue_updated", roomId: "room-1", atMs: Date.now(), data: { next: second } });
+  assert.ok(
+    await waitFor(() => steps.some((text) => text.includes("Next:") && text.includes("second"))),
+    `said: ${JSON.stringify(steps)}`
+  );
+
+  // The room starts it, and the client says where the room is as it begins.
+  const startedAt = Date.now() - 3000;
+  client.roomData = roomStarted(first, startedAt, 30000);
+  socket.onEvent({
+    type: "track_started",
+    roomId: "room-1",
+    atMs: Date.now(),
+    data: { item: first, startedAt, timelineMs: 30000 },
+  });
+  assert.ok(
+    await waitFor(() => steps.some((text) => text.includes("Playing") && text.includes("room is at"))),
+    `said: ${JSON.stringify(steps)}`
+  );
+
+  // And the room's clock is put onto this file, which is the host's job.
+  assert.ok(
+    await waitFor(() => steps.some((text) => text.includes("Putting the room's clock"))),
+    `said: ${JSON.stringify(steps)}`
+  );
+
+  // Each step is said once: a stream of ticks is not a stream of toasts.
+  const said = steps.length;
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  assert.equal(steps.length, said, `repeated itself: ${JSON.stringify(steps.slice(said))}`);
 });
