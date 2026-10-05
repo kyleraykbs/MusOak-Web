@@ -270,6 +270,7 @@ class Player {
 
     this._bar = null;
     this._seeking = false;
+    this._seekingByHand = false;
     this._seekTimer = 0;
     this._rememberTimer = 0;
     this._wired = false;
@@ -1758,7 +1759,22 @@ class Player {
     const position = h("input", {
       type: "range", min: "0", max: "1000", step: "1", value: "0",
       title: "Seek", disabled: true,
-      oninput: (event) => this._seekTo(event.currentTarget.value),
+      // Only a hand moves the room. A range input fires `input` for whatever
+      // value it is handed while it is being manipulated, and this bar is redrawn
+      // from the position several times a second - so a stray one (a value
+      // restored mid-drag, a keyboard nudge, a device speaking for the page)
+      // asks the room to jump. The room takes a seek at its word and everybody
+      // hears it, which is how a song ends seconds after it started.
+      onpointerdown: () => { this._seekingByHand = true; },
+      onpointerup: () => { this._seekingByHand = false; },
+      onpointercancel: () => { this._seekingByHand = false; },
+      onkeydown: () => { this._seekingByHand = true; },
+      onkeyup: () => { this._seekingByHand = false; },
+      onblur: () => { this._seekingByHand = false; },
+      oninput: (event) => {
+        if (!this._seekingByHand) return;
+        this._seekTo(event.currentTarget.value);
+      },
     });
     const timeline = h("div", { class: "timeline" }, position);
 

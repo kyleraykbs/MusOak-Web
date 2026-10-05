@@ -1274,7 +1274,7 @@ async function followRoom(running) {
     // already playing, and rewinding the room to their file would be the host
     // arguing with the room they are supposed to lead. There they follow it,
     // like anybody else.
-    const atStart = positionMs(room, Date.now()) < HOST_ALIGN_MS;
+    const atStart = positionMs(room, Date.now()) < HOST_ALIGN_MS && player.positionMs() < HOST_ALIGN_MS;
     if (isHost(room) && atStart && !player.isPaused() && running.alignedItemId !== itemId) {
       running.alignedItemId = itemId;
       seek(player.positionMs()).catch(() => {});
