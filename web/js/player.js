@@ -266,7 +266,11 @@ class Player {
     this._buffering = false;      // the file is here, the sound is not yet
     this._progress = 0;
     this._error = "";
-    this._pendingSeek = 0;
+    // null is "nothing to seek"; a number is where to put the file, and zero
+    // counts. A fresh load always asks for a position — a file this element
+    // already held can be sitting at its end, and playing it from there ends it
+    // again at once.
+    this._pendingSeek = null;
 
     this._bar = null;
     this._seeking = false;
@@ -388,7 +392,7 @@ class Player {
     this._loading = false;
     this._progress = 0;
     this._error = "";
-    this._pendingSeek = 0;
+    this._pendingSeek = null;
     this._stopAudio();
     this._emit("queue-changed", this.queue);
     this._emit("track-changed", null);
@@ -950,8 +954,8 @@ class Player {
     audio.addEventListener("durationchange", () => this._positionEvent());
     audio.addEventListener("loadedmetadata", () => {
       const pending = this._pendingSeek;
-      this._pendingSeek = 0;
-      if (pending > 0) {
+      this._pendingSeek = null;
+      if (pending !== null) {
         try {
           audio.currentTime = Math.min(pending / 1000, audio.duration || pending / 1000);
         } catch {

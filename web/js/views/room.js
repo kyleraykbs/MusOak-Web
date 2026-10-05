@@ -10,10 +10,9 @@ import { registerView, navigate, banner, currentClient, requireLogin } from "../
 import { state, saveLocal } from "../state.js";
 import { player } from "../player.js";
 import { artworkTile, trackMenu } from "./playlist.js";
-import { avatarFor, inviteFriendsToRoom, memberLoadLabel } from "./share.js";
+import { avatarFor, inviteFriendsToRoom } from "./share.js";
 import { listDrag, dragHandle, roomQueueTrack, titleClass } from "./queue.js";
 import {
-  setOut,
   currentRoom,
   closedRoomReason,
   subscribe,
@@ -23,10 +22,8 @@ import {
   nameOf,
   mayDrive,
   isHost,
-  setMode,
-  MODE_HOST,
-  MODE_SERVER,
   positionMs,
+  durationMs,
   remove,
   reorder,
   clear as clearRoomQueue,
@@ -130,38 +127,6 @@ function header(room) {
       onclick: () => inviteFriendsToRoom(room),
     }),
   ];
-  // Who holds the song is the host's checkbox, and a live one: the song in
-  // flight changes hands with it. In host mode the room's clock is this
-  // member's player — the party-in-one-room setting; in server mode the room
-  // waits for every member's file and plays on its own clock.
-  if (isHost(room)) {
-    pieces.push(
-      h(
-        "label",
-        {
-          class: "row btn flat small",
-          style: { alignItems: "center", gap: "6px", cursor: "pointer" },
-          title:
-            room.mode === MODE_HOST
-              ? "Your player holds the song: it says where the song is and when it is over"
-              : "The room waits for every member's file, then plays on the server's clock",
-        },
-        h("input", {
-          type: "checkbox",
-          checked: room.mode === MODE_HOST,
-          onchange: (event) => {
-            const target = event.currentTarget.checked ? MODE_HOST : MODE_SERVER;
-            setMode(target).catch((error) => {
-              toast(`could not change who holds the song: ${error.message}`);
-              // Put the checkbox back with the room's answer.
-              paint();
-            });
-          },
-        }),
-        h("span", { text: "My player leads" })
-      )
-    );
-  }
   pieces.push(h("button", { class: "btn destructive", text: "Leave", title: `Leave “${room.name}”`, onclick: () => leave() }));
   return h("div", { class: "card row", style: { padding: "14px 16px" } }, h("button", {
     class: "btn flat small",
@@ -184,12 +149,29 @@ export function hostOnly(action) {
 function nowPlaying(room) {
   const current = room.current;
   const section = sectionBlock("Playing now");
-  if (!current || !current.item || !current.startedAtMs) {
-    const hint =
-      current && current.item
-        ? `“${current.item.title}” is getting ready.`
-        : "Nothing playing yet — queue something from search.";
-    section.appendChild(h("div", { class: "subtitle", style: { padding: "0 4px 8px" }, text: hint }));
+  if (!current || !current.item) {
+    section.appendChild(
+      h("div", {
+        class: "subtitle",
+        style: { padding: "0 4px 8px" },
+        text: "Nothing playing yet — queue something from search.",
+      })
+    );
+    return section;
+  }
+  if (!current.started) {
+    section.appendChild(
+      h(
+        "div",
+        { class: "subtitle", style: { padding: "0 4px 8px" } },
+        h("div", { class: "title", text: current.item.title }),
+        h("div", {
+          text: isHost(room)
+            ? "Waiting for your player to start it — press play, or use the playbar."
+            : "Waiting for the host's player to start it.",
+        })
+      )
+    );
     return section;
   }
 
@@ -235,15 +217,15 @@ function nowPlaying(room) {
   return section;
 }
 
-/** Who the room is waiting for — the one line that explains a stuck track. */
+/** The one line that explains who the song is waiting on. */
 function waitingLine(room, current) {
-  let text = "";
-  if (current.awaiting && current.awaiting.length) {
-    text = `waiting for ${current.awaiting.map((id) => nameOf(room, id)).join(", ")}`;
-  } else if (current.catchingUp && current.catchingUp.length) {
-    text = `catching up: ${current.catchingUp.map((id) => nameOf(room, id)).join(", ")}`;
+  if (!current.started) {
+    return h("div", {
+      class: "subtitle",
+      text: isHost(room) ? "the room starts when your player does" : "waiting for the host to start it",
+    });
   }
-  return h("div", { class: "subtitle", text });
+  return h("div", { class: "subtitle", text: "" });
 }
 
 function votes(room, current) {
@@ -391,9 +373,6 @@ function members(room) {
     const marks = [];
     if (member.id === room.host) marks.push("host");
     if (member.id === room.me) marks.push("you");
-    if (member.out) marks.push("sitting this one out");
-    else if (current && current.awaiting && current.awaiting.includes(member.id)) marks.push("getting ready");
-    else if (current && current.catchingUp && current.catchingUp.includes(member.id)) marks.push("catching up");
     const score = current ? Number(current.votes[member.id] || 0) : 0;
     if (score) marks.push(`voted ${score}`);
 
@@ -404,7 +383,6 @@ function members(room) {
     const queued = upcoming.length
       ? ` · next: ${upcoming[0].title}${upcoming.length > 1 ? ` (+${upcoming.length - 1})` : ""}`
       : "";
-    const load = (room.loading || {})[member.id];
     list.appendChild(
       h(
         "div",
@@ -416,30 +394,8 @@ function members(room) {
           "div",
           { class: "grow" },
           h("div", { class: "title", text: nameOf(room, member.id) }),
-          h("div", { class: "subtitle", text: `${marks.length ? marks.join(", ") : "listening"}${queued}` }),
-          // The file, and how far along it is: the only thing between this
-          // member and hearing the song, and the answer to "is it stuck?".
-          load && load.state !== "ready"
-            ? h(
-                "div",
-                { class: "progress member-load", title: memberLoadLabel(load) },
-                h("div", { class: "bar", style: { width: `${Math.round((load.progress || 0) * 100)}%` } })
-              )
-            : null
-        ),
-        // The room plays for as long as the shortest file in it, so a member
-        // holding a short or broken copy needs a way to say so rather than end
-        // the song for everybody. Only your own row offers it.
-        member.id === room.me
-          ? h("button", {
-              class: "btn flat small",
-              title: member.out
-                ? "Play this track with the room again"
-                : "Keep listening without playing this track: the room will not wait for you or measure the song by your copy",
-              text: member.out ? "I'm back" : "Sit this one out",
-              onclick: () => act(() => setOut(!member.out)),
-            })
-          : null
+          h("div", { class: "subtitle", text: `${marks.length ? marks.join(", ") : "listening"}${queued}` })
+        )
       )
     );
   }
@@ -479,14 +435,14 @@ function stopTicker() {
 export function roomClock(player, room, current, nowMs = Date.now()) {
   const local = player && typeof player.current === "function" ? player.current() : null;
   const here = Boolean(local && current && current.item && local.id === current.item.trackId);
-  const timeline = Math.max(0, Number(current && current.timelineMs) || 0);
-  if (!here) return { positionMs: positionMs(room, nowMs), durationMs: timeline };
+  const roomLength = Math.max(0, durationMs(room));
+  if (!here) return { positionMs: positionMs(room, nowMs), durationMs: roomLength };
 
   const position = typeof player.positionMs === "function" ? player.positionMs() : 0;
-  // The file's own length, not the queue entry's: until the browser has read it
-  // the room's timeline is the only number there is.
+  // The file's own length, not the queue entry's: what this member hears is
+  // measured from their own copy.
   const duration = typeof player.measuredDurationMs === "function" ? player.measuredDurationMs() : 0;
-  return { positionMs: position, durationMs: duration > 0 ? duration : timeline };
+  return { positionMs: position, durationMs: duration > 0 ? duration : roomLength };
 }
 
 function updateClock() {
@@ -497,8 +453,9 @@ function updateClock() {
     return;
   }
   const room = currentRoom();
-  const current = room && room.current;
-  if (!room || !current || !current.item) return;
+  if (!room) return;
+  const current = room.current;
+  if (!current || !current.item) return;
 
   const clock = roomClock(player, room, current);
   label.textContent = `${fmtDuration(clock.positionMs)} / ${fmtDuration(clock.durationMs)}`;

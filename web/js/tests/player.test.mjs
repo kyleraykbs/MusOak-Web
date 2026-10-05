@@ -331,14 +331,16 @@ test("a platform list that could not be fetched is not remembered as none", asyn
 
 test("the room's clock is the playbar's clock for whoever is playing here", async () => {
   const { roomClock } = await import("../views/room.js");
+  // The room is at 1000ms on the server clock at instant 1000, and its length
+  // is the host's file's; a member with a shorter copy still shows their own.
   const room = {
     serverOffsetMs: 0,
-    current: { item: { trackId: "t1" }, timelineMs: 431000, startedAtMs: 1000, atMs: 1000, positionMs: 0, paused: false },
+    current: { item: { trackId: "t1" }, durationMs: 431000, started: true, paused: false, positionMs: 1000, atMs: 1000 },
   };
   const current = room.current;
 
   // Playing here: the file this client has decides both numbers, exactly as the
-  // playbar shows them, even though the room plays the track for longer.
+  // playbar shows them, even though the room's length is different.
   const playing = { current: () => ({ id: "t1" }), positionMs: () => 254000, measuredDurationMs: () => 254000 };
   assert.deepEqual(roomClock(playing, room, current), { positionMs: 254000, durationMs: 254000 });
 
@@ -346,9 +348,9 @@ test("the room's clock is the playbar's clock for whoever is playing here", asyn
   const idle = { current: () => ({ id: "other" }), positionMs: () => 5000, measuredDurationMs: () => 10000 };
   const idleClock = roomClock(idle, room, current, 3000);
   assert.equal(idleClock.durationMs, 431000);
-  assert.equal(idleClock.positionMs, 2000);
+  assert.equal(idleClock.positionMs, 3000, "positionMs + (now - atMs)");
 
-  // A file whose length is not known yet falls back to the room's timeline.
+  // A file whose length is not known yet falls back to the room's length.
   const unmeasured = { current: () => ({ id: "t1" }), positionMs: () => 1000, measuredDurationMs: () => 0 };
   assert.deepEqual(roomClock(unmeasured, room, current), { positionMs: 1000, durationMs: 431000 });
 });

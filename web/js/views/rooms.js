@@ -201,8 +201,9 @@ function roomList() {
 function describeRoom(room) {
   const parts = [`${room.memberCount ?? (room.members || []).length} listening`];
   const current = room.current;
-  if (current && current.item) parts.push(`playing ${current.item.title}`);
-  else if ((room.queue || []).length) parts.push(`${room.queue.length} queued`);
+  if (current && current.item) {
+    parts.push(current.started ? `playing ${current.item.title}` : `up next ${current.item.title}`);
+  } else if ((room.masterQueue || []).length) parts.push(`${room.masterQueue.length} queued`);
   if (room.controls === "everyone") parts.push("everyone controls");
   return parts.join(" · ");
 }

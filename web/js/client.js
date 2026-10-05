@@ -715,11 +715,11 @@ export class Client {
     return this.post(`/api/v1/rooms/${roomId}/skip`).then(this.roomSnapshot);
   }
 
-  /** The host's copy of a song has run out: the room moves on from their end.
-   *  The track and the position are named so an end that lands late, or one
-   *  from a file that stopped short, cannot cut the song playing now. */
-  roomEnded(roomId, trackId = "", positionMs = 0) {
-    return this.post(`/api/v1/rooms/${roomId}/ended`, { trackId, positionMs }).then(this.roomSnapshot);
+  /** The host's file for a song has run out: the room drops it and puts the
+   *  next one up. The track is named so an end that lands late cannot cut the
+   *  song playing now. */
+  roomEnded(roomId, trackId = "") {
+    return this.post(`/api/v1/rooms/${roomId}/ended`, { trackId }).then(this.roomSnapshot);
   }
 
   roomSeek(roomId, positionMs) {
@@ -731,26 +731,8 @@ export class Client {
     return this.post(`/api/v1/rooms/${roomId}/vote`, { score }).then(this.roomSnapshot);
   }
 
-  /** "I can play this" — durationMs is what this client will really play. */
-  roomReady(roomId, trackId, variantId, durationMs = 0) {
-    const body = { trackId, variantId };
-    if (durationMs) body.durationMs = durationMs;
-    return this.post(`/api/v1/rooms/${roomId}/ready`, body).then(this.roomSnapshot);
-  }
-
-  /** Sit the room's current track out, or come back into it. */
-  roomOut(roomId, out) {
-    return this.post(`/api/v1/rooms/${roomId}/out`, { out }).then(this.roomSnapshot);
-  }
-
-  /** Who holds the song: the server's clock, or the host's player. The host's
-   *  choice - the song in flight changes hands with it. */
-  roomMode(roomId, mode) {
-    return this.post(`/api/v1/rooms/${roomId}/mode`, { mode }).then(this.roomSnapshot);
-  }
-
-  /** The host's player has started the song: the room's clock is put where
-   *  their file is, for as long as their file says it is. Host mode only. */
+  /** The host's player has begun the room's song: the room's clock is put where
+   *  their file is, which is what starts the song for everybody. */
   roomStarted(roomId, trackId, positionMs = 0, durationMs = 0) {
     const body = { trackId, positionMs: Math.max(0, Math.round(positionMs)) };
     if (durationMs) body.durationMs = Math.round(durationMs);

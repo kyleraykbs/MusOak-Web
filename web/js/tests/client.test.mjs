@@ -163,14 +163,19 @@ test("room commands go to the room's own endpoints", async () => {
   assert.deepEqual(JSON.parse(calls[3].init.body), { score: 4 });
   assert.equal(calls[3].url, "/api/v1/rooms/r1/vote");
 
-  await client.roomReady("r1", "t1", "v1", 180000);
-  assert.deepEqual(JSON.parse(calls[4].init.body), { trackId: "t1", variantId: "v1", durationMs: 180000 });
+  await client.roomStarted("r1", "t1", 0, 180000);
+  assert.deepEqual(JSON.parse(calls[4].init.body), { trackId: "t1", positionMs: 0, durationMs: 180000 });
+  assert.equal(calls[4].url, "/api/v1/rooms/r1/started");
+
+  await client.roomEnded("r1", "t1");
+  assert.equal(calls[5].url, "/api/v1/rooms/r1/ended");
+  assert.deepEqual(JSON.parse(calls[5].init.body), { trackId: "t1" });
 
   await client.roomSeek("r1", 5000);
-  assert.equal(calls[5].url, "/api/v1/rooms/r1/seek");
+  assert.equal(calls[6].url, "/api/v1/rooms/r1/seek");
 
   await client.roomClearQueue("r1", "m2");
-  assert.equal(calls[6].url, "/api/v1/rooms/r1/queue?memberId=m2");
+  assert.equal(calls[7].url, "/api/v1/rooms/r1/queue?memberId=m2");
 });
 
 test("a joined room is unwrapped from its envelope", async () => {
