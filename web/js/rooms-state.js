@@ -20,6 +20,7 @@ export const CONTROLS_EVERYONE = "everyone";
 export const EVENTS = {
   memberJoined: "member_joined",
   memberLeft: "member_left",
+  hostChanged: "host_changed",
   queueUpdated: "queue_updated",
   trackPrepared: "track_prepared",
   trackStarted: "track_started",
@@ -274,6 +275,14 @@ export function applyEvent(state, event) {
         host: data.host ? str(data.host) : state.host,
         memberCount: data.memberCount === undefined ? members.length : num(data.memberCount, members.length),
       };
+    }
+
+    case EVENTS.hostChanged: {
+      const host = str(data.host);
+      if (!host || host === state.host) return state;
+      // Who leads the room decides who may drive it, so it is not something the
+      // view can wait for the next snapshot to find out.
+      return { ...state, atMs, host };
     }
 
     case EVENTS.memberLeft: {
@@ -1292,6 +1301,12 @@ async function resolveVariant(room, trackId, player) {
 /**
  * Follow the room's timeline: hold inside the drift tolerance, seek past it,
  * and stay silent — never restart, never advance — once the file is done.
+ *
+ * The host is the exception, and is why the room has a host at all: the song
+ * runs as long as their copy and the room moves on when theirs ends, so seeking
+ * them onto the server's idea of the position would cut the song they are
+ * hearing to catch up with a clock they are the reference for. A playlist does
+ * not do that, and neither does this.
  */
 function followTimeline(player, room) {
   const position = positionMs(room, Date.now());
@@ -1305,15 +1320,23 @@ function followTimeline(player, room) {
 
   const local = player.positionMs();
   const duration = player.durationMs();
+  const host = isHost(room);
   // A file shorter than the timeline has already run out: it waits, silent,
-  // for the room to move on.
-  if (duration > 0 && local >= duration - 250) {
+  // for the room to move on. The host's file is what the timeline is, so
+  // stopping them a moment short of their own end is a gap they can hear.
+  if (!host && duration > 0 && local >= duration - 250) {
     if (!player.isPaused()) player.pause();
     return;
   }
 
-  if (driftDecision(local, position) !== "hold") player.seek(position);
+  if (!host && driftDecision(local, position) !== "hold") player.seek(position);
   if (player.isPaused()) player.resume();
+}
+
+/** Whether this member is the room's host: the one whose copy it runs on. */
+function isHost(room) {
+  const me = str(room && room.me);
+  return Boolean(me) && me === str(room && room.host);
 }
 
 /** How often a waiting member's file is looked in on. */

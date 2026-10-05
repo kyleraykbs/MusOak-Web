@@ -322,17 +322,28 @@ const HOST = {
   skip: { skipThreshold: 2, minVotersForSkip: 2, voterFractionForSkip: 0.5, readyTimeoutSeconds: 30 },
 };
 
-function fakeClient({ room = HOST, joinError = null, sources = null } = {}) {
+/** The same room seen by a member who is not leading it: sam follows kyle. The
+ *  room runs on kyle's copy, so what sam's own clock does is sam's business. */
+const FOLLOWER = {
+  ...HOST,
+  members: [
+    { id: KYLE, name: "kyle" },
+    { id: SAM, name: "sam" },
+  ],
+  memberCount: 2,
+};
+
+function fakeClient({ room = HOST, joinError = null, sources = null, memberId = KYLE } = {}) {
   const calls = { joins: [], commands: [], leaves: [], ready: [], sockets: [] };
   const client = {
-    memberId: KYLE,
+    memberId,
     calls,
     joinError,
     roomData: room,
     joinRoom(roomId, password) {
       calls.joins.push({ roomId, password });
       if (client.joinError) return Promise.reject(client.joinError);
-      return Promise.resolve({ room: client.roomData, memberId: KYLE });
+      return Promise.resolve({ room: client.roomData, memberId });
     },
     room() {
       return Promise.resolve(client.roomData);
@@ -743,7 +754,7 @@ test("a track this member cannot fetch is sat out, not waited on", async (t) => 
 test("the prepared track is played, reported ready once, then follows the room's clock", async (t) => {
   t.after(closeRoom);
   const player = new FakePlayer();
-  const client = fakeClient({ sources: ONE_VARIANT });
+  const client = fakeClient({ sources: ONE_VARIANT, room: FOLLOWER, memberId: SAM });
   t.after(followWithPlayer(player));
   await enterRoom({ client, roomId: "room-1" });
   const socket = client.calls.sockets[0];
@@ -792,7 +803,7 @@ test("the prepared track is played, reported ready once, then follows the room's
 test("a file shorter than the timeline waits, silent, instead of starting over", async (t) => {
   t.after(closeRoom);
   const player = new FakePlayer();
-  const client = fakeClient({ sources: ONE_VARIANT });
+  const client = fakeClient({ sources: ONE_VARIANT, room: FOLLOWER, memberId: SAM });
   t.after(followWithPlayer(player));
   await enterRoom({ client, roomId: "room-1" });
   const socket = client.calls.sockets[0];
@@ -821,6 +832,44 @@ test("a file shorter than the timeline waits, silent, instead of starting over",
   assert.ok(player.isPaused(), "the member stays silent to the room's end");
   assert.equal(player.plays.length, 1, "the file is not started over");
   assert.equal(player.seeks.length, 0, "and the timeline does not push it back");
+});
+
+test("the host is never seeked onto the room's clock, nor stopped short of their own end", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const client = fakeClient({ sources: ONE_VARIANT });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1" });
+  const socket = client.calls.sockets[0];
+  const track = item("a1", "first", KYLE);
+
+  client.roomData = roomPrepared(track);
+  socket.onEvent({ type: "track_prepared", roomId: "room-1", atMs: Date.now(), data: { item: track } });
+  await waitFor(() => player.plays.length === 1);
+
+  const startedAt = Date.now() - 500;
+  client.roomData = roomStarted(track, startedAt, 30000);
+  socket.onEvent({
+    type: "track_started",
+    roomId: "room-1",
+    atMs: Date.now(),
+    data: { item: track, startedAt, timelineMs: 30000 },
+  });
+  await waitFor(() => !player.isPaused());
+
+  // The room runs on the host's copy, so a clock that has drifted is not the
+  // host's to chase: seeking them would cut the song they are hearing to catch
+  // up with a clock they are the reference for.
+  player.position = 8000;
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  assert.equal(player.seeks.length, 0, "the host is not seeked onto the room's clock");
+
+  // And their file is not stopped a moment short of its own end: that gap is
+  // the room's timeline arriving late, and it is the host's silence to hear.
+  player.duration = 30000;
+  player.position = 29760;
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  assert.equal(player.isPaused(), false, "the host plays to the end of their own file");
 });
 
 test("past the room's timeline the file is held, and leaving gives the player back", async (t) => {
