@@ -1125,6 +1125,13 @@ async function followRoom(running) {
     running.failedAt = 0;
   }
 
+  // The room's next songs are fetched, and this member's readiness for them
+  // reported, before anything about the current one is settled. It does not
+  // depend on it: what the room plays next is the room's business, and a member
+  // whose own song is still resolving - or who is still fetching it - is
+  // exactly the member the room would otherwise wait for at the advance.
+  warmAhead(player, room, itemId, running);
+
   if (!running.variantId) {
     if (running.resolving === trackId) return;
     if (running.failedItemId === itemId && Date.now() - running.failedAt < RESOLVE_BACKOFF_MS) return;
@@ -1183,22 +1190,42 @@ async function followRoom(running) {
         : ""
   );
 
-  if (!ours && !loadingHere && !broken) {
-    // Start the room's rendition: the prepared one is fetched but held, the
-    // running one starts where the timeline already is. The fetched track
-    // carries the artist and artwork the bar shows; the item alone would only
-    // give it a title.
-    const autoplay = mode === "play";
-    player.playVariant(running.track || { id: trackId, title: item.title }, running.variantId, {
-      positionMs: autoplay ? positionMs(room, Date.now()) : 0,
-      autoplay,
-    });
+  // What the room is waiting for, and how far along each of them is. The room
+  // assigns every member a rendition, so its own state says what to ask about -
+  // and a member's file is the only thing between them and hearing this song.
+  // "Getting ready" with nothing behind it is what a stuck room looked like.
+  await reportLoading(room, running);
+
+  if (!ours) {
+    if (!loadingHere && !broken) {
+      // Start the room's rendition: the prepared one is fetched but held, the
+      // running one starts where the timeline already is. The fetched track
+      // carries the artist and artwork the bar shows; the item alone would only
+      // give it a title.
+      const autoplay = mode === "play";
+      player.playVariant(running.track || { id: trackId, title: item.title }, running.variantId, {
+        positionMs: autoplay ? positionMs(room, Date.now()) : 0,
+        autoplay,
+      });
+    }
     return;
   }
-  if (!ours) return; // still being fetched, or unfetchable
 
   reportReady(running, room, item, trackId, player);
 
+  if (mode === "play") followTimeline(player, room);
+  else if (!player.isPaused()) player.pause();
+}
+
+/**
+ * Get the room's next songs ready, and say so for the one it has prepared.
+ *
+ * The room can only start the next song the instant this one ends if it already
+ * knows every member's file is here, and a member can only say that before the
+ * gap if they are told about the song before it. So this runs for every member
+ * on every tick, not only for the one who happens to be playing right now.
+ */
+function warmAhead(player, room, itemId, running) {
   // The player's own queue is empty in a room, so nothing else would fetch what
   // the room plays next. Warm it here, or a skip waits on a download.
   for (const entry of upcomingItems(room, itemId)) {
@@ -1209,12 +1236,6 @@ async function followRoom(running) {
   // saying so is what lets the room start it the moment this one ends: it can
   // only learn a member is ready before the gap if the member says so before
   // the gap, and a download that begins at the end is the gap.
-  // What the room is waiting for, and how far along each of them is. The room
-  // assigns every member a rendition, so its own state says what to ask about -
-  // and a member's file is the only thing between them and hearing this song.
-  // "Getting ready" with nothing behind it is what a stuck room looked like.
-  await reportLoading(room, running);
-
   const prepared = room.next;
   const preparedId = str(prepared?.id);
   if (preparedId && running.preReadyFor !== preparedId) {
@@ -1224,9 +1245,6 @@ async function followRoom(running) {
       { onReady: (variantId) => reportReadyAhead(prepared, variantId) }
     );
   }
-
-  if (mode === "play") followTimeline(player, room);
-  else if (!player.isPaused()) player.pause();
 }
 
 /** How many of the room's upcoming items to have ready, as the player keeps its

@@ -24,6 +24,11 @@ const POLL_MS = 400;
 
 /** How long a preload may take before the room's own timeout is left to it. */
 const PRELOAD_TIMEOUT_MS = 8000;
+/** How long this client waits for the backend to finish a file before saying it
+ *  did not arrive. The server retries its own downloads and reports failure;
+ *  this is the backstop for one that is stuck rather than failed, which would
+ *  otherwise leave this member loading for ever and the room waiting on them. */
+const READY_TIMEOUT_MS = 60000;
 /** How long a seek counts as still in progress after the last drag. */
 const SEEK_SETTLE_MS = 400;
 /** How long the volume waits before this machine remembers it. */
@@ -1141,6 +1146,7 @@ class Player {
     const client = this._client();
     this._loading = true;
     this._startDownload(variantId, client);
+    const deadline = Date.now() + READY_TIMEOUT_MS;
     for (;;) {
       let status;
       try {
@@ -1158,6 +1164,11 @@ class Player {
         this.renderBar();
       }
       if (status.state === "ready" || status.state === "failed") return status;
+      if (Date.now() >= deadline) {
+        // Stuck rather than failed. Saying so is what lets the room move on
+        // and this member sit the track out, instead of both waiting for ever.
+        return { state: "failed", error: "that file did not arrive" };
+      }
       await sleep(POLL_MS);
       if (token !== this._token) return null;
     }

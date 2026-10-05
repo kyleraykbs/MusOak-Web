@@ -855,6 +855,52 @@ test("a file shorter than the timeline waits, silent, instead of starting over",
   assert.equal(player.seeks.length, 0, "and the timeline does not push it back");
 });
 
+test("a member who is not playing still fetches the room's next song", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  // This member cannot even work out what it would play, so it never becomes
+  // the one playing the room's song - and the room would otherwise wait for it
+  // at the advance. What the room plays next does not depend on that.
+  player.variantFor = () => new Promise(() => {});
+  const client = fakeClient({ sources: ONE_VARIANT, room: FOLLOWER, memberId: SAM });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1" });
+  const socket = client.calls.sockets[0];
+  const current = item("a1", "first", KYLE);
+  const next = item("a2", "second", KYLE);
+
+  client.roomData = {
+    ...FOLLOWER,
+    current: { item: current, startedAtMs: Date.now() - 1000, timelineMs: 30000, positionMs: 0, paused: false },
+    next,
+  };
+  socket.onEvent({
+    type: "track_started",
+    roomId: "room-1",
+    atMs: Date.now(),
+    data: { item: current, startedAt: Date.now() - 1000, timelineMs: 30000 },
+  });
+  socket.onEvent({
+    type: "queue_updated",
+    roomId: "room-1",
+    atMs: Date.now(),
+    data: { masterQueue: [current, next], queue: [next], next },
+  });
+
+  assert.ok(
+    await waitFor(() => player.warmed.some((track) => track.id === "track-a2")),
+    "the next song is fetched even though this member is not playing the current one"
+  );
+  // And the room is told this member is ready for it, which is what lets the
+  // song start the instant this one ends instead of waiting for them.
+  assert.equal(typeof player.warmReady, "function", "the fetch came with a report to make");
+  player.warmReady("v-default");
+  assert.ok(
+    await waitFor(() => client.calls.ready.some((report) => report.trackId === "track-a2")),
+    "readiness is reported for a song the room has not started"
+  );
+});
+
 test("the host follows a jump it did not make, and ignores its own drift", async (t) => {
   t.after(closeRoom);
   const player = new FakePlayer();
