@@ -22,6 +22,7 @@ import {
   myQueue,
   nameOf,
   mayDrive,
+  isHost,
   setMode,
   MODE_HOST,
   MODE_SERVER,

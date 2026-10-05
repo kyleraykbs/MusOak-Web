@@ -1674,7 +1674,7 @@ function followTimeline(player, room) {
 }
 
 /** Whether this member is the room's host: the one whose copy it runs on. */
-function isHost(room) {
+export function isHost(room) {
   const me = str(room && room.me);
   return Boolean(me) && me === str(room && room.host);
 }
