@@ -755,19 +755,23 @@ test("a member reports the length of its own file, never the song's canonical on
   socket.onEvent({ type: "track_prepared", roomId: "room-1", atMs: Date.now(), data: { item: track } });
   assert.ok(await waitFor(() => player.plays.length === 1), "the room's rendition is fetched");
 
-  // The placeholder report carries no length at all. A borrowed 7:11 here is
-  // what made the room outlast every file in it, leaving the members who held
-  // the 4:14 copy sitting in silence at the end of their song.
-  assert.ok(
-    await waitFor(() => client.calls.ready.length === 1, 6000),
-    "readiness is reported once the grace is up"
-  );
-  assert.equal(client.calls.ready[0].durationMs, 0, "no length is invented");
+  // Nothing is reported while the file is unmeasured. The room starts on this
+  // report and its clock runs from that instant, so a report sent before the
+  // file is playable buys a start the member cannot keep up with: they hear the
+  // song from wherever the room has got to, sit on the play button while the
+  // rest arrives, and jump forward when it lands.
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  assert.equal(client.calls.ready.length, 0, "an unmeasured file is not reported ready");
 
-  // The browser reads the file: its real length follows in a second report.
+  // The browser reads the file: its own length is what the room is told, never
+  // the 7:11 the queue entry borrowed.
   player.measured = 253705;
-  assert.ok(await waitFor(() => client.calls.ready.length === 2), "the measured length follows");
-  assert.equal(client.calls.ready[1].durationMs, 253705, "the file's own length");
+  assert.ok(await waitFor(() => client.calls.ready.length === 1), "the measured length is reported");
+  assert.equal(client.calls.ready[0].durationMs, 253705, "the file's own length");
+
+  // Once per copy: a second tick reports nothing new.
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  assert.equal(client.calls.ready.length, 1, "and it is reported once");
 });
 
 test("the room plays the variant the player would, so a warm is not wasted", async (t) => {

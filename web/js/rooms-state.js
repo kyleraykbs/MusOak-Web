@@ -1020,8 +1020,6 @@ export function ready({ trackId = "", variantId = "", durationMs = 0 } = {}) {
 // Everything is derived from the room state; the only call it makes on its own
 // is the readiness report.
 
-/** How long a ready file is left alone before being reported with no length. */
-const READY_DURATION_GRACE_MS = 4000;
 /** How long a track whose sources could not be read is left alone. */
 const RESOLVE_BACKOFF_MS = 5000;
 
@@ -1047,7 +1045,6 @@ export function followWithPlayer(playbackPlayer) {
     // the track behind the item, for the artist and artwork the bar shows
     track: null,
     reportedKey: "",
-    readySince: 0,
     failedItemId: "",
     failedAt: 0,
     resolving: "",
@@ -1129,7 +1126,6 @@ function forgetTrack() {
   plugin.variantId = "";
   plugin.track = null;
   plugin.reportedKey = "";
-  plugin.readySince = 0;
   plugin.failedItemId = "";
   plugin.failedAt = 0;
   plugin.resolving = "";
@@ -1165,7 +1161,6 @@ async function followRoom(running) {
     running.variantId = "";
     running.track = null;
     running.reportedKey = "";
-    running.readySince = 0;
     running.failedItemId = "";
     running.failedAt = 0;
   }
@@ -1511,7 +1506,16 @@ function reportReadyAhead(item, variantId) {
   connection.client.roomReady(connection.roomId, trackId, variantId, 0).catch(() => {});
 }
 
-/** Tell the room the file is here — once for each prepared track. */
+/** Tell the room the file is here — once for each prepared track.
+ *
+ *  Only a measured file counts. The room starts on this report and its clock
+ *  runs from that instant, so a report sent while the file is still arriving
+ *  buys a start the member cannot keep up with: they hear the song from
+ *  wherever the room has got to, sit on the play button while the rest
+ *  downloads, and jump forward when it lands. Waiting is the lesser cost, and
+ *  with one person in the room it costs nothing but the fetch they would have
+ *  paid anyway. A file that never arrives is not a wait: the member sits the
+ *  track out, and the room moves on without them. */
 function reportReady(running, room, item, trackId, player) {
   const itemId = str(item.id) || trackId;
   if (player.current()?.id !== trackId) return;
@@ -1520,34 +1524,20 @@ function reportReady(running, room, item, trackId, player) {
   // know the length of the one it will really hear. Reported once per copy.
   const playing = str(player.variantId());
   if (!playing) return;
-  if (player.readyState() !== "ready") {
-    running.readySince = 0;
-    return;
-  }
+  if (player.readyState() !== "ready") return;
   // What this member will actually play, never the song's canonical length: the
   // room's timeline is built from these, and a borrowed number builds a room
   // that runs longer than the file anybody is hearing.
   const measured = typeof player.measuredDurationMs === "function" ? player.measuredDurationMs() : 0;
-  const duration = measured;
-  if (duration <= 0) {
-    // Metadata can lag the download by a moment; give it one, then report
-    // anyway so the room does not wait out its readiness timeout. The length
-    // follows in a second report once the browser has read the file.
-    if (!running.readySince) running.readySince = Date.now();
-    if (Date.now() - running.readySince < READY_DURATION_GRACE_MS) return;
-  }
-  // A report that carries no length is a placeholder: it lets the room start
-  // without waiting, and the real length follows once the file has been
-  // measured. The placeholder and the measured report are two different
-  // reports, so the room's length moves to the second one.
-  const key = itemId + "/" + playing + (duration > 0 ? "/measured" : "/pending");
+  if (measured <= 0) return;
+  const key = itemId + "/" + playing + "/measured";
   if (running.reportedKey === key) return;
   running.reportedKey = key;
 
   const connection = active;
   if (!connection) return;
   connection.client
-    .roomReady(connection.roomId, trackId, playing, duration > 0 ? duration : 0)
+    .roomReady(connection.roomId, trackId, playing, measured)
     .then((answer) => {
       if (active !== connection || plugin !== running) return;
       if (answer && typeof answer === "object" && (answer.id || answer.room)) {
