@@ -41,6 +41,37 @@ export function selectedPlatforms(providers = [], preferred = null) {
 }
 
 /**
+ * The platforms the server has enabled, asked for once and kept.
+ *
+ * A failed lookup is not an answer, and is not kept. A page can load while the
+ * server is briefly unreachable - or while the session is still being handed
+ * over - and remembering that as "no platforms" leaves the filter saying so for
+ * the rest of the session, which is a lie a reload was the only way out of.
+ */
+let platformCache = null;
+
+export async function platformsFor(client) {
+  if (platformCache?.length) return platformCache;
+  try {
+    const list = enabledPlatforms(await client.providers());
+    if (list.length) platformCache = list;
+    return list;
+  } catch {
+    return [];
+  }
+}
+
+/** What the server last said, without asking again. */
+export function knownPlatforms() {
+  return platformCache || [];
+}
+
+/** Forget what the server said, so the next call asks again. */
+export function forgetPlatforms() {
+  platformCache = null;
+}
+
+/**
  * What the filter button says: the platform's own name when a search asks
  * exactly one, a count when it asks several, and what it is doing at the ends
  * of the range.

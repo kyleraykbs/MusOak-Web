@@ -11,7 +11,7 @@ import {
   registerView, banner, requireLogin, currentClient, navigate,
 } from "../app.js";
 import { player } from "../player.js";
-import { platformFilter, enabledPlatforms } from "../platforms.js";
+import { platformFilter, platformsFor, knownPlatforms } from "../platforms.js";
 import { artistLink } from "./queue.js";
 import { trackMenu } from "./playlist.js";
 import { state, saveLocal } from "../state.js";
@@ -382,19 +382,6 @@ const SEARCH_LOADERS = {
   playlists: (client, query, platforms) => client.searchPlaylists(query, SEARCH_LIMIT, platforms),
 };
 
-/** The platforms the server has enabled, asked for once and kept. */
-let platformList = null;
-
-async function platformsFor(client) {
-  if (platformList) return platformList;
-  try {
-    platformList = enabledPlatforms(await client.providers());
-  } catch {
-    platformList = [];
-  }
-  return platformList;
-}
-
 async function search(raw, force = false) {
   const query = String(raw || "").trim();
   const client = currentClient();
@@ -479,7 +466,7 @@ function render(container, params = {}) {
   resultsEl = h("div", { style: { display: "flex", flexDirection: "column", gap: "18px" } });
   tabsEl = h("div", { class: "tabs" }, kindTabNodes());
   filterEl = platformFilter({
-    providers: platformList || [],
+    providers: knownPlatforms(),
     preferred: state.user?.searchPlatforms,
     onChange: () => refresh(),
   });
@@ -496,17 +483,27 @@ function render(container, params = {}) {
 
   // The platform list arrives after the first paint; the filter is rebuilt with
   // it, keeping whatever the browser already remembered.
-  platformsFor(currentClient()).then((list) => {
-    if (!list.length || !filterRow.isConnected) return;
-    // The account's choice is what a search starts from: this is rebuilt rather
-    // than remembered, so re-opening the page resets to it.
-    filterEl = platformFilter({
-      providers: list,
-      preferred: state.user?.searchPlatforms,
-      onChange: () => refresh(),
+  const loadPlatforms = (attempt = 0) => {
+    platformsFor(currentClient()).then((list) => {
+      if (!filterRow.isConnected) return;
+      if (!list.length) {
+        // Not an answer: the server may simply not have been reachable yet. A
+        // filter that says there are no platforms is worse than one that waits
+        // a moment and asks again.
+        if (attempt < 4) setTimeout(() => loadPlatforms(attempt + 1), 500 * (attempt + 1));
+        return;
+      }
+      // The account's choice is what a search starts from: this is rebuilt
+      // rather than remembered, so re-opening the page resets to it.
+      filterEl = platformFilter({
+        providers: list,
+        preferred: state.user?.searchPlatforms,
+        onChange: () => refresh(),
+      });
+      filterRow.replaceChildren(filterEl.node);
     });
-    filterRow.replaceChildren(filterEl.node);
-  });
+  };
+  loadPlatforms();
 
   if (params?.q) search(params.q, true);
   else if (lastQuery) search(lastQuery, true);

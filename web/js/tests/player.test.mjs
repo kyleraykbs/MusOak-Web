@@ -12,7 +12,7 @@ import {
 import {
   groupSources, netVotes, pickSource, sourceLabel,
 } from "../views/sources.js";
-import { enabledPlatforms, platformLabel, selectedPlatforms } from "../platforms.js";
+import { enabledPlatforms, forgetPlatforms, platformLabel, platformsFor, selectedPlatforms } from "../platforms.js";
 
 const track = (id) => ({ id, title: id.toUpperCase(), artists: ["Someone"] });
 const queue = (...ids) => ids.map(track);
@@ -299,6 +299,34 @@ test("the account's own choice is what a search starts from", () => {
   assert.deepEqual(selectedPlatforms(providers, ["ytmusic", "youtube"]), ["ytmusic", "youtube"]);
   // Unset (empty) falls back to the built-in default: everything but YouTube.
   assert.deepEqual(selectedPlatforms(providers, []), ["ytmusic", "spotify"]);
+});
+
+test("a platform list that could not be fetched is not remembered as none", async () => {
+  forgetPlatforms();
+  try {
+    // The page can load while the server is briefly unreachable.
+    const offline = { providers: () => Promise.reject(new Error("offline")) };
+    assert.deepEqual(await platformsFor(offline), []);
+    // That is not an answer, and must not become the session's answer: the next
+    // ask has to reach a server that is back, or the filter says there are no
+    // platforms until somebody reloads the page.
+    const back = { providers: () => Promise.resolve([{ name: "ytmusic", capabilities: { search: true } }]) };
+    assert.deepEqual((await platformsFor(back)).map((provider) => provider.name), ["ytmusic"]);
+    // An answer that has platforms is asked for once.
+    forgetPlatforms();
+    let calls = 0;
+    const counted = {
+      providers: () => {
+        calls += 1;
+        return Promise.resolve([{ name: "ytmusic", capabilities: { search: true } }]);
+      },
+    };
+    await platformsFor(counted);
+    await platformsFor(counted);
+    assert.equal(calls, 1);
+  } finally {
+    forgetPlatforms();
+  }
 });
 
 test("the room's clock is the playbar's clock for whoever is playing here", async () => {
