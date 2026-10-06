@@ -266,6 +266,7 @@ class Player {
     this._buffering = false;      // the file is here, the sound is not yet
     this._progress = 0;
     this._error = "";
+    this._blocked = false;
     // null is "nothing to seek"; a number is where to put the file, and zero
     // counts. A fresh load always asks for a position — a file this element
     // already held can be sitting at its end, and playing it from there ends it
@@ -555,6 +556,11 @@ class Player {
     return !this.audio || this.audio.paused;
   }
 
+  /** Whether the browser is holding playback until this page is touched. */
+  isBlocked() {
+    return Boolean(this._blocked);
+  }
+
   /** Whether the file has run out.
    *
    *  An ended file reads as paused - the element stops itself - but it is not
@@ -576,6 +582,7 @@ class Player {
       count: this.queue.length,
       playing: this.isPlaying(),
       paused: this.isPaused(),
+      blocked: this.isBlocked(),
       loading: this._loading,
       buffering: this._buffering,
       error: this._error,
@@ -941,9 +948,17 @@ class Player {
     // tells the browser this page is a player, which is also what stops a
     // backgrounded tab being frozen and its audio cut off a few songs in.
     this._installMediaSession();
-    audio.addEventListener("playing", () => this._wantResume(false));
+    audio.addEventListener("playing", () => {
+      this._blocked = false;
+      this._wantResume(false);
+    });
     if (typeof document !== "undefined") {
       document.addEventListener("visibilitychange", () => this._retryWanted());
+      // A page that has not been touched cannot start audio. Rather than make
+      // somebody find the play button, the first touch anywhere tries again.
+      const wake = () => this._retryWanted();
+      document.addEventListener("pointerdown", wake, true);
+      document.addEventListener("keydown", wake, true);
     }
     audio.volume = this._volume;
     audio.muted = this._muted;
@@ -1084,7 +1099,17 @@ class Player {
     this.renderBar();
     this._wantResume(true);
     const started = audio.play();
-    if (started?.catch) started.catch(() => { /* nothing to say: the button still says pause */ });
+    if (started?.catch) {
+      started.catch((error) => {
+        // A browser that has not been touched yet refuses to start audio. The
+        // file is here and the room is waiting on it, so this is said rather
+        // than swallowed: one click anywhere is the whole fix, and the bar
+        // would otherwise look broken.
+        this._blocked = true;
+        this._stateEvent();
+        this._blockedError = error?.message || "";
+      });
+    }
     // The button becomes a pause button the moment play() is called, and the
     // sound can still be a moment behind it.
     this._setBuffering(audio.readyState < 3);

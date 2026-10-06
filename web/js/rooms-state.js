@@ -959,6 +959,12 @@ function requestSync() {
     });
 }
 
+/** What to say when the browser will not start the sound: the one hint that
+ *  turns "the room is stuck" into "click once". */
+function blockedHint(player) {
+  return player.isBlocked?.() ? "Your browser is holding playback: click the page once to start the sound." : "";
+}
+
 /** Forget what the player knew about the song it was following. */
 function forgetTrack() {
   if (!plugin) return;
@@ -1085,12 +1091,23 @@ async function followRoom(running) {
   sayStatus("");
 
   if (!current.started) {
-    // The song waits at zero for the host's player to begin it.
+    // The song waits at zero for the host's player to begin it. A host whose
+    // browser has not been touched yet cannot start it — no audio in a page
+    // that has not been interacted with — so the room waits while the file sits
+    // there ready: that is worth saying, because one click anywhere ends it.
     if (host) {
-      if (player.isPaused() && !player.hasEnded?.()) player.resume();
+      if (player.isPaused() && !player.hasEnded?.()) {
+        if (player.isBlocked?.() || (player.readyState?.() === "ready" && player.positionMs() === 0)) {
+          sayStatus("Your browser is holding playback: click the page once and the room starts.");
+        }
+        player.resume();
+      } else {
+        sayStatus("");
+      }
       if (!player.isPaused() && !player.hasEnded?.()) reportStart(running, item, trackId, player);
-    } else if (!player.isPaused()) {
-      player.pause();
+    } else {
+      sayStatus("");
+      if (!player.isPaused()) player.pause();
     }
     return;
   }
@@ -1126,6 +1143,7 @@ async function followRoom(running) {
     return;
   }
   if (player.isPaused()) {
+    sayStatus(blockedHint(player));
     player.resume();
     return;
   }
