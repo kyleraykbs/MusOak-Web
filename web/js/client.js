@@ -716,10 +716,13 @@ export class Client {
   }
 
   /** The host's file for a song has run out: the room drops it and puts the
-   *  next one up. The track is named so an end that lands late cannot cut the
-   *  song playing now. */
-  roomEnded(roomId, trackId = "") {
-    return this.post(`/api/v1/rooms/${roomId}/ended`, { trackId }).then(this.roomSnapshot);
+   *  next one up. The entry is named as well as the track, so an end that lands
+   *  late cannot cut the song playing now - the same track queued twice is two
+   *  entries and only one of them is on. */
+  roomEnded(roomId, trackId = "", itemId = "") {
+    const body = { trackId };
+    if (itemId) body.itemId = itemId;
+    return this.post(`/api/v1/rooms/${roomId}/ended`, body).then(this.roomSnapshot);
   }
 
   roomSeek(roomId, positionMs) {

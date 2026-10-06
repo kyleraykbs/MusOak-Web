@@ -167,9 +167,9 @@ test("room commands go to the room's own endpoints", async () => {
   assert.deepEqual(JSON.parse(calls[4].init.body), { trackId: "t1", positionMs: 0, durationMs: 180000 });
   assert.equal(calls[4].url, "/api/v1/rooms/r1/started");
 
-  await client.roomEnded("r1", "t1");
+  await client.roomEnded("r1", "t1", "i1");
   assert.equal(calls[5].url, "/api/v1/rooms/r1/ended");
-  assert.deepEqual(JSON.parse(calls[5].init.body), { trackId: "t1" });
+  assert.deepEqual(JSON.parse(calls[5].init.body), { trackId: "t1", itemId: "i1" });
 
   await client.roomSeek("r1", 5000);
   assert.equal(calls[6].url, "/api/v1/rooms/r1/seek");

@@ -846,13 +846,13 @@ const ENDED_RETRY_MS = 3000;
 /** The host's file reaching its end, which is the room's song reaching its end.
  *  A report the server never heard leaves the room on a song that is already
  *  over, so a failure to send it is retried while the song still is one. */
-function reportEnded(trackId = "", onFail = null) {
+function reportEnded(trackId = "", itemId = "", onFail = null) {
   const connection = active;
   if (!connection) {
     onFail?.();
     return;
   }
-  connection.client.roomEnded(connection.roomId, str(trackId)).catch(() => onFail?.());
+  connection.client.roomEnded(connection.roomId, str(trackId), str(itemId)).catch(() => onFail?.());
 }
 
 // --- following the room with the player ------------------------------------
@@ -1172,7 +1172,7 @@ function reportEndedOnce(running, itemId, trackId) {
   if (running.endedFailedAt && Date.now() - running.endedFailedAt < ENDED_RETRY_MS) return;
   running.endedKey = key;
   sayStep(`ended:${key}`, "This file has run out — moving the room on");
-  reportEnded(trackId, () => {
+  reportEnded(trackId, str(itemId), () => {
     running.endedKey = "";
     running.endedFailedAt = Date.now();
   });
