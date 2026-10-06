@@ -65,8 +65,10 @@ const CLOCK_BURST = 3;
 /** How long a track whose sources could not be read is left alone. */
 const RESOLVE_BACKOFF_MS = 5000;
 
-/** How many of the room's upcoming songs to have on disk. */
-const PREFETCH_AHEAD = 2;
+/** How many of the room's upcoming songs to have on disk. A song the server has
+ *  never fetched is a search and a download before it can play, which is longer
+ *  than the song it is queued behind, so the window is not one. */
+const PREFETCH_AHEAD = 3;
 
 const DEFAULT_SKIP = {
   skipThreshold: 2,
@@ -838,13 +840,19 @@ function reportStarted(trackId, positionMs = 0, durationMs = 0) {
     });
 }
 
-/** The host's file reaching its end, which is the room's song reaching its end. */
-function reportEnded(trackId = "") {
+/** How long to wait before saying again that the host's file has run out. */
+const ENDED_RETRY_MS = 3000;
+
+/** The host's file reaching its end, which is the room's song reaching its end.
+ *  A report the server never heard leaves the room on a song that is already
+ *  over, so a failure to send it is retried while the song still is one. */
+function reportEnded(trackId = "", onFail = null) {
   const connection = active;
-  if (!connection) return;
-  connection.client.roomEnded(connection.roomId, str(trackId)).catch(() => {
-    /* the room is still on the song; the host says so again */
-  });
+  if (!connection) {
+    onFail?.();
+    return;
+  }
+  connection.client.roomEnded(connection.roomId, str(trackId)).catch(() => onFail?.());
 }
 
 // --- following the room with the player ------------------------------------
@@ -880,6 +888,7 @@ export function followWithPlayer(playbackPlayer) {
     startedKey: "",
     startedDur: false,
     endedKey: "",
+    endedFailedAt: 0,
     syncing: false,
     pending: false,
   };
@@ -962,6 +971,7 @@ function forgetTrack() {
   plugin.startedKey = "";
   plugin.startedDur = false;
   plugin.endedKey = "";
+  plugin.endedFailedAt = 0;
 }
 
 async function followRoom(running) {
@@ -997,10 +1007,18 @@ async function followRoom(running) {
     running.startedKey = "";
     running.startedDur = false;
     running.endedKey = "";
+    running.endedFailedAt = 0;
     sayStep(`song:${itemId}`, `Room: ${item.title || "the next song"}`);
   }
 
   const host = isHost(room);
+
+  // The songs behind this one are worth having on disk before they are reached:
+  // a download that starts when the room gets to a song is a gap everybody
+  // hears, and it is the host's download that holds the room up. This runs
+  // before the current song's own source is resolved, so a slow resolution
+  // cannot stop the next one being fetched.
+  warmAhead(player, room, itemId);
 
   // Which version this member plays is this member's own choice: the same
   // resolution the player would make for a song of its own.
@@ -1026,10 +1044,6 @@ async function followRoom(running) {
       return;
     }
   }
-
-  // The songs behind this one are worth having on disk: a download that starts
-  // when the room reaches a song is a gap everybody hears.
-  warmAhead(player, room, itemId);
 
   const onTrack = player.current()?.id === trackId;
   const media = player.state();
@@ -1121,12 +1135,29 @@ async function followRoom(running) {
   }
 }
 
-/** The host's file for a song has run out: once per song, move the room on. */
+/** The host's file for a song has run out: move the room on, and keep saying so
+ *  until the room has moved — a report that fails is the room sitting on a song
+ *  that is over. */
 function reportEndedOnce(running, itemId, trackId) {
-  if (!running || running.endedKey === itemId) return;
-  running.endedKey = itemId;
-  sayStep(`ended:${itemId}`, "This file has run out — moving the room on");
-  reportEnded(trackId);
+  const key = str(itemId) || str(trackId);
+  if (!running || !key) return;
+  // A file this client did not play to its end has not ended the song. An
+  // element that has "ended" a moment after a load is the copy that was here
+  // before, arriving after the new one began - a stale end that would cut the
+  // song for everybody, and did: the room moved on twice with the host's file
+  // nineteen milliseconds in.
+  const player = running.player;
+  const measured = player?.measuredDurationMs?.() || 0;
+  const position = player?.positionMs?.() || 0;
+  if (measured > 0 && position < measured - 250) return;
+  if (running.endedKey === key) return;
+  if (running.endedFailedAt && Date.now() - running.endedFailedAt < ENDED_RETRY_MS) return;
+  running.endedKey = key;
+  sayStep(`ended:${key}`, "This file has run out — moving the room on");
+  reportEnded(trackId, () => {
+    running.endedKey = "";
+    running.endedFailedAt = Date.now();
+  });
 }
 
 /** The host's player has begun the song: say where, which starts the room. */
@@ -1180,9 +1211,7 @@ function ensureRoomMode(player, room) {
     ended: (trackId) => {
       const live = currentRoom();
       if (!live || !isHost(live)) return;
-      if (plugin && plugin.endedKey === str(trackId)) return;
-      if (plugin) plugin.endedKey = str(trackId);
-      reportEnded(trackId);
+      reportEndedOnce(plugin, plugin && plugin.itemId, trackId);
     },
   });
 }

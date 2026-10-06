@@ -1036,7 +1036,10 @@ body:has(.drawer:not([hidden])) .player-bar > .btn[title="Open the room"] { disp
 .btn.drag-handle:hover { color: var(--fg2); }
 .btn.drag-handle:active { cursor: grabbing; }
 
-.toast {
+/* Notices stack in one column above the player bar: each new one appears
+   above the last, and none of them covers another. The column is
+   pointer-transparent so it never eats a click meant for the page. */
+.toasts {
   position: fixed;
   bottom: calc(var(--player-height) + 18px);
   /* Centred with both edges pinned rather than with `left: 50%`: for a fixed
@@ -1044,7 +1047,15 @@ body:has(.drawer:not([hidden])) .player-bar > .btn[title="Open the room"] { disp
      squeezed a long notice into a narrow column of five lines. */
   left: 0;
   right: 0;
-  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+  z-index: 60;
+}
+
+.toast {
   width: fit-content;
   /* A square, not a pill: a long notice wraps to several lines, and a pill's
      corners cut into the first and last of them. The outline is faint enough
@@ -1055,7 +1066,6 @@ body:has(.drawer:not([hidden])) .player-bar > .btn[title="Open the room"] { disp
   border-radius: 8px;
   padding: 10px 14px;
   color: var(--fg0);
-  z-index: 60;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
@@ -1389,7 +1399,7 @@ body:has(.drawer:not([hidden])) .player-bar > .btn[title="Open the room"] { disp
   .popover { max-width: calc(100vw - 20px); }
   .menu-item { padding: 11px 12px; }
   .banner { margin: 10px 12px 0; }
-  .toast { bottom: calc(var(--player-height) + 12px); }
+  .toasts { bottom: calc(var(--player-height) + 12px); }
 }
 
 /* Below this even the extra controls cannot fit beside the transport: the star

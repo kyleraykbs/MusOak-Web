@@ -230,11 +230,40 @@ export function popover(anchor, items) {
   return { close, node: menu };
 }
 
-/** A short toast, for things that went right and need no answer. */
+/** The stack notices are shown in: one column above the player bar, oldest at
+ *  the top, so two notices never land on top of each other. It is created when
+ *  the first notice arrives and removed when the last one goes. */
+let noticeStack = null;
+
+function notices() {
+  if (!noticeStack || !noticeStack.isConnected) {
+    noticeStack = h("div", { class: "toasts" });
+    document.body.appendChild(noticeStack);
+  }
+  return noticeStack;
+}
+
+/** Add a transient notice, above the sticky one when there is one. */
+function addNotice(node) {
+  const stack = notices();
+  if (statusNode && statusNode.parentElement === stack) stack.insertBefore(node, statusNode);
+  else stack.appendChild(node);
+}
+
+function dropNotice(node) {
+  node.remove();
+  if (noticeStack && noticeStack.childElementCount === 0) {
+    noticeStack.remove();
+    noticeStack = null;
+  }
+}
+
+/** A short toast, for things that went right and need no answer. Several at
+ *  once stack rather than cover one another. */
 export function toast(message) {
   const node = h("div", { class: "toast", text: message });
-  document.body.appendChild(node);
-  setTimeout(() => node.remove(), 2600);
+  addNotice(node);
+  setTimeout(() => dropNotice(node), 2600);
 }
 
 /** The app's one place for "this is happening while something takes a while".
@@ -249,13 +278,19 @@ export function status(message) {
   if (!text) {
     statusNode?.remove();
     statusNode = null;
+    if (noticeStack && noticeStack.childElementCount === 0) {
+      noticeStack.remove();
+      noticeStack = null;
+    }
     return;
   }
   if (!statusNode || !statusNode.isConnected) {
     statusNode = h("div", { class: "toast", role: "status" });
-    document.body.appendChild(statusNode);
   }
   statusNode.textContent = text;
+  // Last in the stack: with toasts coming and going above it, the line that
+  // says what is happening stays where the eye already is.
+  notices().appendChild(statusNode);
 }
 
 /** Ask for one line of text. Resolves with the string, or null if cancelled. */
