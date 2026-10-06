@@ -234,7 +234,7 @@ const HOST_ROOM = {
 };
 
 function fakeClient({ room = HOST_ROOM, memberId = KYLE } = {}) {
-  const calls = { joins: [], commands: [], started: [], ended: [], leaves: [], sockets: [] };
+  const calls = { joins: [], commands: [], started: [], ended: [], leaves: [], sockets: [], snapshots: 0 };
   const client = {
     memberId,
     calls,
@@ -244,6 +244,7 @@ function fakeClient({ room = HOST_ROOM, memberId = KYLE } = {}) {
       return Promise.resolve({ room: client.roomData, memberId: client.memberId });
     },
     room() {
+      calls.snapshots += 1;
       return Promise.resolve(client.roomData);
     },
     roomSocket({ roomId, onEvent, onOpen }) {
@@ -606,6 +607,47 @@ test("an end report the room never heard is said again", async (t) => {
   socket.onEvent({ type: "playback", roomId: "room-1", seq: 2, data: { current: client.roomData.current } });
   assert.equal(await waitFor(() => attempts === 1), true, "the end is reported");
   assert.ok(await waitFor(() => attempts === 2, 6000), "and said again when it was not heard");
+});
+
+test("the host applies the end response even if the socket event is missing", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const client = fakeClient({ memberId: KYLE });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1", rejoin: true });
+  const oldTrack = item("a1", "finished", KYLE);
+  const nextTrack = item("b1", "next", SAM);
+  const socket = client.calls.sockets[0];
+  client.roomData = roomWith(oldTrack, { started: true });
+  socket.onEvent({ type: "playback", roomId: "room-1", seq: 1, data: { current: client.roomData.current } });
+  await waitFor(() => player.plays.length === 1);
+
+  // The server's REST answer already contains the advance. Deliberately do not
+  // deliver a playback event: the host must not keep showing the old song until
+  // a reconnect or somebody presses the play button and happens to fetch state.
+  client.roomData = roomWith(nextTrack, { started: false });
+  player.ended = true;
+  player.position = player.duration;
+  socket.onEvent({ type: "playback", roomId: "room-1", seq: 2, data: { current: client.roomData.current } });
+
+  assert.ok(await waitFor(() => currentRoom()?.current?.item?.id === nextTrack.id), "the REST end answer updates the visible song");
+});
+
+test("the end clock refetches a room when its advance event was missed", async (t) => {
+  t.after(closeRoom);
+  const track = item("a1", "finished", KYLE);
+  const player = new FakePlayer();
+  const client = fakeClient({ room: roomWith(track, { started: true, positionMs: 30000, atMs: Date.now() }), memberId: SAM });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1", rejoin: true });
+
+  // The server has moved off the song, but this socket misses that last
+  // playback event. The UI's clock reaches the displayed length; the follower
+  // refetches the room rather than showing the old song until somebody presses
+  // play and happens to fetch a command response.
+  client.roomData = { ...HOST_ROOM, current: null, queues: {}, masterQueue: [] };
+  assert.ok(await waitFor(() => currentRoom()?.current === null, 2500), "the clock-end resync learns the room is idle");
+  assert.ok(client.calls.snapshots > 1, "the page refetched after the end");
 });
 
 test("an idle room stops this client's player", async (t) => {

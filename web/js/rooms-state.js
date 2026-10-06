@@ -242,7 +242,13 @@ export function normalizeSnapshot(raw) {
 
 /** Take the server's word for the room, keeping what belongs to this client. */
 export function mergeSnapshot(state, raw) {
-  const merged = { ...state, ...normalizeSnapshot(raw) };
+  const snapshot = normalizeSnapshot(raw);
+  // A REST answer can race a newer socket event. Never let a response that was
+  // in flight first roll the room back after that event has already arrived.
+  if (state.roomId && snapshot.roomId === state.roomId && state.seq && snapshot.seq && snapshot.seq < state.seq) {
+    return state;
+  }
+  const merged = { ...state, ...snapshot };
   return { ...merged, error: "", roomClosed: false };
 }
 
@@ -727,6 +733,15 @@ async function rejoin(connection) {
   connect(connection);
 }
 
+
+function foldRoomAnswer(connection, payload) {
+  if (active !== connection || !payload || typeof payload !== "object") return currentRoom();
+  const room = payload.room || payload;
+  if (!room.id) return currentRoom();
+  setState(mergeSnapshot(connection.state, room));
+  return currentRoom();
+}
+
 /** Refetch the room: what the events only summarised. */
 export async function refreshRoom() {
   if (!active) return null;
@@ -754,9 +769,7 @@ async function command(run) {
   const connection = requireConnection();
   const payload = await run(connection);
   if (active !== connection) return currentRoom();
-  if (payload && typeof payload === "object" && (payload.id || payload.room)) {
-    setState(mergeSnapshot(connection.state, payload.room || payload));
-  }
+  foldRoomAnswer(connection, payload);
   return currentRoom();
 }
 
@@ -825,7 +838,7 @@ export function vote(score) {
 }
 
 /** The host's player saying the room's song has begun, and where. */
-function reportStarted(trackId, positionMs = 0, durationMs = 0) {
+function reportStarted(trackId, itemId, positionMs = 0, durationMs = 0) {
   const connection = active;
   if (!connection) return;
   connection.client
@@ -835,8 +848,9 @@ function reportStarted(trackId, positionMs = 0, durationMs = 0) {
       Math.max(0, Math.round(num(positionMs))),
       Math.max(0, Math.round(num(durationMs)))
     )
+    .then((room) => foldRoomAnswer(connection, room))
     .catch(() => {
-      /* their player is still playing; they say so again on the next tick */
+      /* the player is still playing; the socket event or next tick resyncs */
     });
 }
 
@@ -852,7 +866,13 @@ function reportEnded(trackId = "", itemId = "", onFail = null) {
     onFail?.();
     return;
   }
-  connection.client.roomEnded(connection.roomId, str(trackId), str(itemId)).catch(() => onFail?.());
+  connection.client
+    .roomEnded(connection.roomId, str(trackId), str(itemId))
+    .then((room) => {
+      foldRoomAnswer(connection, room);
+      if (connection.state.current?.item?.id === str(itemId)) onFail?.();
+    })
+    .catch(() => onFail?.());
 }
 
 // --- following the room with the player ------------------------------------
@@ -864,6 +884,12 @@ function reportEnded(trackId = "", itemId = "", onFail = null) {
 // a song, and its file has run out — because the host's player is the clock.
 
 let plugin = null;
+
+/** Once a room's own clock reaches the file length, refetch until its advance
+ *  is visible. A lost websocket event must not leave the page on a song that
+ *  the server has already moved off; playbar commands happen to refetch, which
+ *  is why pressing play used to reveal the next song. */
+const END_RESYNC_MS = 500;
 
 /**
  * Put a player under the room's orders: while a room is followed it plays what
@@ -888,6 +914,8 @@ export function followWithPlayer(playbackPlayer) {
     startedKey: "",
     startedDur: false,
     endedKey: "",
+    endResyncItem: "",
+    endResyncAt: 0,
     endedFailedAt: 0,
     syncing: false,
     pending: false,
@@ -978,6 +1006,8 @@ function forgetTrack() {
   plugin.startedDur = false;
   plugin.endedKey = "";
   plugin.endedFailedAt = 0;
+  plugin.endResyncItem = "";
+  plugin.endResyncAt = 0;
 }
 
 async function followRoom(running) {
@@ -1015,7 +1045,24 @@ async function followRoom(running) {
     running.endedKey = "";
     running.endedFailedAt = 0;
     sayStep(`song:${itemId}`, `Room: ${item.title || "the next song"}`);
+    running.endResyncItem = "";
+    running.endResyncAt = 0;
   }
+  const clockPosition = positionMs(room, Date.now());
+  const length = durationMs(room);
+  if (current.started && !current.paused && length > 0 && clockPosition >= length) {
+    if (running.endResyncItem !== itemId || Date.now() - running.endResyncAt >= END_RESYNC_MS) {
+      running.endResyncItem = itemId;
+      running.endResyncAt = Date.now();
+      refreshRoom().catch(() => {
+        /* the next end tick tries again; the room's own clock is the authority */
+      });
+    }
+  } else if (running.endResyncItem === itemId) {
+    running.endResyncItem = "";
+    running.endResyncAt = 0;
+  }
+
 
   const host = isHost(room);
 
@@ -1186,14 +1233,14 @@ function reportStart(running, item, trackId, player) {
     running.startedKey = itemId;
     running.startedDur = measured > 0;
     sayStep(`started:${itemId}`, "Starting the room from this player");
-    reportStarted(trackId, player.positionMs(), measured);
+    reportStarted(trackId, itemId, player.positionMs(), measured);
     return;
   }
   // The file length was not known when the room was started; report again once
   // it is, so the clock on the page has a real number under it.
   if (!running.startedDur && measured > 0 && !player.isPaused()) {
     running.startedDur = true;
-    reportStarted(trackId, player.positionMs(), measured);
+    reportStarted(trackId, itemId, player.positionMs(), measured);
   }
 }
 
