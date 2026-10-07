@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 
 import {
   albumLine, artistLine, documentKey, mediaStateLabel, nextIndex, playbackDocument,
-  playbackStateFrom, prefetchWindow, queueFromDocument, shouldSavePlayback, shuffleTail,
+  playbackStateFrom, prefetchWindow, queueFromDocument, shouldSavePlayback, shuffleTail, player,
 } from "../player.js";
 import {
   groupSources, netVotes, pickSource, sourceLabel,
@@ -66,6 +66,47 @@ test("nextIndex with shuffle picks another track, and still ends", () => {
     assert.equal(nextIndex([], 0, true), -1);
   } finally {
     Math.random = original;
+  }
+});
+
+test("the room host uses the mixed queue locally and keeps duplicate entries distinct", () => {
+  const saved = {
+    queue: player.queue,
+    index: player._index,
+    shuffle: player._shuffle,
+    room: player._room,
+    load: player._load,
+  };
+  const loads = [];
+  try {
+    player.setRoom({ roomId: "room-test", hostPlayback: true });
+    player.queue = [];
+    player._index = -1;
+    player._load = (index, options) => {
+      loads.push({ index, options });
+      player._index = index;
+      return Promise.resolve();
+    };
+
+    player.setRoomQueue([
+      { id: "shared-track", roomItemId: "item-1" },
+      { id: "shared-track", roomItemId: "item-2" },
+      { id: "next-track", roomItemId: "item-3" },
+    ], "item-2", { positionMs: 5000, autoplay: false });
+
+    assert.deepEqual(loads[0], { index: 1, options: { startMs: 5000, autoplay: false } });
+    assert.equal(player.current().roomItemId, "item-2");
+    player.next();
+    assert.equal(player.current().roomItemId, "item-3", "the host advances its ordinary queue");
+    assert.equal(loads[1].index, 2);
+    player.next();
+    assert.equal(loads.length, 2, "the mixed queue does not wrap at the end");
+  } finally {
+    player._load = saved.load;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._shuffle = saved.shuffle;
+    player.setRoom(saved.room);
   }
 });
 

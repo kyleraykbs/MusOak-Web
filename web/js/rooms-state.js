@@ -5,13 +5,10 @@
 // the room as last described, applies the events that arrive, sends the
 // commands, and re-joins on its own when the socket drops.
 //
-// One rule keeps the music together. The room's current song carries a position
-// on the server clock; this client plays that song and stays within two seconds
-// of that position — loading the song when it is a different one, seeking when
-// it has drifted. The host is the clock: their player's file says where the song
-// is and when it is over, and everybody else follows. There is no readiness
-// gate, no assigned rendition and no timeline: a client plays the version it
-// likes, and a song ending slightly early or late for one of them is fine.
+// The host plays the mixed queue in its ordinary player and reports the
+// current entry, position and pause state once per second and on player
+// changes. Every other client loads a different room song and seeks only when
+// drift exceeds two seconds. Members choose their own playable version.
 //
 // Anything that only computes is pure: `applyEvent` and `mergeSnapshot` return
 // a new state and never touch the one they were given, which is what lets the
@@ -837,59 +834,44 @@ export function vote(score) {
   return command(({ client, roomId }) => client.roomVote(roomId, Math.round(num(score))));
 }
 
-/** The host's player saying the room's song has begun, and where. */
-function reportStarted(trackId, itemId, positionMs = 0, durationMs = 0) {
+/** Report the host's ordinary queue player. Position is sampled from the
+ *  player; the server timestamps it and broadcasts it to followers. */
+function reportHostState(running, player, itemId, trackId) {
   const connection = active;
   if (!connection) return;
-  connection.client
-    .roomStarted(
-      connection.roomId,
-      str(trackId),
-      Math.max(0, Math.round(num(positionMs))),
-      Math.max(0, Math.round(num(durationMs)))
-    )
-    .then((room) => foldRoomAnswer(connection, room))
-    .catch(() => {
-      /* the player is still playing; the socket event or next tick resyncs */
-    });
-}
-
-/** How long to wait before saying again that the host's file has run out. */
-const ENDED_RETRY_MS = 3000;
-
-/** The host's file reaching its end, which is the room's song reaching its end.
- *  A report the server never heard leaves the room on a song that is already
- *  over, so a failure to send it is retried while the song still is one. */
-function reportEnded(trackId = "", itemId = "", onFail = null) {
-  const connection = active;
-  if (!connection) {
-    onFail?.();
-    return;
-  }
-  connection.client
-    .roomEnded(connection.roomId, str(trackId), str(itemId))
-    .then((room) => {
-      foldRoomAnswer(connection, room);
-      if (connection.state.current?.item?.id === str(itemId)) onFail?.();
-    })
-    .catch(() => onFail?.());
+  const ended = Boolean(itemId && player.hasEnded?.());
+  const currentItemId = ended ? "" : str(itemId);
+  const currentTrackId = currentItemId ? str(trackId) : "";
+  const paused = currentItemId ? Boolean(player.isPaused?.()) : true;
+  const started = currentItemId ? !paused : false;
+  const durationMs = currentItemId
+    ? Math.max(0, Math.round(player.measuredDurationMs?.() || player.durationMs?.() || 0))
+    : 0;
+  const key = `${currentItemId}|${currentTrackId}|${started}|${paused}|${durationMs}`;
+  const now = Date.now();
+  if (key === running.syncKey && now - running.lastSyncAt < 1000) return;
+  running.syncKey = key;
+  running.lastSyncAt = now;
+  connection.client.roomSync(connection.roomId, {
+    itemId: currentItemId,
+    trackId: currentTrackId,
+    positionMs: currentItemId ? Math.max(0, Math.round(player.positionMs?.() || 0)) : 0,
+    durationMs,
+    started,
+    paused,
+  }).catch(() => {
+    /* the next one-second sync retries */
+  });
 }
 
 // --- following the room with the player ------------------------------------
 //
-// The room is the truth about what plays and where it is; the player only has
-// to keep up. The rule is the whole of it: a different song is loaded, the same
-// song within two seconds is left alone, the same song further out is seeked.
-// The host adds two words the room cannot know otherwise — its player has begun
-// a song, and its file has run out — because the host's player is the clock.
+// The server broadcasts the host's sampled player state. Followers load a
+// different song and seek only when drift exceeds two seconds; the host's
+// ordinary queue is the room's mixed order and advances locally.
 
 let plugin = null;
 
-/** Once a room's own clock reaches the file length, refetch until its advance
- *  is visible. A lost websocket event must not leave the page on a song that
- *  the server has already moved off; playbar commands happen to refetch, which
- *  is why pressing play used to reveal the next song. */
-const END_RESYNC_MS = 500;
 
 /**
  * Put a player under the room's orders: while a room is followed it plays what
@@ -904,19 +886,17 @@ export function followWithPlayer(playbackPlayer) {
     timer: 0,
     offs: [],
     unsub: null,
-    // what the player has loaded, and what it has already told the room
     itemId: "",
+    loadedItemId: "",
     variantId: "",
     track: null,
     resolving: "",
     failedItemId: "",
     failedAt: 0,
-    startedKey: "",
-    startedDur: false,
-    endedKey: "",
-    endResyncItem: "",
-    endResyncAt: 0,
-    endedFailedAt: 0,
+    queueKey: null,
+    hostMode: false,
+    syncKey: "",
+    lastSyncAt: 0,
     syncing: false,
     pending: false,
   };
@@ -997,84 +977,58 @@ function blockedHint(player) {
 function forgetTrack() {
   if (!plugin) return;
   plugin.itemId = "";
+  plugin.loadedItemId = "";
   plugin.variantId = "";
   plugin.track = null;
   plugin.resolving = "";
   plugin.failedItemId = "";
   plugin.failedAt = 0;
-  plugin.startedKey = "";
-  plugin.startedDur = false;
-  plugin.endedKey = "";
-  plugin.endedFailedAt = 0;
-  plugin.endResyncItem = "";
-  plugin.endResyncAt = 0;
+  plugin.queueKey = null;
 }
 
 async function followRoom(running) {
   const player = running.player;
   const room = currentRoom();
   if (!room || room.roomClosed) {
-    // No room: the player is its own again.
     if (player.inRoom?.()) player.clearRoom();
     forgetTrack();
     return;
   }
   ensureRoomMode(player, room);
+  const host = isHost(room);
+  if (running.hostMode !== host) {
+    running.hostMode = host;
+    running.queueKey = null;
+    running.itemId = "";
+    running.loadedItemId = "";
+    running.variantId = "";
+  }
+  if (host) {
+    followHost(running, room);
+    return;
+  }
 
   const current = room.current;
-  if (!current || !current.item) {
-    // The room has nothing on: this client should not be playing anything of
-    // its own over the silence.
+  if (!current?.item) {
     forgetTrack();
     if (!player.isPaused()) player.pause();
     return;
   }
-
   const item = current.item;
   const trackId = str(item.trackId);
-  if (!trackId) return;
   const itemId = str(item.id) || trackId;
+  if (!trackId) return;
   if (running.itemId !== itemId) {
     running.itemId = itemId;
+    running.loadedItemId = "";
     running.variantId = "";
     running.track = null;
     running.failedItemId = "";
     running.failedAt = 0;
-    running.startedKey = "";
-    running.startedDur = false;
-    running.endedKey = "";
-    running.endedFailedAt = 0;
     sayStep(`song:${itemId}`, `Room: ${item.title || "the next song"}`);
-    running.endResyncItem = "";
-    running.endResyncAt = 0;
   }
-  const clockPosition = positionMs(room, Date.now());
-  const length = durationMs(room);
-  if (current.started && !current.paused && length > 0 && clockPosition >= length) {
-    if (running.endResyncItem !== itemId || Date.now() - running.endResyncAt >= END_RESYNC_MS) {
-      running.endResyncItem = itemId;
-      running.endResyncAt = Date.now();
-      refreshRoom().catch(() => {
-        /* the next end tick tries again; the room's own clock is the authority */
-      });
-    }
-  } else if (running.endResyncItem === itemId) {
-    running.endResyncItem = "";
-    running.endResyncAt = 0;
-  }
-
-
-  const host = isHost(room);
-
-  // The songs behind this one are worth having on disk before they are reached:
-  // a download that starts when the room gets to a song is a gap everybody
-  // hears, and it is the host's download that holds the room up. This runs
-  // before the current song's own source is resolved, so a slow resolution
-  // cannot stop the next one being fetched.
   warmAhead(player, room, itemId);
 
-  // Which version this member plays is this member's own choice: the same
-  // resolution the player would make for a song of its own.
   if (!running.variantId) {
     if (running.resolving === trackId) return;
     if (running.failedItemId === itemId && Date.now() - running.failedAt < RESOLVE_BACKOFF_MS) return;
@@ -1101,96 +1055,36 @@ async function followRoom(running) {
   const onTrack = player.current()?.id === trackId;
   const media = player.state();
   const loadingHere = onTrack && Boolean(media && (media.loading || media.buffering));
-  const ours = onTrack && str(player.variantId()) === running.variantId;
-  const playing = current.started && !current.paused;
-  // The same song, already loaded and played out: a file stopped at its end is
-  // not one this client can play again — resuming it does nothing — and a song
-  // the room has not started is one that has to begin at its beginning. This is
-  // what a song queued a second time looks like when this client still holds
-  // the copy it just finished.
-  const spent = !current.started && Boolean(player.hasEnded?.());
-
-  if (!ours || spent) {
-    if (loadingHere) {
-      // This song is already arriving: the source is not chosen until the fetch
-      // resolves, so the check above cannot recognise it yet. Loading it again
-      // on every tick would restart the fetch for ever and play nothing.
-      sayStatus("Loading the track…");
-      return;
-    }
-    // A different song from the one here, a different source of it, or the same
-    // one played out: load it. Nothing plays before the host has begun the song
-    // — except for the host, whose playing it is the beginning.
-    const autoplay = playing || (!current.started && host);
-    sayStep(
-      `load:${itemId}:${autoplay ? "play" : "hold"}`,
-      autoplay
-        ? `Playing ${item.title || "the song"} — the room is ${shortLength(positionMs(room, Date.now()))} in`
-        : `Loading ${item.title || "the song"}…`
-    );
+  const sameTrack = onTrack && str(player.variantId()) === running.variantId;
+  if (loadingHere && running.loadedItemId === itemId) {
+    sayStatus("Loading the track…");
+    return;
+  }
+  if (!sameTrack || running.loadedItemId !== itemId) {
+    const playing = current.started && !current.paused;
+    running.loadedItemId = itemId;
     player.playVariant(running.track || { id: trackId, title: item.title }, running.variantId, {
-      positionMs: current.started ? positionMs(room, Date.now()) : num(current.positionMs) || 0,
-      autoplay,
+      positionMs: current.started ? positionMs(room, Date.now()) : 0,
+      autoplay: playing,
     });
     return;
   }
 
   sayStatus("");
-
-  if (!current.started) {
-    // The song waits at zero for the host's player to begin it. A host whose
-    // browser has not been touched yet cannot start it — no audio in a page
-    // that has not been interacted with — so the room waits while the file sits
-    // there ready: that is worth saying, because one click anywhere ends it.
-    if (host) {
-      if (player.isPaused() && !player.hasEnded?.()) {
-        if (player.isBlocked?.() || (player.readyState?.() === "ready" && player.positionMs() === 0)) {
-          sayStatus("Your browser is holding playback: click the page once and the room starts.");
-        }
-        player.resume();
-      } else {
-        sayStatus("");
-      }
-      if (!player.isPaused() && !player.hasEnded?.()) reportStart(running, item, trackId, player);
-    } else {
-      sayStatus("");
-      if (!player.isPaused()) player.pause();
-    }
-    return;
-  }
-
-  if (current.paused) {
+  if (!current.started || current.paused) {
     if (!player.isPaused()) player.pause();
     return;
   }
 
-  if (player.hasEnded?.()) {
-    // This client's file has run out. The host's file ending is what moves the
-    // room on; anyone else's just goes quiet and waits for the room.
-    if (host) reportEndedOnce(running, itemId, trackId);
-    return;
-  }
-
-  // Same song, running: within two seconds is close enough, and more than that
-  // is a seek.
   const want = positionMs(room, Date.now());
   const measured = player.measuredDurationMs?.() || 0;
   if (measured > 0 && want >= measured) {
-    // The room has reached the end of this client's file. For a follower that
-    // means the song is over here while the room plays on: hold, silent, and
-    // wait for the room. For the host it means the song is over, full stop:
-    // their file is what ends it, so a file stopped at its end is reported and
-    // one still playing is left alone to reach it — pausing it a hair early
-    // would be the room stopping its own clock.
-    if (host) {
-      if (player.isPaused()) reportEndedOnce(running, itemId, trackId);
-      return;
-    }
     if (!player.isPaused()) player.pause();
     return;
   }
   if (player.isPaused()) {
     sayStatus(blockedHint(player));
+    if (player.hasEnded?.()) player.seek(want);
     player.resume();
     return;
   }
@@ -1200,48 +1094,42 @@ async function followRoom(running) {
   }
 }
 
-/** The host's file for a song has run out: move the room on, and keep saying so
- *  until the room has moved — a report that fails is the room sitting on a song
- *  that is over. */
-function reportEndedOnce(running, itemId, trackId) {
-  const key = str(itemId) || str(trackId);
-  if (!running || !key) return;
-  // A file this client did not play to its end has not ended the song. An
-  // element that has "ended" a moment after a load is the copy that was here
-  // before, arriving after the new one began - a stale end that would cut the
-  // song for everybody, and did: the room moved on twice with the host's file
-  // nineteen milliseconds in.
+function followHost(running, room) {
   const player = running.player;
-  const measured = player?.measuredDurationMs?.() || 0;
-  const position = player?.positionMs?.() || 0;
-  if (measured > 0 && position < measured - 250) return;
-  if (running.endedKey === key) return;
-  if (running.endedFailedAt && Date.now() - running.endedFailedAt < ENDED_RETRY_MS) return;
-  running.endedKey = key;
-  sayStep(`ended:${key}`, "This file has run out — moving the room on");
-  reportEnded(trackId, str(itemId), () => {
-    running.endedKey = "";
-    running.endedFailedAt = Date.now();
-  });
-}
+  const master = list(room.masterQueue).filter((item) => item?.id && item?.trackId);
+  const currentItemId = str(room.current?.item?.id);
+  const currentIndex = master.findIndex((item) => item.id === currentItemId);
+  const items = currentIndex < 0
+    ? master
+    : [master[currentIndex], ...master.slice(0, currentIndex), ...master.slice(currentIndex + 1)];
+  const queueKey = items.map((item) => `${item.id}:${item.trackId}`).join("|");
+  if (running.queueKey !== queueKey) {
+    const localItemId = str(player.current()?.roomItemId);
+    const currentItemId = str(room.current?.item?.id);
+    const targetId = items.some((item) => item.id === localItemId) ? localItemId : currentItemId;
+    const targetPosition = targetId === currentItemId ? positionMs(room, Date.now()) : player.positionMs();
+    const autoplay = !room.current?.started || !room.current?.paused;
+    player.setRoomQueue(items.map((item) => ({
+      ...item,
+      id: str(item.trackId),
+      roomItemId: str(item.id),
+    })), targetId, { positionMs: targetPosition, autoplay });
+    running.queueKey = queueKey;
+  }
 
-/** The host's player has begun the song: say where, which starts the room. */
-function reportStart(running, item, trackId, player) {
-  const itemId = str(item.id) || trackId;
-  const measured = player.measuredDurationMs?.() || 0;
-  if (running.startedKey !== itemId) {
-    running.startedKey = itemId;
-    running.startedDur = measured > 0;
-    sayStep(`started:${itemId}`, "Starting the room from this player");
-    reportStarted(trackId, itemId, player.positionMs(), measured);
-    return;
+  const track = player.current();
+  const itemId = str(track?.roomItemId);
+  const trackId = str(track?.id);
+  const current = room.current;
+  if (itemId && current?.item?.id === itemId) {
+    if (current.started && current.paused) {
+      if (!player.isPaused()) player.pause();
+    } else if (player.isPaused() && !player.state()?.loading && !player.hasEnded?.()) {
+      if (player.isBlocked?.()) sayStatus("Your browser is holding playback: click the page once to start the sound.");
+      player.resume();
+    }
   }
-  // The file length was not known when the room was started; report again once
-  // it is, so the clock on the page has a real number under it.
-  if (!running.startedDur && measured > 0 && !player.isPaused()) {
-    running.startedDur = true;
-    reportStarted(trackId, itemId, player.positionMs(), measured);
-  }
+  reportHostState(running, player, itemId, trackId);
 }
 
 /** Have the room's next songs on disk before the room reaches them. */
@@ -1256,28 +1144,26 @@ function warmAhead(player, room, itemId) {
 
 /** Put the player in the room the rest of the app is in. */
 function ensureRoomMode(player, room) {
-  if (typeof player.roomId === "function" && player.roomId() === room.roomId) return;
   player.setRoom({
     roomId: room.roomId,
     name: room.name,
+    hostPlayback: isHost(room),
     onAdd: (tracks) => Promise.resolve().then(() => enqueueMany(tracks)).catch(() => {}),
-    // The bar's transport belongs to the room too, so it asks the room the same
-    // way the room view does.
     mayDrive: () => {
       const live = currentRoom();
       return Boolean(live) && mayDrive(live, live.me);
+    },
+    // The bar's shuffle asks the queue view to shuffle the caller's own room
+    // queue, so it is only for a member holding two or more of their own.
+    mayShuffle: () => {
+      const live = currentRoom();
+      return Boolean(live) && myQueue(live).length >= 2;
     },
     onBlocked: (action) => blockedNotice?.(action),
     pause: () => pause().catch(() => {}),
     resume: () => resume().catch(() => {}),
     skip: () => skip().catch(() => {}),
     seek: (ms) => seek(ms).catch(() => {}),
-    // The host's file reaching its end is the room's song reaching its end.
-    ended: (trackId) => {
-      const live = currentRoom();
-      if (!live || !isHost(live)) return;
-      reportEndedOnce(plugin, plugin && plugin.itemId, trackId);
-    },
   });
 }
 

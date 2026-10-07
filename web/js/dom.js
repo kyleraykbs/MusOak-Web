@@ -60,16 +60,39 @@ export function mount(parent, ...children) {
  * bursts - a phone returning to a tab is handed everything it missed at once.
  * A frame coalesces those into one repaint, and none are painted while the tab
  * is hidden, so coming back costs exactly one.
+ *
+ * requestAnimationFrame is also the one path that stops when a tab is frozen
+ * or throttled, and a page whose frames never come would otherwise freeze at
+ * the numbers from the moment it last painted - a room that queued three songs
+ * would keep showing empty panels until some click happened to repaint it.
+ * The timer fallback renders when no frame has, so correctness never depends
+ * on the compositor being awake; the frame path stays first so a visible page
+ * still coalesces a burst into one.
  */
+const FRAME_FALLBACK_MS = 250;
+
 export function scheduleFrame(fn) {
   let queued = false;
+  const run = () => {
+    queued = false;
+    fn();
+  };
   return () => {
     if (queued) return;
     queued = true;
-    requestAnimationFrame(() => {
-      queued = false;
-      fn();
-    });
+    let timer = setTimeout(() => {
+      timer = 0;
+      if (!queued) return;
+      run();
+    }, FRAME_FALLBACK_MS);
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => {
+        if (!timer) return;
+        clearTimeout(timer);
+        timer = 0;
+        run();
+      });
+    }
   };
 }
 

@@ -400,19 +400,15 @@ class Player {
     this._stateEvent();
   }
 
-  jumpTo(index) {
+  jumpTo(index, options = {}) {
     const target = Math.floor(Number(index));
     if (!Number.isFinite(target) || target < 0 || target >= this.queue.length) return;
-    this._load(target);
+    this._load(target, options);
   }
 
-  /**
-   * Play one particular source of a track, starting where it is told to.
-   *
-   * Listening together assigns each member a variant and a position, so the
-   * provider order does not get a say here: this is the file everyone was told
-   * to play. The track joins the local queue if it is not in it already.
-   */
+
+  /** Play a particular rendition of a room track at the room's position.
+   *  Each member picks its own source; the room assigns none. */
   playVariant(track, variantId, { positionMs = 0, autoplay = true } = {}) {
     if (!track?.id || !variantId) return Promise.resolve();
     let index = this.queue.findIndex((entry) => entry?.id === track.id);
@@ -435,15 +431,23 @@ class Player {
     return this._mediaState() || "none";
   }
 
-  /** Go to the track after this one, if there is one. */
+  /** The host advances its ordinary mixed queue locally; followers ask the
+   *  room to skip. */
   next() {
+    if (this._room?.hostPlayback) {
+      const target = this._index + 1;
+      if (target >= 0 && target < this.queue.length) this.jumpTo(target);
+      return;
+    }
     if (this._room) return this._roomCommand("skip", "skip");
     const target = nextIndex(this.queue, this._index, this._shuffle);
     if (target >= 0) this.jumpTo(target);
   }
 
-  /** Restart the current track, or step back to the previous one. */
+  /** In a room the queue behind the current song is not history, so previous
+   *  means restart this song. */
   previous() {
+    if (this._room) return this._roomCommand("seek", "seek", 0);
     if (this._index > 0) this.jumpTo(this._index - 1);
     else this.seek(0);
   }
@@ -509,13 +513,8 @@ class Player {
     return Math.round(audio.currentTime * 1000);
   }
 
-  /**
-   * The length of the file this client actually has, or 0 before the browser
-   * has read its metadata. Anything reporting what this member will play - the
-   * room's readiness above all - has to ask this and not durationMs(): the
-   * queue entry's duration is the song's canonical one, which is a different
-   * number whenever this member holds a different copy.
-   */
+  /** The length of this local audio source, or 0 before metadata arrives.
+   *  It can differ from the host's room duration. */
   measuredDurationMs() {
     const audio = this.audio;
     if (audio && Number.isFinite(audio.duration) && audio.duration > 0) return Math.round(audio.duration * 1000);
@@ -617,12 +616,10 @@ class Player {
     return () => this._listeners.get(event)?.delete(handler);
   }
 
-  /** While in a room, the room owns playback: adding queues a track there, and
-   *  the transport asks it rather than moving the local player. `mayDrive`
-   *  answers for the room's control policy and `onBlocked` is what to say when
-   *  it is not ours to drive. */
+  /** In a room, adding queues a track there. The host instead receives the
+   *  mixed room queue as its ordinary player queue. */
   setRoom(room) {
-    this._room = room && room.roomId
+    const next = room && room.roomId
       ? {
           roomId: room.roomId,
           name: room.name || "",
@@ -633,10 +630,39 @@ class Player {
           resume: room.resume,
           skip: room.skip,
           seek: room.seek,
-          ended: room.ended,
+          hostPlayback: Boolean(room.hostPlayback),
+          mayShuffle: room.mayShuffle,
         }
       : null;
-    this.renderBar();
+    const changed = this._room?.roomId !== next?.roomId ||
+      this._room?.hostPlayback !== next?.hostPlayback;
+    this._room = next;
+    if (changed) this.renderBar();
+  }
+
+  /** Replace the host's local queue projection without reloading the song in
+   *  flight. Item ids distinguish two queued copies of one canonical track. */
+  setRoomQueue(tracks, currentItemId = "", { positionMs = 0, autoplay = true } = {}) {
+    if (!this._room?.hostPlayback) return;
+    const list = (Array.isArray(tracks) ? tracks : []).filter(Boolean);
+    if (!list.length) {
+      if (this.queue.length) this.clear();
+      return;
+    }
+    let index = currentItemId ? list.findIndex((entry) => entry?.roomItemId === currentItemId) : 0;
+    if (index < 0) index = 0;
+    const old = this.current();
+    const target = list[index];
+    const same = old?.roomItemId && old.roomItemId === target?.roomItemId;
+    this.queue = list;
+    this._index = index;
+    this._shuffle = false;
+    this._emit("queue-changed", this.queue);
+    if (same) {
+      this._prefetch();
+      return;
+    }
+    this._load(index, { startMs: positionMs, autoplay });
   }
 
   clearRoom() {
@@ -882,11 +908,17 @@ class Player {
     const inRoom = Boolean(this._room);
     bar.previous.disabled = inRoom || this._index <= 0;
     bar.next.disabled = inRoom ? false : !(this._index >= 0 && this._index < this.queue.length - 1);
-    // In a room the local queue is not what plays, so the shuffle is never dead
-    // there: it acts on the caller's own room queue (see the listener in the
-    // queue view), which is the room's to reorder.
-    bar.shuffle.disabled = inRoom ? false : this.queue.length - (this._index + 1) < 2;
-    bar.shuffle.title = inRoom ? "Shuffle your own queue" : "Shuffle what is left of the queue";
+    // In a room the shuffle asks the queue view to shuffle the caller's own
+    // room queue, so whether it may comes from there: one song cannot be
+    // shuffled, and a disabled button that says so beats a click that does
+    // nothing and tells nobody.
+    const mayShuffle = inRoom
+      ? Boolean(this._room.mayShuffle?.())
+      : this.queue.length - (this._index + 1) >= 2;
+    bar.shuffle.disabled = !mayShuffle;
+    bar.shuffle.title = inRoom
+      ? (mayShuffle ? "Shuffle your own queue" : "Queue another song to shuffle yours")
+      : "Shuffle what is left of the queue";
     bar.shuffle.setAttribute("aria-pressed", inRoom ? "false" : this._shuffle ? "true" : "false");
 
     // --- position --------------------------------------------------------
@@ -994,15 +1026,10 @@ class Player {
     audio.addEventListener("pause", () => this._setBuffering(false));
     audio.addEventListener("ended", () => {
       this._setBuffering(false);
-      // In a room the host's copy is what the room runs on, so their file
-      // reaching its end is the song reaching its end: the room is told, and
-      // moves on from there. Anybody else's file ending is their own business -
-      // the room is not waiting on it.
-      // The track that ended is named: by the time this lands the room may
-      // already have moved on, and an end that arrives late must not cut the
-      // song that is playing now.
-      if (this._room?.ended) this._room.ended(this.current()?.id || "", this.positionMs());
-      else this.next();
+      // The room host is a normal queue player: its own queue advances on the
+      // element's end. Followers never advance locally; the host's next sync
+      // tells them which song is on.
+      if (!this._room || this._room.hostPlayback) this.next();
     });
     audio.addEventListener("error", () => {
       if (!this._variant) return;
@@ -1775,7 +1802,8 @@ class Player {
       title: "Shuffle what is left of the queue",
       onclick: () => {
         // In a room the local queue is not what plays, so the button asks the
-        // room to shuffle the caller's own queue instead.
+        // room to shuffle the caller's own queue instead. Editing the queue is
+        // a state change, so the enablement is read again before asking.
         if (this._room) window.dispatchEvent(new CustomEvent("musoak:shuffle-my-queue"));
         else this.shuffleQueue();
       },

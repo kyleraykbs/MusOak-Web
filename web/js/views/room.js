@@ -1,9 +1,7 @@
 // The room you are in: who is here, what is playing, and the queue.
 //
-// The page is a follower — it never decides anything itself. It reads the room
-// from rooms-state.js (fed by the socket) and sends the commands back. The
-// position it shows comes from the room's timeline, or from the player when the
-// player is the one playing the track the room is on.
+// This view reads the room from rooms-state.js, which applies the socket events
+// and keeps the shared player within two seconds of the host's queue position.
 
 import { h, mount, clear, popover, toast, fmtDuration, icon, iconButton, scheduleFrame } from "../dom.js";
 import { registerView, navigate, banner, currentClient, requireLogin } from "../app.js";
@@ -52,10 +50,9 @@ let unsubscribe = null;
 let hookedPlayer = false;
 let positionLabel = null;
 
-// Loaded with the rest of the app, this view is where the one player is taught
-// to follow a room: from here on it plays what the room plays — the prepared
-// rendition it reports ready, the running track kept on the room's clock —
-// wherever the user has navigated to.
+// Loaded with the app, this view attaches the shared player to the room. The
+// host plays the mixed queue as its normal queue; every other member follows
+// the host's current song and position wherever they navigate.
 followWithPlayer(player);
 
 // --- the view --------------------------------------------------------------
@@ -167,8 +164,8 @@ function nowPlaying(room) {
         h("div", { class: "title", text: current.item.title }),
         h("div", {
           text: isHost(room)
-            ? "Waiting for your player to start it — press play, or use the playbar."
-            : "Waiting for the host's player to start it.",
+            ? "Starting from the host's player."
+            : "Waiting for the host's player.",
         })
       )
     );
@@ -178,7 +175,7 @@ function nowPlaying(room) {
   const line = h("div", { class: "subtitle" });
   positionLabel = line;
   const title = h("div", { class: "title", text: current.item.title });
-  const text = h("div", { class: "grow" }, title, line, waitingLine(room, current));
+  const text = h("div", { class: "grow" }, title, line);
   updateClock();
 
   const drives = mayDrive(room, room.me);
@@ -217,16 +214,6 @@ function nowPlaying(room) {
   return section;
 }
 
-/** The one line that explains who the song is waiting on. */
-function waitingLine(room, current) {
-  if (!current.started) {
-    return h("div", {
-      class: "subtitle",
-      text: isHost(room) ? "the room starts when your player does" : "waiting for the host to start it",
-    });
-  }
-  return h("div", { class: "subtitle", text: "" });
-}
 
 function votes(room, current) {
   const mine = Number(current.votes[room.me] || 0);
@@ -425,13 +412,8 @@ function stopTicker() {
   ticker = 0;
 }
 
-/**
- * The clock under the title, in the metric the playbar uses. Whoever is playing
- * the room's track here has the truth in their own file: the playbar measures
- * that file, so its numbers are what they actually hear. The room's timeline is
- * a different metric - how long the room plays the track for - and it only
- * speaks for a member who is not playing yet.
- */
+/** The clock under the title. The host's reported position is room time;
+ *  while the local player is on the same song, show its actual playhead. */
 export function roomClock(player, room, current, nowMs = Date.now()) {
   const local = player && typeof player.current === "function" ? player.current() : null;
   const here = Boolean(local && current && current.item && local.id === current.item.trackId);

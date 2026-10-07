@@ -193,10 +193,8 @@ export async function boot() {
 
 /** Ask before putting the listener back in the room they were in.
  *
- *  Asked rather than done, for two reasons: a room is a place you join, and a
- *  join on load is an autoplay the browser refuses - the bar would follow the
- *  room's timeline while the audio stayed paused, which reads as a stuck play
- *  button. The click here is the gesture that lets it play. */
+ * Rejoining is an explicit action, and the browser may refuse audio playback
+ * without a user gesture. This click is the gesture that lets it play. */
 async function restoreRoom() {
   const saved = state.room;
   if (!saved || !saved.roomId || !client) return;

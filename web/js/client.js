@@ -715,14 +715,10 @@ export class Client {
     return this.post(`/api/v1/rooms/${roomId}/skip`).then(this.roomSnapshot);
   }
 
-  /** The host's file for a song has run out: the room drops it and puts the
-   *  next one up. The entry is named as well as the track, so an end that lands
-   *  late cannot cut the song playing now - the same track queued twice is two
-   *  entries and only one of them is on. */
-  roomEnded(roomId, trackId = "", itemId = "") {
-    const body = { trackId };
-    if (itemId) body.itemId = itemId;
-    return this.post(`/api/v1/rooms/${roomId}/ended`, body).then(this.roomSnapshot);
+  /** Report the host's ordinary player state; the server timestamps it and
+   *  broadcasts it to followers. */
+  roomSync(roomId, state) {
+    return this.post(`/api/v1/rooms/${roomId}/sync`, state);
   }
 
   roomSeek(roomId, positionMs) {
@@ -732,14 +728,6 @@ export class Client {
   /** A score from 1 (bad) to 5 (great), changeable while the track plays. */
   roomVote(roomId, score) {
     return this.post(`/api/v1/rooms/${roomId}/vote`, { score }).then(this.roomSnapshot);
-  }
-
-  /** The host's player has begun the room's song: the room's clock is put where
-   *  their file is, which is what starts the song for everybody. */
-  roomStarted(roomId, trackId, positionMs = 0, durationMs = 0) {
-    const body = { trackId, positionMs: Math.max(0, Math.round(positionMs)) };
-    if (durationMs) body.durationMs = Math.round(durationMs);
-    return this.post(`/api/v1/rooms/${roomId}/started`, body).then(this.roomSnapshot);
   }
 
   /** The room's own state, whether the endpoint wrapped it or not. */
