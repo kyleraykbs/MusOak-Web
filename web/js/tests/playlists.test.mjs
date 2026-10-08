@@ -4,9 +4,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  pinUserUploads, artistLine, groupProviders, searchSections, sectionsFor, SEARCH_KINDS, providerErrorLines,
+  pinUserUploads, artistLine, groupProviders, searchSections, sectionsFor, SEARCH_KINDS,
 } from "../views/search.js";
 import { sumDurations, playlistDurationMs, trackCount, playlistSubtitle, importPlaylistName } from "../views/playlists.js";
+import { providerErrorLines } from "../views/queue.js";
 import { isAudioFile } from "../views/upload.js";
 
 const upload = (title) => ({

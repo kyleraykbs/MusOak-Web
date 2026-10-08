@@ -22,7 +22,7 @@ import {
 import { banner, currentClient, navigate, refreshCurrent, registerView, requireLogin, toggleFavorite, inBrowser } from "../app.js";
 import { isSignedIn, state } from "../state.js";
 import { currentRoom } from "../rooms-state.js";
-import { artistLine, artistLineNode, enqueueTracks, queueNextTracks, goToArtistItem, playTracks, reportError, shuffleItems } from "./queue.js";
+import { artistLine, artistLineNode, enqueueTracks, providerErrorLines, queueNextTracks, goToArtistItem, playTracks, reportError, shuffleItems } from "./queue.js";
 import { shareTrack } from "./share.js";
 
 registerView({
@@ -176,27 +176,34 @@ export function playButtons(tracks, { withShuffleQueue = true, playlistId = "" }
  * Build a station out of a song and play it: the song first, then what the
  * providers think belongs beside it.
  *
- * The station is saved as a playlist when there is an account to save it to,
- * which is what makes it something to come back to; a guest gets the queue
- * alone.
+ * Nothing is saved: the menu's Radio is a station to listen to now, and a saved
+ * list would turn up among somebody's playlists unasked.
  */
 async function startRadio(track) {
   const client = currentClient();
   if (!client || !track?.id) return;
   toast(`Building a radio from \u201c${track.title || "this song"}\u201d\u2026`);
   try {
-    // A station to listen to, not a playlist to keep: the menu has Radio, and
-    // a saved list would turn up among somebody's playlists unasked.
     const station = await client.radio(track.id, { save: false });
     const list = [track, ...(station?.tracks || [])];
     if (list.length < 2) {
-      toast("Nothing came back to build a radio from.");
+      toast(radioEmptyReason(station));
       return;
     }
     playTracks(list, 0);
   } catch (error) {
     reportError(error);
   }
+}
+
+/** Why a station came back empty, in the words the toast can use. A provider
+ *  that failed is the usual reason, and its own sentence says more than
+ *  "nothing came back" ever could. */
+export function radioEmptyReason(station) {
+  const problems = providerErrorLines(station?.providerErrors || []);
+  return problems.length
+    ? `Nothing came back to build a radio from \u2014 ${problems.join("; ")}`
+    : "Nothing came back to build a radio from.";
 }
 
 export function trackMenu(track, extra = [], { playlistId = "" } = {}) {

@@ -187,6 +187,14 @@ export function reportError(error) {
   banner(error?.message || String(error), "error");
 }
 
+/** Provider problems as quiet lines. A provider that failed says so without
+ *  taking the results that did arrive down with it. */
+export function providerErrorLines(problems = []) {
+  return (problems || []).map(
+    (problem) => `${problem?.provider || "a provider"}: ${problem?.error || "failed"}`
+  );
+}
+
 // --- what a list of tracks does --------------------------------------------
 
 /** How far a pointer may move before a press on a row counts as a drag. */

@@ -12,7 +12,7 @@ import {
 } from "../app.js";
 import { player } from "../player.js";
 import { platformFilter, platformsFor, knownPlatforms } from "../platforms.js";
-import { artistLink } from "./queue.js";
+import { artistLink, providerErrorLines } from "./queue.js";
 import { trackMenu } from "./playlist.js";
 import { state, saveLocal } from "../state.js";
 
@@ -82,16 +82,6 @@ export const SEARCH_KINDS = [
 export function sectionsFor(kind, payload = {}) {
   const wanted = kind === "tracks" ? ["uploads", "tracks"] : [kind];
   return searchSections(payload).filter((section) => wanted.includes(section.key));
-}
-
-/**
- * Provider problems as quiet lines. A provider that failed says so without
- * taking the results that did arrive down with it.
- */
-export function providerErrorLines(problems = []) {
-  return (problems || []).map(
-    (problem) => `${problem?.provider || "a provider"}: ${problem?.error || "failed"}`
-  );
 }
 
 // --- module state ----------------------------------------------------------

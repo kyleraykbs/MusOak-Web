@@ -9,7 +9,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { trackCountLine, totalDurationMs } from "../views/playlist.js";
+import { trackCountLine, totalDurationMs, radioEmptyReason } from "../views/playlist.js";
 import { artistLine, moveItem, queueProjection, shuffleItems } from "../views/queue.js";
 import { createRoomState } from "../rooms-state.js";
 
@@ -183,4 +183,20 @@ test("a queuer with no name is shown by a readable piece of their id", () => {
     }),
   });
   assert.equal(anonymous.rows[0].subtitle, "queued by someone");
+});
+test("an empty station names the provider that had trouble", () => {
+  // A station comes back empty because a provider failed, and the sentence
+  // that says which one is the whole value of the toast.
+  assert.equal(
+    radioEmptyReason({ tracks: [], providerErrors: [{ provider: "ytmusic", error: "exit status 1" }] }),
+    "Nothing came back to build a radio from \u2014 ytmusic: exit status 1"
+  );
+  assert.equal(
+    radioEmptyReason({ providerErrors: [{ provider: "ytmusic", error: "timeout" }, { provider: "spotify", error: "401" }] }),
+    "Nothing came back to build a radio from \u2014 ytmusic: timeout; spotify: 401"
+  );
+  // With nothing to blame the old sentence still stands, and a station that
+  // simply had nothing worth offering is not dressed up as a failure.
+  assert.equal(radioEmptyReason({ tracks: [] }), "Nothing came back to build a radio from.");
+  assert.equal(radioEmptyReason(undefined), "Nothing came back to build a radio from.");
 });
