@@ -292,6 +292,11 @@ class FakePlayer {
     this.warmed = [];
     this.deferLoad = false;
     this.resolvedVariant = "v-default";
+    // The offline surface: what this page holds, and whether the server looks
+    // reachable. A test turns `offline` on to be a member with nothing to say.
+    this.offline = false;
+    this.held = new Set();
+    this.kept = [];
     this._listeners = new Map();
   }
 
@@ -373,6 +378,32 @@ class FakePlayer {
 
   setRoom(room) {
     this.room = room;
+  }
+
+  online() {
+    return !this.offline;
+  }
+
+  offlineState(trackId) {
+    return this.held.has(String(trackId)) ? "ready" : "none";
+  }
+
+  offlineSummary() {
+    return { ready: this.held.size, pending: 0, held: this.held.size, bytes: 0, online: this.online() };
+  }
+
+  keepOffline(tracks) {
+    this.kept = (Array.isArray(tracks) ? tracks : []).map((entry) => String(entry?.id || ""));
+  }
+
+  playOffline(track) {
+    if (!this.held.has(String(track.id))) return false;
+    this.queue = [{ id: String(track.id), title: track.title, roomItemId: String(track.roomItemId || "") }];
+    this.index = 0;
+    this.ended = false;
+    this.paused = false;
+    this.plays.push({ track: this.queue[0], variantId: "offline", positionMs: 0, autoplay: true });
+    return true;
   }
   setRoomQueue(tracks, currentItemId = "", { positionMs = 0, autoplay = true } = {}) {
     const old = this.current();
@@ -662,4 +693,77 @@ test("leaving the room forgets it here and on the server", async (t) => {
   await leaveRoom();
   assert.equal(currentRoom(), null);
   assert.deepEqual(client.calls.leaves, ["room-1"]);
+});
+
+// --- offline, in a room -----------------------------------------------------
+
+/** The room's three songs, the follower holding the last two on this device. */
+function offlineRoom() {
+  const first = item("a1", "first", KYLE);
+  const second = item("b1", "second", SAM);
+  const third = item("c1", "third", KYLE);
+  const room = {
+    ...HOST_ROOM,
+    current: { item: first, positionMs: 0, atMs: Date.now(), started: true, paused: false, durationMs: 30000 },
+    queues: { [KYLE]: [first, third], [SAM]: [second] },
+    masterQueue: [first, second, third],
+  };
+  return { first, second, third, room };
+}
+
+test("an offline follower plays the room's order out of this device", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const { first, second, third, room } = offlineRoom();
+  const client = fakeClient({ room, memberId: SAM });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1", rejoin: true });
+
+  // Nothing is reachable any more, and this device holds the next two songs.
+  player.offline = true;
+  player.held = new Set([second.trackId, third.trackId]);
+  // Its copy of the song the room was on has played out.
+  player.queue = [{ id: first.trackId, title: first.title, roomItemId: first.id }];
+  player.index = 0;
+  player.ended = true;
+
+  player.emit("state-changed");
+  assert.ok(
+    await waitFor(() => player.plays.some((play) => play.variantId === "offline")),
+    "the next song this device holds is played"
+  );
+  assert.equal(player.plays.at(-1).track.id, second.trackId);
+  assert.deepEqual(client.calls.commands, [], "nothing was asked of a room that cannot be reached");
+
+  // The room's order is what it follows, and the page kept it for this.
+  assert.ok(player.kept.includes(second.trackId), `kept ${player.kept.join(",")}`);
+});
+
+test("coming back online puts the follower on the room's own song again", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const { first, second, third, room } = offlineRoom();
+  const client = fakeClient({ room, memberId: SAM });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1", rejoin: true });
+
+  player.offline = true;
+  player.held = new Set([second.trackId]);
+  player.queue = [{ id: first.trackId, title: first.title, roomItemId: first.id }];
+  player.index = 0;
+  player.ended = true;
+  player.emit("state-changed");
+  await waitFor(() => player.plays.some((play) => play.variantId === "offline"));
+
+  // Back on the network, and the room has moved on without us: the room is the
+  // truth, so the song it is on is the song that plays.
+  const moved = { ...room, current: { item: third, positionMs: 0, atMs: Date.now(), started: true, paused: false, durationMs: 30000 } };
+  client.roomData = moved;
+  player.offline = false;
+  client.calls.sockets[0].onEvent({ type: "playback", roomId: "room-1", seq: 9, data: { current: moved.current } });
+
+  assert.ok(
+    await waitFor(() => player.plays.at(-1)?.track?.id === third.trackId && player.plays.at(-1)?.variantId !== "offline"),
+    `the room's song is loaded (${player.plays.at(-1)?.track?.id})`
+  );
 });

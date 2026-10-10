@@ -4,7 +4,7 @@
 // and keeps the shared player within two seconds of the host's queue position.
 
 import { h, mount, clear, popover, toast, fmtDuration, icon, iconButton, scheduleFrame } from "../dom.js";
-import { registerView, navigate, banner, currentClient, requireLogin } from "../app.js";
+import { registerView, navigate, banner, currentClient, on, requireLogin } from "../app.js";
 import { state, saveLocal } from "../state.js";
 import { player } from "../player.js";
 import { artworkTile, trackMenu } from "./playlist.js";
@@ -15,6 +15,7 @@ import {
   closedRoomReason,
   subscribe,
   leaveRoom,
+  drivenBy,
   refreshRoom,
   myQueue,
   nameOf,
@@ -62,6 +63,8 @@ function render(container) {
   if (unsubscribe) unsubscribe();
   unsubscribe = subscribe(() => scheduleRedraw());
   watchPlayer();
+  // Offline is said on the card, so the card has to be redrawn when it changes.
+  on("online-changed", () => scheduleRedraw());
   // Paint what we hold, then ask for the room as it stands: arriving from the
   // Rooms list, what we hold can be a snapshot from before somebody queued
   // anything, and nothing would tell us so until the next event.
@@ -175,7 +178,15 @@ function nowPlaying(room) {
   const line = h("div", { class: "subtitle" });
   positionLabel = line;
   const title = h("div", { class: "title", text: current.item.title });
-  const text = h("div", { class: "grow" }, title, line);
+  // Whose clock this is: the host's player, or the server's while the host is
+  // away. A room that keeps playing with nobody hosting is worth saying.
+  const driver = drivenBy(room) === "server"
+    ? h("div", { class: "subtitle", text: "The host is away — the server is playing the queue." })
+    : null;
+  const offlineNow = player.online && !player.online()
+    ? h("div", { class: "subtitle", text: "Offline — playing what is on this device." })
+    : null;
+  const text = h("div", { class: "grow" }, title, line, driver, offlineNow);
   updateClock();
 
   const drives = mayDrive(room, room.me);

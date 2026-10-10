@@ -1412,3 +1412,10 @@ body:has(.drawer:not([hidden])) .player-bar > .btn[title="Open the room"] { disp
 /* A member's file, in the Listening panel: the room is waiting on it, so it is
    worth a bar rather than a word. */
 .member-load { width: 96px; flex: none; }
+
+/* What the queue holds for playing with the server out of reach: a line above
+   the lists, and a mark on each song this device already has. */
+.offline-line { font-size: 12px; color: var(--fg4); padding: 2px 4px 6px; }
+.offline-line.offline { color: var(--orange); }
+.held { align-self: center; color: var(--fg4); display: inline-flex; }
+.held.ready { color: var(--green); }

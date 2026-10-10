@@ -14,7 +14,7 @@
 // our own.
 
 import { h, mount, fmtDuration, icon, iconButton, iconOr, popover } from "../dom.js";
-import { banner, currentClient, inBrowser, navigate, registerView, requireLogin } from "../app.js";
+import { banner, currentClient, inBrowser, navigate, on, registerView, requireLogin } from "../app.js";
 import { player } from "../player.js";
 import {
   clear as clearRoom,
@@ -246,6 +246,9 @@ export function renderQueue(container, { compact = false } = {}) {
     subscribed = true;
     player.on("queue-changed", paint);
     player.on("track-changed", paint);
+    player.on("offline-changed", paint);
+    // Whether the server is there decides what the line above the list says.
+    on("online-changed", paint);
     subscribe(paint);
   }
   paint();
@@ -309,6 +312,7 @@ function draw({ sheet, compact }, projection, room) {
           }),
           clear
         ),
+        offlineLine(),
         panel(
           true,
           sheet,
@@ -329,6 +333,7 @@ function draw({ sheet, compact }, projection, room) {
         tab(compact, "room", "Whole Room", "The room's play order — the fair mix everyone plays (read only)", () => toggle("room", sheet)),
         clear
       ),
+      offlineLine(),
       h(
         "div",
         { class: "queue-panels" },
@@ -354,6 +359,7 @@ function draw({ sheet, compact }, projection, room) {
       ),
       ...controls(projection)
     ),
+    offlineLine(),
     projection.rows.length
       ? h("div", { class: "list" }, projection.rows.map((row) => queueRow(projection, row)))
       : h(
@@ -383,6 +389,29 @@ function toggle(key, sheet) {
   // Never leave the drawer with nothing in it.
   if (!shown.mine && !shown.room) shown[key === "mine" ? "room" : "mine"] = true;
   paint();
+}
+
+/** What the queue says about offline play, or null when there is nothing worth
+ *  saying: nothing held, and the server answering. */
+function offlineLine() {
+  const summary = player.offlineSummary?.();
+  if (!summary) return null;
+  const held = summary.ready + summary.pending;
+  if (!held) {
+    if (summary.online) return null;
+    return h("div", {
+      class: "offline-line offline",
+      text: "Offline — nothing in this queue is on this device yet.",
+    });
+  }
+  const parts = [`${summary.ready} ready`];
+  if (summary.pending) parts.push(`${summary.pending} downloading`);
+  return h("div", {
+    class: `offline-line${summary.online ? "" : " offline"}`,
+    text: summary.online
+      ? `Kept on this device: ${parts.join(" · ")}`
+      : `Offline — playing from this device (${parts.join(", ")})`,
+  });
 }
 
 /** A panel: its heading, then its rows. Visibility is passed in rather than read
@@ -470,6 +499,23 @@ export function titleClass(roomOrder, own) {
 
 function queueRow(projection, row) {
   const buttons = [];
+  // What this device holds of the song: the queue says what will still play
+  // when the server is out of reach.
+  const held = player.offlineState?.(row.track?.id || row.key) || "none";
+  if (held === "ready" || held === "pending") {
+    const kept = held === "ready";
+    buttons.push(
+      h(
+        "span",
+        {
+          class: `held ${held}`,
+          title: kept ? "Kept on this device" : "Downloading to this device",
+          "aria-label": kept ? "kept on this device" : "downloading to this device",
+        },
+        icon(kept ? "cloud" : "download", 14)
+      )
+    );
+  }
   // The menu every song has, wherever it is listed: the track's own actions.
   if (row.track?.id) {
     buttons.push(

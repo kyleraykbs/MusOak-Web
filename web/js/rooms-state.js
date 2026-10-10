@@ -135,6 +135,9 @@ export function normalizeCurrent(raw) {
     started: Boolean(raw.started),
     paused: Boolean(raw.paused),
     durationMs: num(raw.durationMs) || num(item.durationMs),
+    // Whose player is the room's clock: the host's, or the server's while the
+    // host is away.
+    drivenBy: str(raw.drivenBy) === "server" ? "server" : "host",
     votes: { ...(raw.votes || {}) },
     meanScore: num(raw.meanScore),
   };
@@ -407,6 +410,14 @@ export function mayDrive(state, memberId) {
 export function isHost(room) {
   const me = str(room && room.me);
   return Boolean(me) && me === str(room && room.host);
+}
+
+/**
+ * Whose player is running the room: the host's, or the server's, which keeps
+ * time while the host has gone away and hands it back when they return.
+ */
+export function drivenBy(room) {
+  return str(room?.current?.drivenBy) === "server" ? "server" : "host";
 }
 
 /** One member's own queue: what they queued, in the order they want it. */
@@ -1029,6 +1040,13 @@ async function followRoom(running) {
   }
   warmAhead(player, room, itemId);
 
+  // With nothing reachable there is nothing to resolve and nothing to measure
+  // drift against: the order and the copies this page holds are what is left.
+  if (!player.online?.()) {
+    followOfflineRoom(running, room);
+    return;
+  }
+
   if (!running.variantId) {
     if (running.resolving === trackId) return;
     if (running.failedItemId === itemId && Date.now() - running.failedAt < RESOLVE_BACKOFF_MS) return;
@@ -1116,6 +1134,8 @@ function followHost(running, room) {
     })), targetId, { positionMs: targetPosition, autoplay });
     running.queueKey = queueKey;
   }
+  // The room's order is what plays offline here too, so its copies are kept.
+  player.keepOffline?.(items.map((item) => ({ id: str(item.trackId), title: item.title })));
 
   const track = player.current();
   const itemId = str(track?.roomItemId);
@@ -1132,14 +1152,55 @@ function followHost(running, room) {
   reportHostState(running, player, itemId, trackId);
 }
 
-/** Have the room's next songs on disk before the room reaches them. */
+/**
+ * A follower with nothing reachable plays the order it last knew, out of the
+ * copies this page kept for it.
+ *
+ * The room cannot start a song when it cannot be heard from, so the local
+ * player carries on by itself - song into song - until the socket comes back,
+ * and then the room's own item wins and this client jumps to it. That is what
+ * following means with the server gone: the last order, and the songs.
+ */
+function followOfflineRoom(running, room, { force = false } = {}) {
+  const player = running.player;
+  const order = list(room.masterQueue).filter((entry) => entry?.id && entry?.trackId);
+  if (!order.length) {
+    if (!player.isPaused()) player.pause();
+    return;
+  }
+  // On a song that has not ended: leave it alone. It is the song the room last
+  // said, and it is already here - unless somebody asked for the next one.
+  if (!force && player.current() && !player.hasEnded?.()) return;
+
+  const localId = str(player.current()?.roomItemId);
+  const roomItemId = str(room.current?.item?.id);
+  let at = order.findIndex((entry) => entry.id === (localId || roomItemId));
+  if (localId && at >= 0) at += 1;      // our copy of that song is over
+  if (at < 0) at = 0;
+
+  for (; at < order.length; at += 1) {
+    const entry = order[at];
+    if (player.offlineState?.(str(entry.trackId)) !== "ready") continue;
+    sayStep(`offline:${entry.id}`, `Offline — playing ${entry.title || "the next song"} from this device`);
+    player.playOffline?.({ id: str(entry.trackId), title: entry.title, roomItemId: str(entry.id) });
+    return;
+  }
+  // Nothing left that this page holds: hold, quiet, until the room returns.
+  if (!player.isPaused()) player.pause();
+}
+
+/** Have the room's next songs on disk, and in memory for offline play. */
 function warmAhead(player, room, itemId) {
   const order = list(room.masterQueue);
   const at = order.findIndex((entry) => str(entry.id) === str(itemId));
-  const from = at < 0 ? 0 : at + 1;
-  for (const entry of order.slice(from, from + PREFETCH_AHEAD)) {
-    player.warm?.({ id: str(entry.trackId), title: entry.title });
+  const from = at < 0 ? 0 : at;
+  const upcoming = order.slice(from).map((entry) => ({ id: str(entry.trackId), title: entry.title }));
+  for (const entry of upcoming.slice(0, PREFETCH_AHEAD)) {
+    player.warm?.(entry);
   }
+  // The order a follower would go through with nothing reachable is the room's,
+  // so that is what this page keeps the copies for.
+  player.keepOffline?.(upcoming);
 }
 
 /** Put the player in the room the rest of the app is in. */
@@ -1158,6 +1219,11 @@ function ensureRoomMode(player, room) {
     mayShuffle: () => {
       const live = currentRoom();
       return Boolean(live) && myQueue(live).length >= 2;
+    },
+    // A skip with nothing reachable moves through the order this page knew.
+    offlineSkip: () => {
+      const live = currentRoom();
+      if (live) followOfflineRoom(plugin, live, { force: true });
     },
     onBlocked: (action) => blockedNotice?.(action),
     pause: () => pause().catch(() => {}),

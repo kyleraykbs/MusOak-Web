@@ -19,6 +19,20 @@ import { openSourcePicker, pickSource, sourceLabel, findSourceDialog } from "./v
 
 /** How many tracks after the current one stay downloaded. */
 export const PREFETCH = 3;
+
+/**
+ * How many songs ahead of the playhead this page keeps in memory.
+ *
+ * A road trip is the reason: with no server reachable the queue still plays,
+ * song after song, out of this page's own memory. Memory on purpose - nothing
+ * here survives a reload, which is what keeping a playlist is for - and the
+ * window is the whole budget.
+ */
+export const OFFLINE_AHEAD = 50;
+/** How many of those are fetched at once: enough to keep ahead, not a flood. */
+const OFFLINE_FETCHES = 2;
+/** How long a song that did not arrive is left before it is tried again. */
+const OFFLINE_RETRY_MS = 60000;
 /** How often the bar asks the backend whether a download is done. */
 const POLL_MS = 400;
 
@@ -261,6 +275,14 @@ class Player {
     this._started = new Set();    // variant ids we asked the backend to fetch
     this._status = new Map();     // variant id -> media status
 
+    // Songs held in this page for offline play, by track id: {state, variantId,
+    // url, bytes, at}. "pending" until the bytes are here, then "ready", or
+    // "failed" with the time it failed at so it can be tried again later.
+    this._offline = new Map();
+    this._offlineOrder = [];      // track ids waiting for a fetch slot
+    this._offlineActive = 0;      // fetches in flight
+    this._offlineBytes = 0;
+
     this._token = 0;              // which track the async work is still for
     this._loading = false;
     this._buffering = false;      // the file is here, the sound is not yet
@@ -395,6 +417,7 @@ class Player {
     this._error = "";
     this._pendingSeek = null;
     this._stopAudio();
+    this._releaseAllOffline();
     this._emit("queue-changed", this.queue);
     this._emit("track-changed", null);
     this._stateEvent();
@@ -425,6 +448,24 @@ class Player {
     return this._variant;
   }
 
+  /**
+   * Play a song out of this page's memory, with the server out of the picture.
+   *
+   * This is how a queue carries on with nothing reachable: the copy is already
+   * here, so there is nothing to resolve and nothing to wait for.
+   */
+  playOffline(track) {
+    const trackId = String(track?.id || "");
+    const entry = this._offline.get(trackId);
+    if (!entry || entry.state !== "ready" || !entry.url) return false;
+    this.queue = [{ ...track, id: trackId }];
+    this._index = 0;
+    this._shuffle = false;
+    this._emit("queue-changed", this.queue);
+    this._load(0, { autoplay: true });
+    return true;
+  }
+
   /** Where the current track's file is: "none", "downloading", "ready", "failed". */
   readyState() {
     if (!this._variant) return "none";
@@ -432,14 +473,19 @@ class Player {
   }
 
   /** The host advances its ordinary mixed queue locally; followers ask the
-   *  room to skip. */
+   *  room to skip, or move through the order they last knew when it cannot be
+   *  reached. */
   next() {
     if (this._room?.hostPlayback) {
       const target = this._index + 1;
       if (target >= 0 && target < this.queue.length) this.jumpTo(target);
       return;
     }
-    if (this._room) return this._roomCommand("skip", "skip");
+    if (this._room) {
+      if (this.online()) return this._roomCommand("skip", "skip");
+      this._room.offlineSkip?.();
+      return;
+    }
     const target = nextIndex(this.queue, this._index, this._shuffle);
     if (target >= 0) this.jumpTo(target);
   }
@@ -469,7 +515,9 @@ class Player {
   }
 
   toggle() {
-    if (this._room) return this._roomCommand(this.isPaused() ? "resume" : "pause", "pause");
+    // In a room the room owns the transport - unless it cannot be reached, when
+    // this device is all there is and the button has to keep working.
+    if (this._room && this.online()) return this._roomCommand(this.isPaused() ? "resume" : "pause", "pause");
     if (this.isPaused()) this.resume();
     else this.pause();
   }
@@ -632,6 +680,7 @@ class Player {
           seek: room.seek,
           hostPlayback: Boolean(room.hostPlayback),
           mayShuffle: room.mayShuffle,
+          offlineSkip: room.offlineSkip,
         }
       : null;
     const changed = this._room?.roomId !== next?.roomId ||
@@ -1035,6 +1084,9 @@ class Player {
       if (!this._variant) return;
       this._loading = false;
       this._buffering = false;
+      // Offline, a file that will not play is a file this page does not have:
+      // the next song it does have is more use than an error message.
+      if (!this.online() && this._skipUnavailable()) return;
       this._error = "could not play that file";
       this._stateEvent();
     });
@@ -1083,17 +1135,30 @@ class Player {
     // The bar says "downloading" from the moment the track is chosen.
     this._stateEvent();
 
+    // A song this page holds is played from memory. Offline there is nothing to
+    // resolve and nothing to ask the backend about, and online the bytes are
+    // already here, so either way the copy is what plays.
+    const kept = this._offline.get(String(track.id || ""));
+    const fromMemory = Boolean(kept && kept.state === "ready" && kept.url && (!variantId || kept.variantId === variantId));
+
     let resolved;
     try {
-      resolved = variantId
-        ? await this._resolveFixed(track, variantId)
-        : await this._variantFor(track);
+      if (fromMemory) {
+        resolved = { sources: [], preferredVariantId: kept.variantId, variantId: kept.variantId, source: null };
+      } else {
+        resolved = variantId
+          ? await this._resolveFixed(track, variantId)
+          : await this._variantFor(track);
+      }
     } catch (error) {
       if (token !== this._token) return;
       this._loading = false;
       this._error = error?.message || "could not fetch that track";
       this._stateEvent();
-      this._report(error);
+      // Offline, a song that cannot be resolved is a song this page does not
+      // have: the queue carries on with one it does.
+      if (!this.online()) this._skipUnavailable();
+      else this._report(error);
       return;
     }
     if (token !== this._token) return;   // the track changed while we looked
@@ -1103,16 +1168,17 @@ class Player {
     this._variant = resolved.variantId;
     this.renderBar();
 
-    const status = await this._ready(resolved.variantId, token);
+    const status = fromMemory ? { state: "ready" } : await this._ready(resolved.variantId, token);
     if (token !== this._token || status === null) return;
     if (status.state === "failed") {
       this._loading = false;
       this._error = status.error || "that file could not be downloaded";
       this._stateEvent();
+      if (!this.online()) this._skipUnavailable();
       return;
     }
 
-    audio.src = this._client().mediaUrl(resolved.variantId);
+    audio.src = fromMemory ? kept.url : this._client().mediaUrl(resolved.variantId);
     this._loading = false;
     if (!autoplay) {
       // The file is here and the bar shows where it is; the moment is someone
@@ -1140,6 +1206,25 @@ class Player {
     // The button becomes a pause button the moment play() is called, and the
     // sound can still be a moment behind it.
     this._setBuffering(audio.readyState < 3);
+  }
+
+  /**
+   * Offline, a song this page does not hold is one it cannot play. Rather than
+   * stopping the queue on it, the next song it does hold is played: sitting in
+   * silence on one missing file is no way to spend a road.
+   */
+  _skipUnavailable() {
+    for (let index = this._index + 1; index < this.queue.length; index += 1) {
+      const entry = this._offline.get(String(this.queue[index]?.id || ""));
+      if (entry?.state === "ready" && entry.url) {
+        this._error = "";
+        this.jumpTo(index, { autoplay: true });
+        return true;
+      }
+    }
+    this._error = "";
+    this._stateEvent();
+    return false;
   }
 
   /** A variant a room assigned: the sources are only there to name it. */
@@ -1262,6 +1347,131 @@ class Player {
     for (const track of prefetchWindow(this.queue, this._index, PREFETCH)) {
       this.warm(track);
     }
+    // In a room the order offline play follows is the room's, and rooms-state
+    // keeps it: this queue holds one song there, and would evict the room's.
+    if (!this._room) this.keepOffline(this.offlineWindow());
+  }
+
+  // --- songs kept in memory for offline play -------------------------------
+
+  /** Whether the server still looks reachable to this page. */
+  online() {
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return false;
+    return state.online !== false;
+  }
+
+  /** The songs ahead of the playhead, in order: what offline play needs. */
+  offlineWindow() {
+    return prefetchWindow(this.queue, this._index, OFFLINE_AHEAD).filter((track) => track?.id);
+  }
+
+  /** What this page holds for one track: none, pending, ready or failed. */
+  offlineState(trackId) {
+    return this._offline.get(String(trackId || ""))?.state || "none";
+  }
+
+  /** What the window adds up to, for the queue's own indicator. */
+  offlineSummary() {
+    let ready = 0;
+    let pending = 0;
+    let held = 0;
+    for (const entry of this._offline.values()) {
+      if (entry.state === "ready") ready += 1;
+      else if (entry.state === "pending") pending += 1;
+      held += 1;
+    }
+    return { ready, pending, held, bytes: this._offlineBytes, online: this.online() };
+  }
+
+  /**
+   * Keep this list's songs in memory, dropping anything that left it.
+   *
+   * Public because a room's order is not this player's queue: a follower holds
+   * one song at a time, and the order it would go through offline is the room's.
+   */
+  keepOffline(tracks = []) {
+    const wanted = (Array.isArray(tracks) ? tracks : []).filter((track) => track?.id).slice(0, OFFLINE_AHEAD);
+    const ids = new Set(wanted.map((track) => String(track.id)));
+    for (const trackId of [...this._offline.keys()]) {
+      if (!ids.has(trackId)) this._releaseOffline(trackId);
+    }
+    for (const track of wanted) this._queueOffline(track);
+  }
+
+  _queueOffline(track) {
+    const trackId = String(track.id || "");
+    if (!trackId) return;
+    const known = this._offline.get(trackId);
+    if (known) {
+      if (known.state !== "failed") return;
+      if (Date.now() - Number(known.at || 0) < OFFLINE_RETRY_MS) return;
+    }
+    this._offline.set(trackId, { state: "pending", variantId: "", url: "", bytes: 0, at: Date.now() });
+    this._offlineOrder.push(trackId);
+    this._emit("offline-changed", this.offlineSummary());
+    this._pumpOffline();
+  }
+
+  _pumpOffline() {
+    while (this._offlineActive < OFFLINE_FETCHES && this._offlineOrder.length) {
+      const trackId = this._offlineOrder.shift();
+      const entry = this._offline.get(trackId);
+      if (!entry || entry.state !== "pending") continue;
+      this._offlineActive += 1;
+      this._fetchOffline(trackId).finally(() => {
+        this._offlineActive -= 1;
+        this._pumpOffline();
+      });
+    }
+  }
+
+  /**
+   * Fetch one song's bytes into memory.
+   *
+   * The file is the one this player would really play, so what lands here is
+   * what `_load` looks for, and it is asked for the same way a download is:
+   * the backend has to hold it first, which is what `_warm` is.
+   */
+  async _fetchOffline(trackId) {
+    try {
+      const resolved = await this._variantFor({ id: trackId });
+      const variantId = resolved?.variantId || "";
+      if (!variantId) throw new Error("no source");
+      if (!(await this._warm(variantId))) throw new Error("the file did not arrive");
+      const response = await fetch(this._client().mediaUrl(variantId));
+      if (!response.ok) throw new Error(`media ${response.status}`);
+      const blob = await response.blob();
+      const entry = this._offline.get(trackId);
+      if (!entry) return;                        // the window moved on while fetching
+      entry.variantId = variantId;
+      entry.url = URL.createObjectURL(blob);
+      entry.bytes = blob.size;
+      entry.state = "ready";
+      this._offlineBytes += blob.size;
+    } catch {
+      const entry = this._offline.get(trackId);
+      if (entry && entry.state === "pending") {
+        entry.state = "failed";
+        entry.at = Date.now();
+      }
+    }
+    this._emit("offline-changed", this.offlineSummary());
+  }
+
+  /** Forget one song's copy, freeing the memory it held. */
+  _releaseOffline(trackId) {
+    const id = String(trackId || "");
+    const entry = this._offline.get(id);
+    if (!entry) return;
+    if (entry.url && typeof URL !== "undefined" && URL.revokeObjectURL) URL.revokeObjectURL(entry.url);
+    this._offlineBytes -= Number(entry.bytes) || 0;
+    this._offline.delete(id);
+    this._offlineOrder = this._offlineOrder.filter((queued) => queued !== id);
+    this._emit("offline-changed", this.offlineSummary());
+  }
+
+  _releaseAllOffline() {
+    for (const trackId of [...this._offline.keys()]) this._releaseOffline(trackId);
   }
 
   /**

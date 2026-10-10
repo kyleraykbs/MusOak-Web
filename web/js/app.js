@@ -185,7 +185,10 @@ export async function boot() {
     if (ok === Boolean(state.online)) return;
     state.online = ok;
     renderCorner();
+    emit("online-changed", ok);
   });
+  window.addEventListener("online", () => markReachable(true));
+  window.addEventListener("offline", () => markReachable(false));
   window.addEventListener("focus", () => checkServer());
   startReachability();
   checkServer();
@@ -742,6 +745,15 @@ export function serverAnswered(error) {
   return Number(error?.status) > 0;
 }
 
+/** The browser's own view of the network, said the same way a failed request
+ *  is: the views redraw, and checkServer corrects it if the server disagrees. */
+function markReachable(ok) {
+  if (Boolean(state.online) === Boolean(ok)) return;
+  state.online = Boolean(ok);
+  renderCorner();
+  emit("online-changed", state.online);
+}
+
 /** Ask the backend whether it is there, and draw the answer. */
 async function checkServer({ force = false } = {}) {
   if (!client || !state.server) return;
@@ -752,7 +764,10 @@ async function checkServer({ force = false } = {}) {
   } catch (error) {
     state.online = serverAnswered(error);
   }
-  if (force || state.online !== before) renderCorner();
+  if (force || state.online !== before) {
+    renderCorner();
+    emit("online-changed", state.online);
+  }
 }
 
 /** The retry button: try the server again, and bring the view back with it. */

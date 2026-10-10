@@ -395,3 +395,192 @@ test("the room's clock is the playbar's clock for whoever is playing here", asyn
   const unmeasured = { current: () => ({ id: "t1" }), positionMs: () => 1000, measuredDurationMs: () => 0 };
   assert.deepEqual(roomClock(unmeasured, room, current), { positionMs: 1000, durationMs: 431000 });
 });
+
+// --- songs kept in memory for offline play ---------------------------------
+
+/** Lets the player's fetches settle: they are promises, not timers. */
+async function settle(times = 8) {
+  for (let i = 0; i < times; i += 1) await Promise.resolve();
+}
+
+test("the queue's next songs are kept in memory, and the window is the limit", async () => {
+  const saved = {
+    queue: player.queue,
+    index: player._index,
+    offline: player._offline,
+    order: player._offlineOrder,
+    bytes: player._offlineBytes,
+    variantFor: player._variantFor,
+    warm: player._warm,
+    client: player._client,
+    room: player._room,
+    fetch: globalThis.fetch,
+    create: globalThis.URL.createObjectURL,
+    revoke: globalThis.URL.revokeObjectURL,
+  };
+  const fetched = [];
+  const revoked = [];
+  try {
+    player.setRoom(null);
+    player._offline = new Map();
+    player._offlineOrder = [];
+    player._offlineBytes = 0;
+    player._variantFor = async (entry) => ({ variantId: `v-${entry.id}` });
+    player._warm = async () => true;
+    player._client = () => ({ mediaUrl: (variantId) => `/media/${variantId}` });
+    globalThis.URL.createObjectURL = (blob) => `blob:${blob.size}:${Math.random().toString(36).slice(2)}`;
+    globalThis.URL.revokeObjectURL = (url) => revoked.push(url);
+    globalThis.fetch = async (url) => {
+      fetched.push(String(url));
+      return { ok: true, blob: async () => ({ size: 1024 }) };
+    };
+
+    player.queue = queue("a", "b", "c");
+    player._index = 0;
+    player.keepOffline(player.offlineWindow());
+    await settle();
+
+    assert.deepEqual(fetched, ["/media/v-a", "/media/v-b", "/media/v-c"]);
+    assert.equal(player.offlineState("a"), "ready");
+    assert.equal(player.offlineSummary().ready, 3);
+    assert.equal(player.offlineSummary().bytes, 3072);
+
+    // The window is what it keeps: a song that leaves it is freed.
+    const before = player.offlineSummary().ready;
+    player.queue = queue("a");
+    player.keepOffline(player.offlineWindow());
+    assert.equal(player.offlineState("b"), "none", "a song out of the window is released");
+    assert.equal(player.offlineState("c"), "none");
+    assert.equal(player.offlineSummary().ready, 1);
+    assert.ok(before === 3 && revoked.length === 2, `released ${revoked.length} of 2 copies`);
+  } finally {
+    player._queue = null;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._offline = saved.offline;
+    player._offlineOrder = saved.order;
+    player._offlineBytes = saved.bytes;
+    player._variantFor = saved.variantFor;
+    player._warm = saved.warm;
+    player._client = saved.client;
+    player.setRoom(saved.room);
+    globalThis.fetch = saved.fetch;
+    globalThis.URL.createObjectURL = saved.create;
+    globalThis.URL.revokeObjectURL = saved.revoke;
+  }
+});
+
+test("a song kept in memory plays with nothing reachable", async () => {
+  const saved = {
+    ensureAudio: player.ensureAudio,
+    audio: player.audio,
+    queue: player.queue,
+    index: player._index,
+    offline: player._offline,
+    bytes: player._offlineBytes,
+    sources: player._sources,
+    source: player._source,
+    variant: player._variant,
+    variantFor: player._variantFor,
+    online: player.online,
+    room: player._room,
+  };
+  const resolutions = [];
+  const audio = {
+    src: "",
+    currentTime: 0,
+    duration: 0,
+    paused: true,
+    readyState: 0,
+    removeAttribute() {},
+    load() {},
+    pause() {},
+    play() {
+      return { catch() {} };
+    },
+  };
+  try {
+    player.setRoom(null);
+    player.ensureAudio = () => audio;
+    player.audio = audio;
+    player.queue = queue("a");
+    player._index = 0;
+    player._offline = new Map([["a", { state: "ready", variantId: "v-a", url: "blob:a", bytes: 4 }]]);
+    player._offlineBytes = 4;
+    player._variantFor = () => {
+      resolutions.push("resolved");
+      throw new Error("the server was asked");
+    };
+    player.online = () => false;
+
+    await player._load(0, { autoplay: false });
+
+    assert.equal(audio.src, "blob:a", "the copy on this device is what plays");
+    assert.deepEqual(resolutions, [], "nothing was resolved with the server gone");
+  } finally {
+    player.ensureAudio = saved.ensureAudio;
+    player.audio = saved.audio;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._offline = saved.offline;
+    player._offlineBytes = saved.bytes;
+    player._sources = saved.sources;
+    player._source = saved.source;
+    player._variant = saved.variant;
+    player._variantFor = saved.variantFor;
+    player.online = saved.online;
+    player.setRoom(saved.room);
+  }
+});
+
+test("the transport still works when the room cannot be reached", () => {
+  const saved = { room: player._room, online: player.online, queue: player.queue, index: player._index, audio: player.audio };
+  const asked = [];
+  try {
+    player.queue = queue("a");
+    player._index = 0;
+    player.audio = {
+      src: "blob:a",
+      paused: true,
+      play() {
+        this.paused = false;
+        return { catch() {} };
+      },
+      pause() {
+        this.paused = true;
+      },
+    };
+    player.setRoom({
+      roomId: "room-test",
+      pause: () => asked.push("pause"),
+      resume: () => asked.push("resume"),
+      skip: () => asked.push("skip"),
+    });
+
+    // Offline the room is a place that cannot be asked anything, so the button
+    // has to be this device's own.
+    player.online = () => false;
+    player.pause();
+    assert.equal(player.isPaused(), true, "the local element pauses");
+    player.resume();
+    assert.equal(player.isPaused(), false, "and resumes");
+    assert.deepEqual(asked, [], "nothing was asked of a room that cannot answer");
+
+    // Online it is the room's call again: it is the only thing that can change
+    // what the room is doing.
+    player.online = () => true;
+    player.toggle();
+    assert.deepEqual(asked, ["pause"], "online the room is asked");
+  } finally {
+    // The resume retry outlives the assertion on purpose; the test is not
+    // waiting four seconds for it.
+    player._wantResume(false);
+    clearInterval(player._resumeTimer);
+    player._resumeTimer = 0;
+    player.online = saved.online;
+    player.audio = saved.audio;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player.setRoom(saved.room);
+  }
+});
