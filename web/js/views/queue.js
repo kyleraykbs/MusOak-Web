@@ -497,25 +497,35 @@ export function titleClass(roomOrder, own) {
   return own ? "title queued-mine" : "title queued-other";
 }
 
+/**
+ * What this device holds of a song, as the mark both queues put on a row: a
+ * cloud when the copy is here, a download while it is on its way, and nothing
+ * at all when there is nothing to say.
+ *
+ * Shared, because the room page's own queue says the same thing as the player's
+ * queue, and two lists deciding it separately is how they come to disagree.
+ */
+export function heldBadge(trackId) {
+  const held = player.offlineState?.(String(trackId || "")) || "none";
+  if (held !== "ready" && held !== "pending") return null;
+  const kept = held === "ready";
+  return h(
+    "span",
+    {
+      class: `held ${held}`,
+      title: kept ? "In memory, on device" : "Downloading to this device",
+      "aria-label": kept ? "in memory, on device" : "downloading to this device",
+    },
+    icon(kept ? "cloud" : "download", 14)
+  );
+}
+
 function queueRow(projection, row) {
   const buttons = [];
   // What this device holds of the song: the queue says what will still play
   // when the server is out of reach.
-  const held = player.offlineState?.(row.track?.id || row.key) || "none";
-  if (held === "ready" || held === "pending") {
-    const kept = held === "ready";
-    buttons.push(
-      h(
-        "span",
-        {
-          class: `held ${held}`,
-          title: kept ? "In memory, on device" : "Downloading to this device",
-          "aria-label": kept ? "in memory, on device" : "downloading to this device",
-        },
-        icon(kept ? "cloud" : "download", 14)
-      )
-    );
-  }
+  const badge = heldBadge(row.track?.id || row.key);
+  if (badge) buttons.push(badge);
   // The menu every song has, wherever it is listed: the track's own actions.
   if (row.track?.id) {
     buttons.push(

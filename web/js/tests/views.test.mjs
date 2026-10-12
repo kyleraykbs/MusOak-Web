@@ -46,6 +46,29 @@ globalThis.document = {
   },
 };
 
+test("the held mark says what this device has, wherever it is drawn", async () => {
+  const queue = await import("../views/queue.js");
+  const { player } = await import("../player.js");
+  const saved = player.offlineState;
+  try {
+    player.offlineState = (id) =>
+      id === "held-1" ? "ready" : id === "pending-1" ? "pending" : "none";
+
+    const kept = queue.heldBadge("held-1");
+    assert.equal(kept.className, "held ready", "a copy that is here");
+    assert.equal(kept.attributes.title, "In memory, on device");
+    assert.equal(kept.attributes["aria-label"], "in memory, on device");
+
+    const coming = queue.heldBadge("pending-1");
+    assert.equal(coming.className, "held pending", "a copy on its way");
+    assert.equal(coming.attributes.title, "Downloading to this device");
+
+    assert.equal(queue.heldBadge("nothing-1"), null, "nothing worth saying for a song with no copy");
+  } finally {
+    player.offlineState = saved;
+  }
+});
+
 test("the queue's grip builds, and a drag can be wired to it", async () => {
   const queue = await import("../views/queue.js");
   const handle = queue.dragHandle("Drag to reorder");

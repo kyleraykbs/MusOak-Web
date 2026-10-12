@@ -9,7 +9,7 @@ import { state, saveLocal } from "../state.js";
 import { player } from "../player.js";
 import { artworkTile, trackMenu } from "./playlist.js";
 import { avatarFor, inviteFriendsToRoom } from "./share.js";
-import { listDrag, dragHandle, roomQueueTrack, titleClass } from "./queue.js";
+import { listDrag, dragHandle, roomQueueTrack, titleClass, heldBadge } from "./queue.js";
 import {
   currentRoom,
   closedRoomReason,
@@ -339,6 +339,7 @@ function queueRow(room, item, index, mine, draggable = false) {
       h("div", { class: titleClass(!mine, own), text: item.title }),
       h("div", { class: "subtitle", text: `queued by ${nameOf(room, item.addedBy)}` })
     ),
+    heldBadge(String(item.trackId || "")),
     // The menu sits left of the remove button, the same way round as the
     // player's own queue, so both lists read the same.
     iconButton("dots", {
