@@ -132,6 +132,10 @@ export function queueProjection({ room = null, showMaster = false, playerQueue =
         artwork: String(item.artworkUrl || ""),
         playing: false,
         itemId: item.id,
+        // The track the row is about, beside the queue item it is: the item id
+        // is not the track id, and anything that looks a song up - the copy this
+        // device holds, an artist's page - means the track.
+        trackId: String(item.trackId || ""),
         track: roomQueueTrack(item),
         // The row says who put it there, which the list shows as a colour.
         mine: String(item.addedBy || "") === String(room.me || ""),
@@ -541,7 +545,7 @@ function queueRow(projection, row) {
   const buttons = [];
   // What this device holds of the song: the queue says what will still play
   // when the server is out of reach.
-  const badge = heldBadge(row.track?.id || row.key);
+  const badge = heldBadge(row.track?.id || row.trackId || row.key);
   if (badge) buttons.push(badge);
   // The menu every song has, wherever it is listed: the track's own actions.
   if (row.track?.id) {
