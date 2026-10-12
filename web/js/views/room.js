@@ -9,7 +9,7 @@ import { state, saveLocal } from "../state.js";
 import { player } from "../player.js";
 import { artworkTile, trackMenu } from "./playlist.js";
 import { avatarFor, inviteFriendsToRoom } from "./share.js";
-import { listDrag, dragHandle, roomQueueTrack, titleClass, heldBadge, orderFromPlaying } from "./queue.js";
+import { listDrag, dragHandle, roomQueueTrack, titleClass, heldBadge, orderFromPlaying, roomRowSubtitle, artistLine } from "./queue.js";
 import {
   currentRoom,
   closedRoomReason,
@@ -165,11 +165,13 @@ function nowPlaying(room) {
     return section;
   }
   if (!current.started) {
+    const artists = artistLine(current.item);
     section.appendChild(
       h(
         "div",
         { class: "subtitle", style: { padding: "0 4px 8px" } },
         h("div", { class: "title", text: current.item.title }),
+        ...(artists ? [h("div", { text: artists })] : []),
         h("div", { text: "Starting…" })
       )
     );
@@ -179,10 +181,12 @@ function nowPlaying(room) {
   const line = h("div", { class: "subtitle" });
   positionLabel = line;
   const title = h("div", { class: "title", text: current.item.title });
+  const artists = artistLine(current.item);
+  const credit = artists ? h("div", { class: "subtitle", text: artists }) : null;
   const offlineNow = player.online && !player.online()
     ? h("div", { class: "subtitle", text: "Offline — playing what is on this device." })
     : null;
-  const text = h("div", { class: "grow" }, title, line, offlineNow);
+  const text = h("div", { class: "grow" }, title, credit, line, offlineNow);
   updateClock();
 
   const drives = mayDrive(room, room.me);
@@ -346,7 +350,7 @@ function queueRow(room, item, index, mine, draggable = false, playingNow = false
       h("div", { class: titleClass(!mine, own), text: item.title }),
       h("div", {
         class: "subtitle",
-        text: playingNow ? `playing now · queued by ${nameOf(room, item.addedBy)}` : `queued by ${nameOf(room, item.addedBy)}`,
+        text: roomRowSubtitle(item, room, playingNow),
       })
     ),
     heldBadge(String(item.trackId || "")),

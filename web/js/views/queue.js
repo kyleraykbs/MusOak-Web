@@ -59,6 +59,19 @@ export function artistLine(item) {
 }
 
 /**
+ * The line under a room queue row's title: the artist when the row knows one,
+ * then who put it there. Both of the room's lists build their subtitle here so
+ * they cannot drift apart.
+ */
+export function roomRowSubtitle(item, room, playingNow = false) {
+  const by = playingNow
+    ? `playing now · queued by ${nameOf(room, item.addedBy)}`
+    : `queued by ${nameOf(room, item.addedBy)}`;
+  const artists = artistLine(item);
+  return artists ? `${artists} · ${by}` : by;
+}
+
+/**
  * The list with one item moved: moveItem([a, b, c], 0, 2) is [b, c, a].
  *
  * A destination past either end lands at that end, and the result is a new
@@ -127,7 +140,7 @@ export function queueProjection({ room = null, showMaster = false, playerQueue =
         index: order.indexOf(String(item.id || "")),
         number: position + 1,
         title: item.title,
-        subtitle: `queued by ${nameOf(room, item.addedBy)}`,
+        subtitle: roomRowSubtitle(item, room),
         time: 0,
         artwork: String(item.artworkUrl || ""),
         playing: false,

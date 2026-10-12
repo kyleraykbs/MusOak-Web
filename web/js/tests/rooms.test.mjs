@@ -451,7 +451,7 @@ test("a queue change carries the room's order, and the room's wins", () => {
   const sage = { id: SAM, name: "Sage" };
   const k1 = item("k1", "first", KYLE);
   const k2 = item("k2", "second", KYLE);
-  const s1 = item("s1", "hers", SAM);
+  const s1 = { ...item("s1", "hers", SAM), artists: ["Sage"] };
   const state = {
     ...createRoomState({ roomId: "room-1", me: KYLE }),
     members: [kyle, sage],
@@ -470,6 +470,11 @@ test("a queue change carries the room's order, and the room's wins", () => {
     kept.masterQueue.map((entry) => entry.id),
     ["s1", "k1", "k2"],
     "the room's order is taken as it comes, not worked out again here"
+  );
+  assert.deepEqual(
+    kept.masterQueue[0].artists,
+    ["Sage"],
+    "the artist names ride along with the order they came in"
   );
 
   // A server that sends none: the client falls back to deriving one.

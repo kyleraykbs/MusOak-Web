@@ -101,6 +101,7 @@ export function normalizeItem(raw) {
     durationMs: num(source.durationMs),
     artworkUrl: str(source.artworkUrl),
     artistIds: list(source.artistIds).map(str),
+    artists: list(source.artists).map(str),
   };
 }
 

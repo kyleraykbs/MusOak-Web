@@ -10,7 +10,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { trackCountLine, totalDurationMs, radioEmptyReason } from "../views/playlist.js";
-import { artistLine, moveItem, queueProjection, shuffleItems } from "../views/queue.js";
+import { artistLine, moveItem, queueProjection, roomRowSubtitle, shuffleItems } from "../views/queue.js";
 import { createRoomState } from "../rooms-state.js";
 
 const track = (durationMs, index = 0) => ({
@@ -199,4 +199,27 @@ test("an empty station names the provider that had trouble", () => {
   // simply had nothing worth offering is not dressed up as a failure.
   assert.equal(radioEmptyReason({ tracks: [] }), "Nothing came back to build a radio from.");
   assert.equal(radioEmptyReason(undefined), "Nothing came back to build a radio from.");
+});
+
+test("a room row says the artist before who queued it", () => {
+  const room = createRoomState({
+    me: "m1",
+    members: [{ id: "m1", name: "Kyle" }],
+    queues: {},
+    masterQueue: [],
+    current: null,
+  });
+  const withArtist = { id: "q1", trackId: "t1", title: "Xtal", addedBy: "m1", artists: ["Aphex Twin"] };
+  assert.equal(roomRowSubtitle(withArtist, room), "Aphex Twin · queued by Kyle");
+  assert.equal(roomRowSubtitle(withArtist, room, true), "Aphex Twin · playing now · queued by Kyle");
+
+  // A row the server built before artists travelled with them shows only who
+  // queued it, rather than an empty lead.
+  const bare = { id: "q2", trackId: "t2", title: "Untitled", addedBy: "m1" };
+  assert.equal(roomRowSubtitle(bare, room), "queued by Kyle");
+
+  // The queue panel's rows are the same line, through the projection.
+  room.masterQueue = [withArtist];
+  const projection = queueProjection({ room, showMaster: true });
+  assert.equal(projection.rows[0].subtitle, "Aphex Twin · queued by Kyle");
 });
