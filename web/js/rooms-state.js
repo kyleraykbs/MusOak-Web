@@ -581,6 +581,13 @@ export function closeRoom(reason = "") {
   clearTimeout(resyncTimer);
   resyncTimer = 0;
   closedReason = str(reason);
+  // The room is over for this page, so the player is given back. Detaching the
+  // follower is not enough: it only unlinks the room (and the unmount path must
+  // not stop the music while the room is still being followed), so what the
+  // room put on would otherwise keep playing as if this page had chosen it -
+  // which is how a song from a room already left is heard in the next one.
+  if (plugin?.player?.inRoom?.()) plugin.player.clearRoom();
+  plugin?.player?.clear?.();
   try {
     connection.socket?.close?.();
   } catch {
@@ -980,6 +987,12 @@ async function followRoom(running) {
   if (!current?.item) {
     forgetTrack();
     running.advancedPast.clear();
+    // A room with nothing on is not a room whose song this page should keep
+    // wearing. What is on the element is whatever was there before - another
+    // room's song, or the user's own - and it is let go of rather than left
+    // sitting in the bar looking like this room's (and outliving every room
+    // after it). Unlinking the room is not enough: that leaves the audio.
+    if (player.current?.()) player.clear?.();
     if (!player.isPaused()) player.pause();
     return;
   }
@@ -1177,6 +1190,13 @@ async function advanceLocally(running, room, itemId) {
 function followOfflineRoom(running, room, { force = false } = {}) {
   const player = running.player;
   const order = list(room.masterQueue).filter((entry) => entry?.id && entry?.trackId);
+  // A song the room's order does not contain is not this room's: it is what was
+  // playing when this page arrived - another room's, or the user's own - and
+  // leaving it there is how a page is heard playing something the room knows
+  // nothing about. It is let go of, and the room's order decides from here.
+  const playing = str(player.current()?.id);
+  if (playing && !order.some((entry) => str(entry.trackId) === playing)) player.clear?.();
+
   if (!order.length) {
     if (!player.isPaused()) player.pause();
     return;

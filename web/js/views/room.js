@@ -152,7 +152,14 @@ function nowPlaying(room) {
       h("div", {
         class: "subtitle",
         style: { padding: "0 4px 8px" },
-        text: "Nothing playing yet — queue something from search.",
+        // A room with nothing on because nobody queued anything and a room with
+        // nothing on because its channel is down look identical, and they want
+        // opposite things: one wants a song, the other is already waiting. The
+        // state knows which one this is.
+        text:
+          room.connected === false
+            ? room.error || "The room's channel is down — reconnecting…"
+            : "Nothing playing yet — queue something from search.",
       })
     );
     return section;

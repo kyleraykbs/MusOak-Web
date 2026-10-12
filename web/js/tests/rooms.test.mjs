@@ -518,6 +518,58 @@ test("a song that has run out here moves the room on rather than stalling", asyn
   assert.equal(player.paused, false, "and this page is not left paused at the end of the old one");
 });
 
+test("leaving a room gives the player back", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const client = fakeClient({ memberId: KYLE });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1", rejoin: true });
+  const track = item("a1", "first", KYLE);
+  client.roomData = roomWith(track, { started: true });
+  client.calls.sockets[0].onEvent({ type: "playback", roomId: "room-1", seq: 1, data: { current: client.roomData.current } });
+  assert.ok(await waitFor(() => player.plays.length === 1), "the room's song is loaded");
+
+  let unlinked = false;
+  let stopped = false;
+  player.inRoom = () => true;
+  player.clearRoom = () => {
+    unlinked = true;
+  };
+  player.clear = () => {
+    stopped = true;
+  };
+  await leaveRoom();
+  assert.equal(unlinked, true, "the room stops owning the player");
+  assert.equal(stopped, true, "and what it put on is let go of, not left playing in the next room");
+});
+
+test("a room with nothing on lets go of the song the page was holding", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const first = item("a1", "first", KYLE);
+  const room = {
+    ...BASE_ROOM,
+    current: { item: first, positionMs: 0, atMs: Date.now(), started: true, paused: false, durationMs: 30000 },
+    queues: { [KYLE]: [first] },
+    masterQueue: [first],
+  };
+  const client = fakeClient({ room, memberId: SAM });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1", rejoin: true });
+  assert.ok(await waitFor(() => player.plays.length === 1), "the room's song is loaded");
+
+  // The room has nothing on (a fresh room, or one the server has not started):
+  // the song still on the element is not this room's, and it is not left there
+  // to look like it is.
+  let letGo = false;
+  player.clear = () => {
+    letGo = true;
+  };
+  client.roomData = { ...room, current: null };
+  client.calls.sockets[0].onEvent({ type: "playback", roomId: "room-1", seq: 2, data: { current: null } });
+  assert.ok(await waitFor(() => letGo), "a room that has nothing on is not heard playing something else");
+});
+
 test("a member loads the room's song and holds until the room starts it", async (t) => {
   t.after(closeRoom);
   const player = new FakePlayer();
