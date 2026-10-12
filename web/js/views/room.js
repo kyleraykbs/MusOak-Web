@@ -418,6 +418,13 @@ function watchPlayer() {
   if (hookedPlayer) return;
   hookedPlayer = true;
   player.on?.("position", () => updateClock());
+  // What this device holds is drawn on the room's rows, and a copy arriving (or
+  // starting) is not a room event: without this the room's own list wears the
+  // mark it was painted with until the next beat, while the player's queue -
+  // which listens - has already changed. That half-second of disagreement
+  // between the two lists is the whole of the "the icon updates in the queue
+  // menu first" report.
+  player.on?.("offline-changed", () => scheduleRedraw());
 }
 
 function startTicker() {
