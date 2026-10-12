@@ -446,6 +446,42 @@ function roomWith(track, { started = false, paused = false, positionMs: at = 0, 
   };
 }
 
+test("a queue change carries the room's order, and the room's wins", () => {
+  const kyle = { id: KYLE, name: "Kyle" };
+  const sage = { id: SAM, name: "Sage" };
+  const k1 = item("k1", "first", KYLE);
+  const k2 = item("k2", "second", KYLE);
+  const s1 = item("s1", "hers", SAM);
+  const state = {
+    ...createRoomState({ roomId: "room-1", me: KYLE }),
+    members: [kyle, sage],
+    queues: { [KYLE]: [k1, k2], [SAM]: [s1] },
+  };
+
+  // The server's order: sage's song first, then Kyle's two - which is not what
+  // a client working it out from the member queues in join order would say.
+  const kept = applyEvent(state, {
+    type: "queue_updated",
+    roomId: "room-1",
+    seq: 5,
+    data: { memberId: KYLE, memberQueue: [k1, k2], master: [s1, k1, k2] },
+  });
+  assert.deepEqual(
+    kept.masterQueue.map((entry) => entry.id),
+    ["s1", "k1", "k2"],
+    "the room's order is taken as it comes, not worked out again here"
+  );
+
+  // A server that sends none: the client falls back to deriving one.
+  const derived = applyEvent(state, {
+    type: "queue_updated",
+    roomId: "room-1",
+    seq: 6,
+    data: { memberId: KYLE, memberQueue: [k1, k2] },
+  });
+  assert.deepEqual(derived.masterQueue.map((entry) => entry.id), ["k1", "s1", "k2"]);
+});
+
 test("the “click the page once” hint does not outlive the playback it was about", async (t) => {
   t.after(closeRoom);
   const hint = "Your browser is holding playback: click the page once to start the sound.";

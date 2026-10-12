@@ -287,7 +287,13 @@ export function applyEvent(state, event) {
   switch (type) {
     case EVENTS.queueUpdated: {
       const queues = queuesFrom(state.queues, data);
-      return { ...state, ...stamp, queues, masterQueue: deriveMaster(queues, state.members) };
+      // The server's own order when it sends one, because the room's order is
+      // the server's to know: a client that works out its own comes out with a
+      // different answer the moment a queue is edited, and then it plays one
+      // song while the room plays another with each pulling the other back.
+      // Deriving is the fallback for a server that does not send one.
+      const master = Array.isArray(data.master) ? data.master.map(normalizeItem) : null;
+      return { ...state, ...stamp, queues, masterQueue: master || deriveMaster(queues, state.members) };
     }
 
     case EVENTS.memberJoined: {
