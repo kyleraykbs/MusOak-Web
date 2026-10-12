@@ -277,12 +277,21 @@ function queues(room) {
   // Both lists, side by side, the way the Queue page shows them: your songs and
   // the room's own play order. There is no toggle to forget, since neither list
   // can be hidden.
+  //
+  // The room's order now holds what comes next — the song on is held by the
+  // room itself, not the order — so the playing item is put back on top of the
+  // column, once, the way it has always looked.
+  const playing = room.current?.item;
+  const wholeWithCurrent =
+    playing && !whole.some((item) => String(item.id) === String(playing.id))
+      ? [playing, ...whole]
+      : whole;
   section.appendChild(
     h(
       "div",
       { class: "queue-panels" },
       queuePanel(room, "My songs", mine, true),
-      queuePanel(room, "Whole Room", whole, false)
+      queuePanel(room, "Whole Room", wholeWithCurrent, false)
     )
   );
   return section;
