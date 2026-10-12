@@ -46,6 +46,28 @@ globalThis.document = {
   },
 };
 
+test("the room's order reads from the song that is on", async () => {
+  const queue = await import("../views/queue.js");
+  const ids = (list) => list.map((item) => item.id);
+  const items = [{ id: "k1" }, { id: "s1" }, { id: "k2" }, { id: "s2" }, { id: "k3" }];
+
+  // The playing item stays in the order, in its place: the rows spell out the
+  // alternation the room is following, not the played prefix plus a gap where
+  // the playing song went.
+  const on = queue.orderFromPlaying(items, "s1");
+  assert.equal(on.at, 1);
+  assert.deepEqual(ids(on.items), ["s1", "k2", "s2", "k3"]);
+
+  // The playing song is the first of the order: nothing to skip.
+  assert.deepEqual(ids(queue.orderFromPlaying(items, "k1").items), ["k1", "s1", "k2", "s2", "k3"]);
+
+  // Not in this list (the room's song is not one of these): the list is what it is.
+  assert.equal(queue.orderFromPlaying(items, "elsewhere").at, -1);
+  assert.deepEqual(ids(queue.orderFromPlaying(items, "elsewhere").items), ["k1", "s1", "k2", "s2", "k3"]);
+  assert.equal(queue.orderFromPlaying(items, "").at, -1);
+  assert.deepEqual(queue.orderFromPlaying(null, "k1").items, []);
+});
+
 test("the held mark says what this device has, wherever it is drawn", async () => {
   const queue = await import("../views/queue.js");
   const { player } = await import("../player.js");

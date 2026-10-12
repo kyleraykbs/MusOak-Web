@@ -9,7 +9,7 @@ import { state, saveLocal } from "../state.js";
 import { player } from "../player.js";
 import { artworkTile, trackMenu } from "./playlist.js";
 import { avatarFor, inviteFriendsToRoom } from "./share.js";
-import { listDrag, dragHandle, roomQueueTrack, titleClass, heldBadge } from "./queue.js";
+import { listDrag, dragHandle, roomQueueTrack, titleClass, heldBadge, orderFromPlaying } from "./queue.js";
 import {
   currentRoom,
   closedRoomReason,
@@ -287,12 +287,19 @@ function queues(room) {
 /** One column of the room's queue: a heading, then its rows. Your own rows drag
  *  into order; the room's own play order is read only. */
 function queuePanel(room, heading, items, mine) {
-  // The queue is what is coming: the playing item has the card above it.
+  // The list reads from the song that is on. Everything before it has played,
+  // and drawing that prefix as the top of the queue is what made the room look
+  // like it was playing two of one member's songs before another member's turn;
+  // the playing row stays in the list, marked, so the order the room is really
+  // following - one from each member per pass - is what the rows spell out.
   const playing = String(room.current?.item?.id || "");
-  const upcoming = items.filter((item) => String(item.id || "") !== playing);
+  const ordered = orderFromPlaying(items, playing);
+  const upcoming = ordered.items;
   const list = h("div", { class: "list" });
-  const draggable = mine && upcoming.length > 1;
-  const rows = upcoming.map((item, position) => queueRow(room, item, position, mine, draggable));
+  const draggable = mine && upcoming.length > 1;   // the drop moves by id, so a sliced list is fine
+  const rows = upcoming.map((item, position) =>
+    queueRow(room, item, position, mine, draggable, ordered.at >= 0 && position === 0)
+  );
   rows.forEach((element) => list.appendChild(element));
   if (draggable) {
     const entries = upcoming.map((item) => ({ key: String(item.id || ""), item }));
@@ -324,20 +331,23 @@ function queuePanel(room, heading, items, mine) {
   );
 }
 
-function queueRow(room, item, index, mine, draggable = false) {
+function queueRow(room, item, index, mine, draggable = false, playingNow = false) {
   // Only the room's own order is coloured by who queued each song: every row of
   // your own list is yours, and reads normally.
   const own = String(item.addedBy || "") === String(room.me || "");
   const row = h(
     "div",
-    { class: "row", "data-key": String(item.id || "") },
-    h("span", { class: "time", text: String(index + 1) }),
+    { class: playingNow ? "row now" : "row", "data-key": String(item.id || "") },
+    h("span", { class: "time", text: playingNow ? "▶" : String(index + 1) }),
     artworkTile(currentClient(), item.artworkUrl),
     h(
       "div",
       { class: "grow" },
       h("div", { class: titleClass(!mine, own), text: item.title }),
-      h("div", { class: "subtitle", text: `queued by ${nameOf(room, item.addedBy)}` })
+      h("div", {
+        class: "subtitle",
+        text: playingNow ? `playing now · queued by ${nameOf(room, item.addedBy)}` : `queued by ${nameOf(room, item.addedBy)}`,
+      })
     ),
     heldBadge(String(item.trackId || "")),
     // The menu sits left of the remove button, the same way round as the

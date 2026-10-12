@@ -520,6 +520,23 @@ export function heldBadge(trackId) {
   );
 }
 
+/**
+ * The order read from the song that is on: rows start at the playing item, and
+ * what has already played is not shown as if it were next.
+ *
+ * The room's master keeps a played item until the next one begins (that is how
+ * the round-robin keeps its phase), so a list that draws the whole queue with
+ * the playing item pulled out shows the played prefix as the top of "upcoming" -
+ * which reads as the room playing two of somebody's songs before anybody else's
+ * turn. `at` is where the playing item sits, or -1 when it is not in the list.
+ */
+export function orderFromPlaying(items, playingId) {
+  const list = Array.isArray(items) ? items : [];
+  const id = String(playingId || "");
+  const at = id ? list.findIndex((item) => String(item?.id || "") === id) : -1;
+  return { items: at > 0 ? list.slice(at) : list, at };
+}
+
 function queueRow(projection, row) {
   const buttons = [];
   // What this device holds of the song: the queue says what will still play
