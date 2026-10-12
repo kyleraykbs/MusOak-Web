@@ -1,9 +1,14 @@
 // The playback engine and the now-playing bar.
 //
-// One audio element, one queue: a track is resolved to a source on the backend
-// and downloaded there before the element is pointed at it, so an advance has
-// nothing to wait for. Everything else in the app talks to the `player`
-// singleton and listens on player.on(...).
+// One audio element, one queue: a track is resolved to a source on the backend,
+// and the routed URL is handed to the element at once - the server streams a
+// variant it has not finished downloading, so nothing has to wait. The whole
+// file is downloaded in the background meanwhile, and when the page's own copy
+// of the track that is playing arrives the element is moved onto it, at the
+// same position, so the rest of the song plays out of memory. Waiting for the
+// backend to hold the file is only a fallback, for a variant the server cannot
+// stream. Everything else in the app talks to the `player` singleton and
+// listens on player.on(...).
 //
 // The file is importable without a DOM: the shell guards its own boot, and
 // nothing here touches the document until mountPlayer() is called.
@@ -27,6 +32,10 @@ export const PREFETCH = 3;
  * song after song, out of this page's own memory. Memory on purpose - nothing
  * here survives a reload, which is what keeping a playlist is for - and the
  * window is the whole budget.
+ *
+ * The window is also the bound on the in-memory map: a copy that arrives stays
+ * after its track leaves the window (see `_trimOffline`), but the map never
+ * holds more than this many entries at once.
  */
 export const OFFLINE_AHEAD = 50;
 /** How many of those are fetched at once: enough to keep ahead, not a flood. */
@@ -96,6 +105,25 @@ export function mediaStateLabel(state) {
       // "none" and anything unexpected: nothing worth saying.
       return "";
   }
+}
+
+/**
+ * Which source names a song whose copy this page holds.
+ *
+ * A local copy is played from memory, but the bar still says where the song
+ * came from (the pill, and the source picker behind it).  `known` is what the
+ * page resolved for the track — the same resolution that fetched the copy —
+ * and `variantId` the rendition the copy holds.  The exact rendition is the
+ * honest answer; failing that the song's own default; failing that any source
+ * of it, because naming the platform beats naming nothing.  `null` only when
+ * this page knows nothing about the track at all.
+ */
+export function memorySource(known, variantId) {
+  const sources = Array.isArray(known?.sources) ? known.sources : [];
+  return sources.find((source) => source.variantId === variantId)
+    || known?.source
+    || sources[0]
+    || null;
 }
 
 /** The current track and the next `count` ones: what stays downloaded. */
@@ -285,6 +313,10 @@ class Player {
 
     this._token = 0;              // which track the async work is still for
     this._loading = false;
+    // The streaming attempt for the current track: {token, trackId, variantId,
+    // autoplay, fellBack}. Non-null while the element holds the routed URL and
+    // has not yet failed it; `fellBack` stops the fallback repeating.
+    this._streaming = null;
     this._buffering = false;      // the file is here, the sound is not yet
     this._progress = 0;
     this._error = "";
@@ -416,6 +448,7 @@ class Player {
     this._progress = 0;
     this._error = "";
     this._pendingSeek = null;
+    this._streaming = null;
     this._stopAudio();
     this._releaseAllOffline();
     this._emit("queue-changed", this.queue);
@@ -1031,6 +1064,7 @@ class Player {
     this._installMediaSession();
     audio.addEventListener("playing", () => {
       this._blocked = false;
+      this._blockedError = "";
       this._wantResume(false);
     });
     if (typeof document !== "undefined") {
@@ -1044,6 +1078,11 @@ class Player {
     audio.volume = this._volume;
     audio.muted = this._muted;
     audio.addEventListener("timeupdate", () => {
+      // Sound that is moving is sound the browser is not holding back, however
+      // it got started: the flag behind the "click the page once" hint has no
+      // business outliving the playback it was about.
+      this._blocked = false;
+      this._blockedError = "";
       this._positionEvent();
       this.savePlayback();          // at most every SAVE_PLAYBACK_MS, and only on a change
     });
@@ -1082,6 +1121,16 @@ class Player {
     });
     audio.addEventListener("error", () => {
       if (!this._variant) return;
+      // The routed URL is given to the element before the backend holds the
+      // file, since the server streams it. If the element refuses it - the one
+      // trigger for the fallback: a variant this server cannot stream - wait
+      // for the backend's own download instead, and then play that.
+      const attempt = this._streaming;
+      if (attempt && !attempt.fellBack && attempt.token === this._token) {
+        attempt.fellBack = true;
+        this._streamFallback(attempt);
+        return;
+      }
       this._loading = false;
       this._buffering = false;
       // Offline, a file that will not play is a file this page does not have:
@@ -1144,7 +1193,18 @@ class Player {
     let resolved;
     try {
       if (fromMemory) {
-        resolved = { sources: [], preferredVariantId: kept.variantId, variantId: kept.variantId, source: null };
+        // The bytes are local, but the song still came from somewhere and the
+        // bar names it: a copy this page holds is *not* a song without a
+        // platform.  The resolution that fetched the copy is what this page
+        // knows about the track (see `_variantFor`), so the source comes from
+        // there rather than being dropped.
+        const known = this._variants.get(String(track.id || ""));
+        resolved = {
+          sources: Array.isArray(known?.sources) ? known.sources : [],
+          preferredVariantId: known?.preferredVariantId || "",
+          variantId: kept.variantId,
+          source: memorySource(known, kept.variantId),
+        };
       } else {
         resolved = variantId
           ? await this._resolveFixed(track, variantId)
@@ -1168,17 +1228,27 @@ class Player {
     this._variant = resolved.variantId;
     this.renderBar();
 
-    const status = fromMemory ? { state: "ready" } : await this._ready(resolved.variantId, token);
-    if (token !== this._token || status === null) return;
-    if (status.state === "failed") {
-      this._loading = false;
-      this._error = status.error || "that file could not be downloaded";
-      this._stateEvent();
-      if (!this.online()) this._skipUnavailable();
-      return;
+    if (fromMemory) {
+      // The copy is already here: nothing to stream and nothing to wait for.
+      this._streaming = null;
+      audio.src = kept.url;
+    } else {
+      // Stream, don't wait: the routed URL is playable before the backend has
+      // finished the file, because the server proxies the provider's bytes. The
+      // whole file is still downloaded in the background, so the page's own copy
+      // can take over mid-song (see `_swapToOffline`), and so offline play has
+      // something to keep. Waiting for the backend to hold it is the fallback
+      // only, and lives in the element's error handler (see `_streamFallback`).
+      this._streaming = {
+        token,
+        trackId: String(track.id || ""),
+        variantId: resolved.variantId,
+        autoplay: Boolean(autoplay),
+        fellBack: false,
+      };
+      this._startDownload(resolved.variantId);
+      audio.src = this._client().mediaUrl(resolved.variantId);
     }
-
-    audio.src = fromMemory ? kept.url : this._client().mediaUrl(resolved.variantId);
     this._loading = false;
     if (!autoplay) {
       // The file is here and the bar shows where it is; the moment is someone
@@ -1238,7 +1308,15 @@ class Player {
         source: sources.find((source) => source.variantId === variantId) || null,
       };
     } catch {
-      return { sources: [], preferredVariantId: "", variantId, source: null };
+      // The sources call failed: name the rendition from what the page already
+      // knows about the track rather than leaving the bar's pill blank.
+      const known = this._variants.get(String(track.id || ""));
+      return {
+        sources: Array.isArray(known?.sources) ? known.sources : [],
+        preferredVariantId: known?.preferredVariantId || "",
+        variantId,
+        source: memorySource(known, variantId),
+      };
     }
   }
 
@@ -1320,6 +1398,45 @@ class Player {
     }
   }
 
+  /**
+   * The routed URL would not play: wait for the backend to hold the whole file
+   * and then play that.
+   *
+   * This is the fallback the streaming path promises, and this is its only
+   * caller: the element's error handler, for a variant the server cannot
+   * stream. The poll lives here and nowhere else - playback that already
+   * started never runs one - and it stops as soon as the file is ready or the
+   * track changes.
+   */
+  async _streamFallback(attempt) {
+    const status = await this._ready(attempt.variantId, attempt.token);
+    if (attempt.token !== this._token || status === null) return;
+    if (status.state === "failed") {
+      this._loading = false;
+      this._error = status.error || "that file could not be downloaded";
+      this._stateEvent();
+      if (!this.online()) this._skipUnavailable();
+      return;
+    }
+    const audio = this.audio;
+    if (!audio) return;
+    audio.src = this._client().mediaUrl(attempt.variantId);
+    this._loading = false;
+    this._stateEvent();
+    this.renderBar();
+    if (!attempt.autoplay) return;
+    this._wantResume(true);
+    const started = audio.play();
+    if (started?.catch) {
+      started.catch((error) => {
+        this._blocked = true;
+        this._stateEvent();
+        this._blockedError = error?.message || "";
+      });
+    }
+    this._setBuffering(audio.readyState < 3);
+  }
+
   /** Ask the backend for a file, once. */
   _startDownload(variantId, client = null) {
     if (!variantId || this._started.has(variantId)) return;
@@ -1392,10 +1509,28 @@ class Player {
   keepOffline(tracks = []) {
     const wanted = (Array.isArray(tracks) ? tracks : []).filter((track) => track?.id).slice(0, OFFLINE_AHEAD);
     const ids = new Set(wanted.map((track) => String(track.id)));
-    for (const trackId of [...this._offline.keys()]) {
-      if (!ids.has(trackId)) this._releaseOffline(trackId);
-    }
     for (const track of wanted) this._queueOffline(track);
+    this._trimOffline(ids);
+  }
+
+  /**
+   * Bound the copies in memory without throwing away a finished download.
+   *
+   * A copy that has arrived outlives the look-ahead window: a song just played
+   * stays here, so stepping back costs nothing. The map is still bounded - to
+   * the window's own size - by dropping the oldest finished copies that are
+   * neither in the window nor the track now playing. A fetch in flight is never
+   * dropped: changing track must not cancel a download already under way.
+   */
+  _trimOffline(inWindow = new Set()) {
+    const over = this._offline.size - OFFLINE_AHEAD;
+    if (over <= 0) return;
+    const playing = String(this.current()?.id || "");
+    const drop = [...this._offline.entries()]
+      .filter(([id, entry]) => entry.state !== "pending" && !inWindow.has(id) && id !== playing)
+      .sort((left, right) => Number(left[1].at || 0) - Number(right[1].at || 0))
+      .slice(0, over);
+    for (const [id] of drop) this._releaseOffline(id);
   }
 
   _queueOffline(track) {
@@ -1442,12 +1577,15 @@ class Player {
       if (!response.ok) throw new Error(`media ${response.status}`);
       const blob = await response.blob();
       const entry = this._offline.get(trackId);
-      if (!entry) return;                        // the window moved on while fetching
+      if (!entry) return;                        // dropped on purpose, not by a track change
       entry.variantId = variantId;
       entry.url = URL.createObjectURL(blob);
       entry.bytes = blob.size;
       entry.state = "ready";
+      entry.at = Date.now();
       this._offlineBytes += blob.size;
+      // If this is the track on the element, the copy takes over right here.
+      this._swapToOffline(trackId);
     } catch {
       const entry = this._offline.get(trackId);
       if (entry && entry.state === "pending") {
@@ -1456,6 +1594,44 @@ class Player {
       }
     }
     this._emit("offline-changed", this.offlineSummary());
+  }
+
+  /**
+   * The page's own copy of the track on the element has just landed: play it.
+   *
+   * Only the track that is actually playing, and only its own rendition, so a
+   * copy arriving for a song already gone - or for a file this element is not
+   * playing - is kept but not swapped in. The direction is one way: once the
+   * element holds the copy it is never sent back to the routed URL. The exact
+   * position is kept, paused or not, so the hand-over is inaudible.
+   */
+  _swapToOffline(trackId) {
+    const audio = this.audio;
+    const id = String(trackId || "");
+    if (!audio || !id) return false;
+    const entry = this._offline.get(id);
+    if (!entry || entry.state !== "ready" || !entry.url) return false;
+    const track = this.current();
+    if (!track || String(track.id) !== id) return false;
+    if (!this._variant || entry.variantId !== this._variant) return false;
+    if (audio.src === entry.url) return false;     // already the copy; never swap back
+    const atMs = Math.max(0, Math.round((Number(audio.currentTime) || 0) * 1000));
+    const wasPaused = audio.paused !== false;
+    this._pendingSeek = atMs;
+    // The routed URL is no longer in play, so its fallback no longer applies.
+    this._streaming = null;
+    audio.src = entry.url;
+    if (wasPaused) return true;
+    this._wantResume(true);
+    const started = audio.play();
+    if (started?.catch) {
+      started.catch((error) => {
+        this._blocked = true;
+        this._stateEvent();
+        this._blockedError = error?.message || "";
+      });
+    }
+    return true;
   }
 
   /** Forget one song's copy, freeing the memory it held. */

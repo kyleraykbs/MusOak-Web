@@ -6,8 +6,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  albumLine, artistLine, documentKey, mediaStateLabel, nextIndex, playbackDocument,
-  playbackStateFrom, prefetchWindow, queueFromDocument, shouldSavePlayback, shuffleTail, player,
+  albumLine, artistLine, documentKey, mediaStateLabel, nextIndex, OFFLINE_AHEAD, playbackDocument,
+  memorySource, playbackStateFrom, prefetchWindow, queueFromDocument, shouldSavePlayback, shuffleTail, player,
 } from "../player.js";
 import {
   groupSources, netVotes, pickSource, sourceLabel,
@@ -445,14 +445,28 @@ test("the queue's next songs are kept in memory, and the window is the limit", a
     assert.equal(player.offlineSummary().ready, 3);
     assert.equal(player.offlineSummary().bytes, 3072);
 
-    // The window is what it keeps: a song that leaves it is freed.
-    const before = player.offlineSummary().ready;
+    // A copy that arrived outlives the window: a song the playhead has left is
+    // kept, so stepping back costs nothing.
     player.queue = queue("a");
     player.keepOffline(player.offlineWindow());
-    assert.equal(player.offlineState("b"), "none", "a song out of the window is released");
-    assert.equal(player.offlineState("c"), "none");
-    assert.equal(player.offlineSummary().ready, 1);
-    assert.ok(before === 3 && revoked.length === 2, `released ${revoked.length} of 2 copies`);
+    assert.equal(player.offlineState("b"), "ready", "a song out of the window is kept");
+    assert.equal(player.offlineState("c"), "ready");
+    assert.equal(player.offlineSummary().ready, 3);
+    assert.equal(revoked.length, 0, "nothing that had arrived was thrown away");
+
+    // The map is still bounded, to the window's own size: past that the oldest
+    // finished copies that are neither in the window nor playing are dropped.
+    player._offline = new Map();
+    for (let i = 0; i < OFFLINE_AHEAD + 5; i += 1) {
+      player._offline.set(`old-${i}`, { state: "ready", variantId: `v-old-${i}`, url: `blob:old-${i}`, bytes: 1, at: i });
+    }
+    player.queue = queue("playing");
+    player._index = 0;
+    player.keepOffline([track("playing")]);
+    assert.equal(player._offline.size, OFFLINE_AHEAD, "the map is bounded to the window's size");
+    assert.equal(player.offlineState("playing") === "ready" || player.offlineState("playing") === "pending", true);
+    assert.equal(player._offline.has("old-4"), false, "the oldest finished copy went first");
+    assert.equal(player._offline.has(`old-${OFFLINE_AHEAD + 4}`), true, "the newest finished copies stayed");
   } finally {
     player._queue = null;
     player.queue = saved.queue;
@@ -583,4 +597,264 @@ test("the transport still works when the room cannot be reached", () => {
     player._index = saved.index;
     player.setRoom(saved.room);
   }
+});
+
+// --- playing a track the device does not hold yet --------------------------
+
+test("a track the device does not hold streams from the routed URL, without waiting for the backend", async () => {
+  const saved = {
+    ensureAudio: player.ensureAudio,
+    audio: player.audio,
+    queue: player.queue,
+    index: player._index,
+    offline: player._offline,
+    bytes: player._offlineBytes,
+    sources: player._sources,
+    source: player._source,
+    variant: player._variant,
+    variantFor: player._variantFor,
+    client: player._client,
+    startDownload: player._startDownload,
+    prefetch: player._prefetch,
+    wantResume: player._wantResume,
+    ready: player._ready,
+    streaming: player._streaming,
+    room: player._room,
+  };
+  const played = [];
+  let waited = 0;
+  const audio = {
+    src: "",
+    currentTime: 0,
+    duration: 0,
+    paused: true,
+    readyState: 0,
+    removeAttribute() {},
+    load() {},
+    pause() {},
+    play() {
+      this.paused = false;
+      played.push(this.src);
+      return { catch() {} };
+    },
+  };
+  try {
+    player.setRoom(null);
+    player.ensureAudio = () => audio;
+    player.audio = audio;
+    player.queue = queue("a");
+    player._index = 0;
+    player._offline = new Map();
+    player._offlineBytes = 0;
+    player._variantFor = async (entry) => ({ variantId: `v-${entry.id}`, sources: [], preferredVariantId: "" });
+    // Waiting for the backend is the fallback, not the path: it must not run.
+    player._ready = async () => {
+      waited += 1;
+      throw new Error("the backend was waited for");
+    };
+    player._startDownload = () => {};
+    player._prefetch = () => {};
+    player._wantResume = () => {};
+    player._client = () => ({ mediaUrl: (variantId) => `/media/${variantId}` });
+
+    await player._load(0, { autoplay: true });
+
+    assert.equal(audio.src, "/media/v-a", "the routed URL is given to the element");
+    assert.deepEqual(played, ["/media/v-a"], "and it starts");
+    assert.equal(waited, 0, "nothing waited for the backend to hold the file");
+  } finally {
+    player.ensureAudio = saved.ensureAudio;
+    player.audio = saved.audio;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._offline = saved.offline;
+    player._offlineBytes = saved.bytes;
+    player._sources = saved.sources;
+    player._source = saved.source;
+    player._variant = saved.variant;
+    player._variantFor = saved.variantFor;
+    player._client = saved.client;
+    player._startDownload = saved.startDownload;
+    player._prefetch = saved.prefetch;
+    player._wantResume = saved.wantResume;
+    player._ready = saved.ready;
+    player._streaming = saved.streaming;
+    player.setRoom(saved.room);
+  }
+});
+
+test("when its copy lands mid-song the element is moved onto it, at the same position", async () => {
+  const saved = {
+    audio: player.audio,
+    queue: player.queue,
+    index: player._index,
+    offline: player._offline,
+    bytes: player._offlineBytes,
+    variant: player._variant,
+    variantFor: player._variantFor,
+    warm: player._warm,
+    client: player._client,
+    wantResume: player._wantResume,
+    streaming: player._streaming,
+    pendingSeek: player._pendingSeek,
+    room: player._room,
+    fetch: globalThis.fetch,
+    create: globalThis.URL.createObjectURL,
+  };
+  const played = [];
+  const audio = {
+    src: "/media/v-a",
+    currentTime: 42.5,
+    duration: 200,
+    paused: false,
+    ended: false,
+    readyState: 4,
+    removeAttribute() {},
+    load() {},
+    pause() {
+      this.paused = true;
+    },
+    play() {
+      this.paused = false;
+      played.push(this.src);
+      return { catch() {} };
+    },
+  };
+  try {
+    player.setRoom(null);
+    player.audio = audio;
+    player.queue = queue("a");
+    player._index = 0;
+    player._variant = "v-a";
+    // The routed URL is what plays, and the streaming attempt is the live one.
+    player._streaming = { token: player._token, trackId: "a", variantId: "v-a", autoplay: true, fellBack: false };
+    player._offline = new Map([["a", { state: "pending", variantId: "", url: "", bytes: 0, at: Date.now() }]]);
+    player._offlineBytes = 0;
+    player._variantFor = async () => ({ variantId: "v-a" });
+    player._warm = async () => true;
+    player._client = () => ({ mediaUrl: (variantId) => `/media/${variantId}` });
+    player._wantResume = () => {};
+    globalThis.URL.createObjectURL = () => "blob:a";
+    globalThis.fetch = async () => ({ ok: true, blob: async () => ({ size: 2048 }) });
+
+    await player._fetchOffline("a");
+
+    assert.equal(player.offlineState("a"), "ready");
+    assert.equal(audio.src, "blob:a", "the element was moved onto the copy");
+    assert.equal(player._pendingSeek, 42500, "at the exact position it had reached");
+    assert.deepEqual(played, ["blob:a"], "and carried on playing from there");
+  } finally {
+    player.audio = saved.audio;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._offline = saved.offline;
+    player._offlineBytes = saved.bytes;
+    player._variant = saved.variant;
+    player._variantFor = saved.variantFor;
+    player._warm = saved.warm;
+    player._client = saved.client;
+    player._wantResume = saved.wantResume;
+    player._streaming = saved.streaming;
+    player._pendingSeek = saved.pendingSeek;
+    player.setRoom(saved.room);
+    globalThis.fetch = saved.fetch;
+    globalThis.URL.createObjectURL = saved.create;
+  }
+});
+
+test("changing track does not abort a fetch in flight, and its bytes are kept", async () => {
+  const saved = {
+    queue: player.queue,
+    index: player._index,
+    offline: player._offline,
+    bytes: player._offlineBytes,
+    order: player._offlineOrder,
+    active: player._offlineActive,
+    variantFor: player._variantFor,
+    warm: player._warm,
+    client: player._client,
+    fetch: globalThis.fetch,
+    create: globalThis.URL.createObjectURL,
+    room: player._room,
+  };
+  let release = () => {};
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const signals = [];
+  try {
+    player.setRoom(null);
+    player.queue = queue("a", "b");
+    player._index = 0;
+    player._offline = new Map([
+      ["b", { state: "pending", variantId: "", url: "", bytes: 0, at: Date.now() }],
+    ]);
+    player._offlineBytes = 0;
+    player._offlineOrder = [];
+    player._offlineActive = 0;
+    player._variantFor = async (entry) => ({ variantId: `v-${entry.id}` });
+    player._warm = async () => true;
+    player._client = () => ({ mediaUrl: (variantId) => `/media/${variantId}` });
+    globalThis.URL.createObjectURL = () => "blob:kept";
+    globalThis.fetch = async (url, options) => {
+      signals.push(options?.signal);
+      await gate;
+      return { ok: true, blob: async () => ({ size: 512 }) };
+    };
+
+    const inFlight = player._fetchOffline("b");
+    // The track changes while the fetch is still going: the window no longer
+    // holds "b" at all.
+    player.queue = queue("z");
+    player._index = 0;
+    player.keepOffline([track("z")]);
+
+    assert.equal(player.offlineState("b"), "pending", "the fetch in flight is still under way");
+    assert.ok(player._offline.has("b"), "and its entry was not discarded");
+
+    release();
+    await inFlight;
+    await settle();
+
+    assert.equal(player.offlineState("b"), "ready", "its bytes were kept, not thrown away");
+    assert.ok(signals.length >= 1 && signals.every((signal) => signal === undefined), "nothing was given an AbortSignal");
+  } finally {
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._offline = saved.offline;
+    player._offlineBytes = saved.bytes;
+    player._offlineOrder = saved.order;
+    player._offlineActive = saved.active;
+    player._variantFor = saved.variantFor;
+    player._warm = saved.warm;
+    player._client = saved.client;
+    player.setRoom(saved.room);
+    globalThis.fetch = saved.fetch;
+    globalThis.URL.createObjectURL = saved.create;
+  }
+});
+
+test("a song played from this page's own copy still names its source", () => {
+  // The bar's pill says where the song came from; a local copy is not a song
+  // without a platform.  What the page resolved for the track - the resolution
+  // that fetched the copy - is what names it.
+  const sources = [
+    { variantId: "s1", provider: "spotify", official: true },
+    { variantId: "y2", provider: "ytmusic", official: true },
+  ];
+  const known = { sources, preferredVariantId: "s1", variantId: "y2", source: sources[0] };
+
+  // The copy's own rendition is the honest answer.
+  assert.equal(memorySource(known, "y2"), sources[1]);
+  // A rendition the page no longer lists falls back to the song's own default.
+  assert.equal(memorySource({ ...known, sources: [sources[0]] }, "y2"), sources[0]);
+  // ...and with no default either, to any source of it: the platform beats
+  // nothing.  (This is the case the pill was empty for.)
+  assert.equal(memorySource({ sources: [sources[0]] }, "gone"), sources[0]);
+  // Nothing known about the track at all: nothing to say.
+  assert.equal(memorySource(null, "y2"), null);
+  assert.equal(memorySource({ sources: [] }, "y2"), null);
+
+  // And it feeds the pill: the label is the provider, as everywhere else.
+  assert.equal(sourceLabel(memorySource(known, "y2")), "ytmusic");
 });
