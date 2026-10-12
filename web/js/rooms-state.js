@@ -5,10 +5,11 @@
 // the room as last described, applies the events that arrive, sends the
 // commands, and re-joins on its own when the socket drops.
 //
-// The host plays the mixed queue in its ordinary player and reports the
-// current entry, position and pause state once per second and on player
-// changes. Every other client loads a different room song and seeks only when
-// drift exceeds two seconds. Members choose their own playable version.
+// The server is the room's clock: it publishes the current song and position
+// about once a second and advances the queue on its own. Every member follows
+// the same way — load a different room song, seek only when drift exceeds two
+// seconds, and move on locally when the local file runs out before the room's
+// next tick. Members choose their own playable version.
 //
 // Anything that only computes is pure: `applyEvent` and `mergeSnapshot` return
 // a new state and never touch the one they were given, which is what lets the
@@ -121,8 +122,8 @@ export function normalizeMember(raw) {
  *
  * `positionMs` is the position at `atMs` on the server clock: while `started`
  * is true and `paused` is false the room is at
- * `positionMs + (serverNow - atMs)`. Until the host's player has begun the
- * song (`started` false) the room holds it at `positionMs`, which is zero.
+ * `positionMs + (serverNow - atMs)`. Until the room has begun the song
+ * (`started` false) the room holds it at `positionMs`, which is zero.
  */
 export function normalizeCurrent(raw) {
   if (!raw) return null;
@@ -135,9 +136,6 @@ export function normalizeCurrent(raw) {
     started: Boolean(raw.started),
     paused: Boolean(raw.paused),
     durationMs: num(raw.durationMs) || num(item.durationMs),
-    // Whose player is the room's clock: the host's, or the server's while the
-    // host is away.
-    drivenBy: str(raw.drivenBy) === "server" ? "server" : "host",
     votes: { ...(raw.votes || {}) },
     meanScore: num(raw.meanScore),
   };
@@ -406,18 +404,10 @@ export function mayDrive(state, memberId) {
   return state.controls === CONTROLS_EVERYONE || state.host === str(memberId);
 }
 
-/** Whether this member is the room's host: whose player is the room's clock. */
+/** Whether this member is the room's host: who may pause, skip or seek. */
 export function isHost(room) {
   const me = str(room && room.me);
   return Boolean(me) && me === str(room && room.host);
-}
-
-/**
- * Whose player is running the room: the host's, or the server's, which keeps
- * time while the host has gone away and hands it back when they return.
- */
-export function drivenBy(room) {
-  return str(room?.current?.drivenBy) === "server" ? "server" : "host";
 }
 
 /** One member's own queue: what they queued, in the order they want it. */
@@ -845,41 +835,14 @@ export function vote(score) {
   return command(({ client, roomId }) => client.roomVote(roomId, Math.round(num(score))));
 }
 
-/** Report the host's ordinary queue player. Position is sampled from the
- *  player; the server timestamps it and broadcasts it to followers. */
-function reportHostState(running, player, itemId, trackId) {
-  const connection = active;
-  if (!connection) return;
-  const ended = Boolean(itemId && player.hasEnded?.());
-  const currentItemId = ended ? "" : str(itemId);
-  const currentTrackId = currentItemId ? str(trackId) : "";
-  const paused = currentItemId ? Boolean(player.isPaused?.()) : true;
-  const started = currentItemId ? !paused : false;
-  const durationMs = currentItemId
-    ? Math.max(0, Math.round(player.measuredDurationMs?.() || player.durationMs?.() || 0))
-    : 0;
-  const key = `${currentItemId}|${currentTrackId}|${started}|${paused}|${durationMs}`;
-  const now = Date.now();
-  if (key === running.syncKey && now - running.lastSyncAt < 1000) return;
-  running.syncKey = key;
-  running.lastSyncAt = now;
-  connection.client.roomSync(connection.roomId, {
-    itemId: currentItemId,
-    trackId: currentTrackId,
-    positionMs: currentItemId ? Math.max(0, Math.round(player.positionMs?.() || 0)) : 0,
-    durationMs,
-    started,
-    paused,
-  }).catch(() => {
-    /* the next one-second sync retries */
-  });
-}
-
 // --- following the room with the player ------------------------------------
 //
-// The server broadcasts the host's sampled player state. Followers load a
-// different song and seek only when drift exceeds two seconds; the host's
-// ordinary queue is the room's mixed order and advances locally.
+// The server is the room's clock: it publishes the current song and position
+// about once a second and advances the queue on its own. Every member follows
+// the same way — load a different song, seek only when drift exceeds two
+// seconds, and, when the local file runs out before the room's next tick
+// arrives, move on to the next song of the room's order locally rather than
+// waiting. The "host" only decides who may pause, skip or seek.
 
 let plugin = null;
 
@@ -904,10 +867,11 @@ export function followWithPlayer(playbackPlayer) {
     resolving: "",
     failedItemId: "",
     failedAt: 0,
-    queueKey: null,
-    hostMode: false,
-    syncKey: "",
-    lastSyncAt: 0,
+    roomId: "",
+    // The item ids this client has moved past on its own. The server's tick
+    // lags by up to a second, so a `current` still naming one of these says
+    // nothing new and must not drag this member back onto it.
+    advancedPast: new Set(),
     syncing: false,
     pending: false,
   };
@@ -994,7 +958,6 @@ function forgetTrack() {
   plugin.resolving = "";
   plugin.failedItemId = "";
   plugin.failedAt = 0;
-  plugin.queueKey = null;
 }
 
 async function followRoom(running) {
@@ -1006,22 +969,17 @@ async function followRoom(running) {
     return;
   }
   ensureRoomMode(player, room);
-  const host = isHost(room);
-  if (running.hostMode !== host) {
-    running.hostMode = host;
-    running.queueKey = null;
-    running.itemId = "";
-    running.loadedItemId = "";
-    running.variantId = "";
-  }
-  if (host) {
-    followHost(running, room);
-    return;
+  // A different room is a different order: what this client advanced past in
+  // the last one says nothing here.
+  if (running.roomId !== room.roomId) {
+    running.roomId = room.roomId;
+    running.advancedPast.clear();
   }
 
   const current = room.current;
   if (!current?.item) {
     forgetTrack();
+    running.advancedPast.clear();
     if (!player.isPaused()) player.pause();
     return;
   }
@@ -1029,6 +987,12 @@ async function followRoom(running) {
   const trackId = str(item.trackId);
   const itemId = str(item.id) || trackId;
   if (!trackId) return;
+
+  // The room's tick lags by up to a second. A `current` still naming a song
+  // this member has already moved past locally says nothing new: the local
+  // player is ahead of it, and adopting it would thrash between the two.
+  if (running.advancedPast.has(itemId)) return;
+
   if (running.itemId !== itemId) {
     running.itemId = itemId;
     running.loadedItemId = "";
@@ -1037,6 +1001,14 @@ async function followRoom(running) {
     running.failedItemId = "";
     running.failedAt = 0;
     sayStep(`song:${itemId}`, `Room: ${item.title || "the next song"}`);
+  }
+  // The hint about a browser holding playback is only ever true while the
+  // player is paused. The sound starting clears it here, before this tick's own
+  // early returns can leave a "click the page once" sitting over a song that is
+  // playing - which is the one thing the notice must never become.
+  if (running.blockedSaid && !player.isPaused()) {
+    running.blockedSaid = false;
+    sayStatus("");
   }
   warmAhead(player, room, itemId);
 
@@ -1078,8 +1050,17 @@ async function followRoom(running) {
     sayStatus("Loading the track…");
     return;
   }
+
+  // The local file has played out while the room is still on this song. The
+  // client is self-advancing now, so it does not wait for the room's own next
+  // tick: it moves on to the next song of the room's order by itself.
+  const playing = current.started && !current.paused;
+  if (playing && player.hasEnded?.() && running.loadedItemId === itemId) {
+    advanceLocally(running, room, itemId).catch((error) => console.error("room advance failed", error));
+    return;
+  }
+
   if (!sameTrack || running.loadedItemId !== itemId) {
-    const playing = current.started && !current.paused;
     running.loadedItemId = itemId;
     player.playVariant(running.track || { id: trackId, title: item.title }, running.variantId, {
       positionMs: current.started ? positionMs(room, Date.now()) : 0,
@@ -1097,11 +1078,22 @@ async function followRoom(running) {
   const want = positionMs(room, Date.now());
   const measured = player.measuredDurationMs?.() || 0;
   if (measured > 0 && want >= measured) {
-    if (!player.isPaused()) player.pause();
+    // The song this page holds has run out. Pausing here and waiting for the
+    // room's own clock to catch up is the stall at the end of a song: the room
+    // starts its item at the boundary while this file starts a load later, and
+    // its length is the *file's* - a trimmed copy is shorter than the length the
+    // room was told - so this page reaches the end first, pauses a beat before
+    // the element would have ended, and the self-advance below (which waits for
+    // the file to end) never fires. The room is playing and this song is over
+    // here, so this page moves on by itself, exactly as it does when the file
+    // ends: the room's next tick either agrees or is a correction.
+    advanceLocally(running, room, itemId).catch((error) => console.error("room advance failed", error));
     return;
   }
   if (player.isPaused()) {
-    sayStatus(blockedHint(player));
+    const held = blockedHint(player);
+    running.blockedSaid = Boolean(held);
+    sayStatus(held);
     if (player.hasEnded?.()) player.seek(want);
     player.resume();
     return;
@@ -1112,44 +1104,65 @@ async function followRoom(running) {
   }
 }
 
-function followHost(running, room) {
+/**
+ * Move this member to the next song of the room's order without waiting for
+ * the room to say so. The song that just ended is remembered, so a server tick
+ * still naming it — the room has not advanced yet — is ignored rather than
+ * pulling the client back onto it.
+ */
+async function advanceLocally(running, room, itemId) {
   const player = running.player;
-  const master = list(room.masterQueue).filter((item) => item?.id && item?.trackId);
-  const currentItemId = str(room.current?.item?.id);
-  const currentIndex = master.findIndex((item) => item.id === currentItemId);
-  const items = currentIndex < 0
-    ? master
-    : [master[currentIndex], ...master.slice(0, currentIndex), ...master.slice(currentIndex + 1)];
-  const queueKey = items.map((item) => `${item.id}:${item.trackId}`).join("|");
-  if (running.queueKey !== queueKey) {
-    const localItemId = str(player.current()?.roomItemId);
-    const currentItemId = str(room.current?.item?.id);
-    const targetId = items.some((item) => item.id === localItemId) ? localItemId : currentItemId;
-    const targetPosition = targetId === currentItemId ? positionMs(room, Date.now()) : player.positionMs();
-    const autoplay = !room.current?.started || !room.current?.paused;
-    player.setRoomQueue(items.map((item) => ({
-      ...item,
-      id: str(item.trackId),
-      roomItemId: str(item.id),
-    })), targetId, { positionMs: targetPosition, autoplay });
-    running.queueKey = queueKey;
-  }
-  // The room's order is what plays offline here too, so its copies are kept.
-  player.keepOffline?.(items.map((item) => ({ id: str(item.trackId), title: item.title })));
+  // Mark the song as passed before anything else: every tick is racing the
+  // room's own advance, and the mark is what keeps the two from fighting.
+  running.advancedPast.add(itemId);
 
-  const track = player.current();
-  const itemId = str(track?.roomItemId);
-  const trackId = str(track?.id);
-  const current = room.current;
-  if (itemId && current?.item?.id === itemId) {
-    if (current.started && current.paused) {
-      if (!player.isPaused()) player.pause();
-    } else if (player.isPaused() && !player.state()?.loading && !player.hasEnded?.()) {
-      if (player.isBlocked?.()) sayStatus("Your browser is holding playback: click the page once to start the sound.");
-      player.resume();
-    }
+  const next = pendingQueue(room)[0];
+  if (!next || !str(next.trackId)) {
+    // Nothing left in the room's order: hold, quietly, until it moves.
+    if (!player.isPaused()) player.pause();
+    return;
   }
-  reportHostState(running, player, itemId, trackId);
+
+  const trackId = str(next.trackId);
+  const nextId = str(next.id) || trackId;
+  running.itemId = nextId;
+  running.loadedItemId = "";
+  running.variantId = "";
+  running.track = null;
+  running.failedItemId = "";
+  running.failedAt = 0;
+  sayStep(`song:${nextId}`, `Room: ${next.title || "the next song"}`);
+  warmAhead(player, room, nextId);
+
+  if (!player.online?.()) {
+    followOfflineRoom(running, room, { force: true });
+    return;
+  }
+
+  if (running.resolving === trackId) return;
+  running.resolving = trackId;
+  sayStatus("Finding a source…");
+  let variant = "";
+  let track = null;
+  try {
+    [variant, track] = await Promise.all([resolveVariant(trackId, player), loadTrack(active, trackId)]);
+  } finally {
+    if (plugin === running) running.resolving = "";
+  }
+  if (plugin !== running || running.itemId !== nextId) return;
+  running.track = track;
+  running.variantId = variant;
+  if (!variant) {
+    running.failedItemId = nextId;
+    running.failedAt = Date.now();
+    sayStatus("That song could not be found.");
+    return;
+  }
+  running.loadedItemId = nextId;
+  player.playVariant(running.track || { id: trackId, title: next.title }, running.variantId, {
+    positionMs: 0,
+    autoplay: true,
+  });
 }
 
 /**
@@ -1208,7 +1221,10 @@ function ensureRoomMode(player, room) {
   player.setRoom({
     roomId: room.roomId,
     name: room.name,
-    hostPlayback: isHost(room),
+    // The server is the room's clock now, so no member's player owns the
+    // advance: a skip asks the room, and the local file running out is handled
+    // by the following layer above.
+    hostPlayback: false,
     onAdd: (tracks) => Promise.resolve().then(() => enqueueMany(tracks)).catch(() => {}),
     mayDrive: () => {
       const live = currentRoom();

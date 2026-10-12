@@ -409,7 +409,7 @@ function offlineLine() {
   return h("div", {
     class: `offline-line${summary.online ? "" : " offline"}`,
     text: summary.online
-      ? `Kept on this device: ${parts.join(" · ")}`
+      ? `In memory, on device: ${parts.join(" · ")}`
       : `Offline — playing from this device (${parts.join(", ")})`,
   });
 }
@@ -509,8 +509,8 @@ function queueRow(projection, row) {
         "span",
         {
           class: `held ${held}`,
-          title: kept ? "Kept on this device" : "Downloading to this device",
-          "aria-label": kept ? "kept on this device" : "downloading to this device",
+          title: kept ? "In memory, on device" : "Downloading to this device",
+          "aria-label": kept ? "in memory, on device" : "downloading to this device",
         },
         icon(kept ? "cloud" : "download", 14)
       )

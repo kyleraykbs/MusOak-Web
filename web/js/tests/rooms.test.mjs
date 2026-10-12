@@ -24,6 +24,7 @@ import {
   leaveRoom,
   pause,
   followWithPlayer,
+  setStatusNotice,
 } from "../rooms-state.js";
 
 const KYLE = "member-kyle";
@@ -134,7 +135,7 @@ test("the playback event replaces the song, and drops the one it left", () => {
     data: { current: { item: item("b1", "sam one", SAM), positionMs: 0, atMs: 3000, started: false, paused: true, durationMs: 30000 } },
   });
   assert.equal(advanced.current.item.id, "b1");
-  assert.equal(advanced.current.started, false, "the next song waits for the host");
+  assert.equal(advanced.current.started, false, "the next song waits for the room");
   assert.deepEqual(
     advanced.queues[KYLE].map((entry) => entry.id),
     ["a2"]
@@ -168,10 +169,10 @@ test("the room's position ages from its anchor, and stops when paused", () => {
     id: "room-1",
     current: { item: item("a1", "first", KYLE), positionMs: 0, atMs: 0, started: false, paused: false, durationMs: 30000 },
   });
-  assert.equal(positionMs(held, 999999), 0, "a song the host has not begun waits at zero");
+  assert.equal(positionMs(held, 999999), 0, "a song the room has not begun waits at zero");
 });
 
-test("the host is the one whose player is the clock", () => {
+test("the host decides who may drive, and nothing about the clock", () => {
   const room = twoMemberRoom();
   assert.equal(isHost(room), true, "kyle hosts it");
   assert.equal(mayDrive(room, KYLE), true);
@@ -193,6 +194,8 @@ test("the small helpers read the room as the views do", () => {
   assert.equal(driftDecision(0, 1000), "hold");
   assert.equal(driftDecision(0, 5000), "forward");
   assert.equal(driftDecision(9000, 5000), "back");
+  assert.equal(driftDecision(2000, 0), "hold", "exactly the tolerance is close enough");
+  assert.equal(driftDecision(2001, 0), "back", "a hair past it is corrected");
   assert.equal(offsetFrom(100, 300, 200), 0, "a symmetric trip is no offset");
 });
 
@@ -215,13 +218,14 @@ test("the clock offset ignores the heartbeat's untimed pong", () => {
   assert.equal(state.serverOffsetMs, 999, "serverReceived - (sent + received)/2");
 });
 
-// --- the follower ----------------------------------------------------------
+// --- following the room ----------------------------------------------------
 //
-// The rule: a different song is loaded, the same song within two seconds is
-// left alone, the same song further out is seeked. The host adds the two words
-// the room cannot know otherwise.
+// The rule, the same for every member: a different song is loaded, the same
+// song within two seconds is left alone, the same song further out is seeked,
+// and when the local file runs out before the room's next tick the member
+// advances to the next song of the room's order on its own.
 
-const HOST_ROOM = {
+const BASE_ROOM = {
   id: "room-1",
   name: "kitchen",
   host: KYLE,
@@ -233,8 +237,8 @@ const HOST_ROOM = {
   memberCount: 2,
 };
 
-function fakeClient({ room = HOST_ROOM, memberId = KYLE } = {}) {
-  const calls = { joins: [], commands: [], syncs: [], leaves: [], sockets: [], snapshots: 0 };
+function fakeClient({ room = BASE_ROOM, memberId = KYLE } = {}) {
+  const calls = { joins: [], commands: [], leaves: [], sockets: [], snapshots: 0 };
   const client = {
     memberId,
     calls,
@@ -257,10 +261,6 @@ function fakeClient({ room = HOST_ROOM, memberId = KYLE } = {}) {
       };
       calls.sockets.push(socket);
       return socket;
-    },
-    roomSync(roomId, state) {
-      calls.syncs.push({ roomId, state });
-      return Promise.resolve();
     },
     roomPause(roomId) {
       calls.commands.push({ name: "roomPause", args: [roomId] });
@@ -405,32 +405,6 @@ class FakePlayer {
     this.plays.push({ track: this.queue[0], variantId: "offline", positionMs: 0, autoplay: true });
     return true;
   }
-  setRoomQueue(tracks, currentItemId = "", { positionMs = 0, autoplay = true } = {}) {
-    const old = this.current();
-    const list = Array.isArray(tracks) ? tracks : [];
-    if (!list.length) {
-      this.queue = [];
-      this.index = -1;
-      this.paused = true;
-      this.ended = false;
-      this.emit("track-changed");
-      return;
-    }
-    let index = currentItemId ? list.findIndex((entry) => entry.roomItemId === currentItemId) : 0;
-    if (index < 0) index = 0;
-    const target = list[index];
-    const same = old?.roomItemId && old.roomItemId === target.roomItemId;
-    this.queue = list;
-    this.index = index;
-    if (!same) {
-      this.position = positionMs;
-      this.paused = !autoplay;
-      this.ended = false;
-      this.duration = target.durationMs || this.duration;
-      this.variant = "v-default";
-    }
-    this.emit("track-changed");
-  }
 
   durationMs() {
     return this.measuredDurationMs();
@@ -438,15 +412,6 @@ class FakePlayer {
 
   isPlaying() {
     return !this.paused && !this.ended;
-  }
-
-  next() {
-    if (!this.room?.hostPlayback || this.index + 1 >= this.queue.length) return;
-    this.index += 1;
-    this.position = 0;
-    this.paused = false;
-    this.ended = false;
-    this.emit("track-changed");
   }
 
   clearRoom() {
@@ -474,14 +439,86 @@ async function waitFor(predicate, timeoutMs = 3000) {
 /** The room document with one song up, started or not. */
 function roomWith(track, { started = false, paused = false, positionMs: at = 0, atMs = Date.now() } = {}) {
   return {
-    ...HOST_ROOM,
+    ...BASE_ROOM,
     current: { item: track, positionMs: at, atMs, started, paused, durationMs: 30000 },
     masterQueue: [track],
     queues: { [KYLE]: [track] },
   };
 }
 
-test("a follower loads the room's song and holds until the host starts it", async (t) => {
+test("the “click the page once” hint does not outlive the playback it was about", async (t) => {
+  t.after(closeRoom);
+  const hint = "Your browser is holding playback: click the page once to start the sound.";
+  const notices = [];
+  const off = setStatusNotice((message) => notices.push(message));
+  t.after(off);
+
+  const player = new FakePlayer();
+  player.isBlocked = () => player.blocked;
+  const client = fakeClient({ memberId: SAM });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1", rejoin: true });
+
+  const track = item("a1", "first", KYLE);
+  client.roomData = roomWith(track, { started: true, positionMs: 500, atMs: Date.now() });
+  const socket = client.calls.sockets[0];
+  socket.onEvent({ type: "playback", roomId: "room-1", seq: 1, data: { current: client.roomData.current } });
+  assert.ok(await waitFor(() => player.plays.length === 1), "the room's song is loaded");
+
+  // The browser refuses to start the sound, so the page says so: paused, and
+  // holding. That is the one state this hint is for.
+  player.paused = true;
+  player.blocked = true;
+  socket.onEvent({ type: "playback", roomId: "room-1", seq: 2, data: { current: client.roomData.current } });
+  assert.ok(await waitFor(() => notices.includes(hint)), `the hint is said while playback is held: ${JSON.stringify(notices)}`);
+
+  // The click lands and the sound goes, and the file then plays out locally
+  // while the room is still naming it: the client advances by itself, so this
+  // tick takes the self-advance path and never reaches the line that clears the
+  // hint. A page that is playing must not wear a hint saying the browser is
+  // holding it.
+  player.paused = false;
+  player.blocked = false;
+  player.ended = true;
+  socket.onEvent({ type: "playback", roomId: "room-1", seq: 3, data: { current: client.roomData.current } });
+  assert.ok(
+    await waitFor(() => notices.at(-1) === ""),
+    `the hint is cleared once the song is playing, got ${JSON.stringify(notices.at(-1))}`
+  );
+});
+
+test("a song that has run out here moves the room on rather than stalling", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const first = item("a1", "first", KYLE);
+  const second = item("b1", "second", SAM);
+  const room = {
+    ...BASE_ROOM,
+    // The room's clock is well past the end of the file this page holds: its
+    // item is longer than the copy that plays it.
+    current: { item: first, positionMs: 40000, atMs: Date.now(), started: true, paused: false, durationMs: 30000 },
+    queues: { [KYLE]: [first], [SAM]: [second] },
+    masterQueue: [first, second],
+  };
+  const client = fakeClient({ room, memberId: SAM });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1", rejoin: true });
+  assert.ok(
+    await waitFor(() => player.plays.length === 1 && player.current()?.id === first.trackId),
+    "the room's song is loaded"
+  );
+
+  // The page reaches the end of its own copy before the room's own boundary.
+  // Pausing here and waiting for the room is the stall at the end of a song;
+  // the page goes on to the next song of the room's order instead.
+  player.measured = 30000;
+  player.emit("position");
+  assert.ok(await waitFor(() => player.plays.length === 2), "the next song of the room's order is started");
+  assert.equal(player.plays[1].track.id, second.trackId, "it is the next song in the room's order");
+  assert.equal(player.paused, false, "and this page is not left paused at the end of the old one");
+});
+
+test("a member loads the room's song and holds until the room starts it", async (t) => {
   t.after(closeRoom);
   const player = new FakePlayer();
   const client = fakeClient({ memberId: SAM });
@@ -493,20 +530,19 @@ test("a follower loads the room's song and holds until the host starts it", asyn
   client.calls.sockets[0].onEvent({ type: "playback", roomId: "room-1", seq: 1, data: { current: client.roomData.current } });
 
   assert.ok(await waitFor(() => player.plays.length === 1), "the room's song is loaded");
-  assert.equal(player.plays[0].autoplay, false, "a follower holds the song for the host");
+  assert.equal(player.plays[0].autoplay, false, "a member holds the song until the room starts it");
   assert.equal(player.plays[0].positionMs, 0);
-  assert.equal(client.calls.syncs.length, 0, "a follower never reports host state");
 
-  // The host begins it a moment in: the follower's file is already here, and
+  // The room begins it a moment in: the member's file is already here, and
   // the room is close enough that resuming is all that is wanted.
   client.roomData = roomWith(track, { started: true, positionMs: 500, atMs: Date.now() });
   client.calls.sockets[0].onEvent({ type: "playback", roomId: "room-1", seq: 2, data: { current: client.roomData.current } });
-  assert.ok(await waitFor(() => player.paused === false), "the held file plays once the host has started");
+  assert.ok(await waitFor(() => player.paused === false), "the held file plays once the room has started it");
   assert.equal(player.plays.length, 1, "and it is the file already loaded, not a second one");
   assert.equal(player.seeks.length, 0, "half a second out is close enough");
 });
 
-test("a follower does not restart the same room item while its file loads", async (t) => {
+test("a member does not restart the same room item while its file loads", async (t) => {
   t.after(closeRoom);
   const player = new FakePlayer();
   player.deferLoad = true;
@@ -543,8 +579,7 @@ test("the same track in a new room queue entry reloads from its new position", a
   socket.onEvent({ type: "playback", roomId: "room-1", seq: 2, data: { current: client.roomData.current } });
   assert.ok(await waitFor(() => player.plays.length === 2), "a second queue copy starts a new local playback");
   assert.equal(player.plays[1].track.id, first.trackId);
-  assert.equal(player.plays[1].positionMs, 0);
-  assert.equal(client.calls.syncs.length, 0, "followers never send host state");
+  assert.ok(player.plays[1].positionMs < 1000, `the new copy starts at the room's start (${player.plays[1].positionMs}ms in)`);
 });
 
 test("a follower arriving at a running song starts where the room is", async (t) => {
@@ -561,7 +596,6 @@ test("a follower arriving at a running song starts where the room is", async (t)
   assert.ok(await waitFor(() => player.plays.length === 1), "the running song is loaded");
   assert.equal(player.plays[0].autoplay, true, "a running song is played, not held");
   assert.ok(player.plays[0].positionMs >= 5000, `loaded at the room's position (${player.plays[0].positionMs})`);
-  assert.equal(client.calls.syncs.length, 0, "joining a running song does not report host state");
 });
 
 test("a follower seeks when it is more than two seconds off, and not before", async (t) => {
@@ -592,67 +626,106 @@ test("a follower seeks when it is more than two seconds off, and not before", as
   assert.ok(player.seeks[0] >= 5000, `seeked to the room (${player.seeks[0]})`);
 });
 
-test("the host plays the generated mixed queue and syncs its local advance", async (t) => {
+test("a correction over two seconds seeks the member onto the room's position", async (t) => {
   t.after(closeRoom);
   const player = new FakePlayer();
-  const first = item("a1", "host first", KYLE);
-  const guestFirst = item("b1", "guest first", SAM);
-  const hostSecond = item("a2", "host second", KYLE);
-  const guestSecond = item("b2", "guest second", SAM);
-  const room = {
-    ...HOST_ROOM,
-    current: { item: guestFirst, positionMs: 0, atMs: Date.now(), started: false, paused: true, durationMs: 30000 },
-    queues: { [KYLE]: [first, hostSecond], [SAM]: [guestFirst] },
-    masterQueue: [first, guestFirst, hostSecond],
-  };
-  const client = fakeClient({ room, memberId: KYLE });
+  const client = fakeClient({ memberId: SAM });
   t.after(followWithPlayer(player));
   await enterRoom({ client, roomId: "room-1", rejoin: true });
+  const track = item("a1", "first", KYLE);
+  const socket = client.calls.sockets[0];
 
-  assert.ok(await waitFor(() => client.calls.syncs.some(({ state }) => state.itemId === guestFirst.id)));
-  assert.deepEqual(player.queue.map((entry) => entry.roomItemId), ["b1", "a1", "a2"]);
-  const firstSync = client.calls.syncs.find(({ state }) => state.itemId === guestFirst.id).state;
-  assert.equal(firstSync.trackId, guestFirst.trackId);
-  assert.equal(firstSync.started, true);
-  assert.equal(firstSync.paused, false);
+  client.roomData = roomWith(track, { started: true, positionMs: 0, atMs: Date.now() });
+  socket.onEvent({ type: "playback", roomId: "room-1", seq: 1, data: { current: client.roomData.current } });
+  await waitFor(() => player.plays.length === 1);
 
-  client.calls.sockets[0].onEvent({
-    type: "queue_updated", roomId: "room-1", seq: 1,
-    data: { memberId: SAM, memberQueue: [guestFirst, guestSecond] },
-  });
-  assert.ok(await waitFor(() => player.queue.length === 4), "the mixed room queue updates the host's queue");
-  assert.deepEqual(player.queue.map((entry) => entry.roomItemId), ["b1", "a1", "a2", "b2"]);
-
-  const beforeAdvance = client.calls.syncs.length;
-  assert.equal(player.room?.hostPlayback, true);
-  assert.equal(player.index, 0);
-  player.next();
-  assert.equal(player.current().roomItemId, first.id);
-	assert.ok(await waitFor(() => client.calls.syncs.slice(beforeAdvance).some(({ state }) => state.itemId === first.id)));
-  const advanced = client.calls.syncs.findLast(({ state }) => state.itemId === first.id).state;
-  assert.equal(advanced.trackId, first.trackId);
-  assert.equal(advanced.positionMs, 0);
+  // The local playhead is at the start; the room is five seconds in.
+  player.position = 0;
+  client.roomData = roomWith(track, { started: true, positionMs: 5000, atMs: Date.now() });
+  socket.onEvent({ type: "playback", roomId: "room-1", seq: 2, data: { current: client.roomData.current } });
+  assert.ok(await waitFor(() => player.seeks.length === 1), "a drift over two seconds is corrected");
+  assert.ok(player.seeks[0] >= 5000, `seeked onto the room's position (${player.seeks[0]})`);
 });
 
-test("the host reports an empty queue item when its last file ends", async (t) => {
+test("a drift of two seconds or less is left alone", async (t) => {
   t.after(closeRoom);
   const player = new FakePlayer();
-  const only = item("a1", "last", KYLE);
-  const room = {
-    ...HOST_ROOM,
-    current: { item: only, positionMs: 0, atMs: Date.now(), started: false, paused: true, durationMs: 30000 },
-    queues: { [KYLE]: [only], [SAM]: [] },
-    masterQueue: [only],
-  };
-  const client = fakeClient({ room, memberId: KYLE });
+  const client = fakeClient({ memberId: SAM });
   t.after(followWithPlayer(player));
   await enterRoom({ client, roomId: "room-1", rejoin: true });
-  assert.ok(await waitFor(() => client.calls.syncs.some(({ state }) => state.itemId === only.id)));
+  const track = item("a1", "first", KYLE);
+  const socket = client.calls.sockets[0];
 
+  client.roomData = roomWith(track, { started: true, positionMs: 0, atMs: Date.now() });
+  socket.onEvent({ type: "playback", roomId: "room-1", seq: 1, data: { current: client.roomData.current } });
+  await waitFor(() => player.plays.length === 1);
+
+  // A second or so out: inside the tolerance, so the local playhead is kept.
+  player.position = 1000;
+  client.roomData = roomWith(track, { started: true, positionMs: 0, atMs: Date.now() });
+  socket.onEvent({ type: "playback", roomId: "room-1", seq: 2, data: { current: client.roomData.current } });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(player.seeks.length, 0, "within the tolerance the local playhead is left where it is");
+});
+
+test("a change of the room's current song loads that song", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const client = fakeClient({ memberId: SAM });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1", rejoin: true });
+  const first = item("a1", "first", KYLE);
+  const second = item("b1", "second", SAM);
+  const socket = client.calls.sockets[0];
+
+  client.roomData = roomWith(first, { started: true });
+  socket.onEvent({ type: "playback", roomId: "room-1", seq: 1, data: { current: client.roomData.current } });
+  assert.ok(await waitFor(() => player.plays.length === 1));
+  assert.equal(player.current().id, first.trackId);
+
+  client.roomData = roomWith(second, { started: true });
+  socket.onEvent({ type: "playback", roomId: "room-1", seq: 2, data: { current: client.roomData.current } });
+  assert.ok(await waitFor(() => player.plays.length === 2), "the room's new song is loaded");
+  assert.equal(player.plays[1].track.id, second.trackId);
+});
+
+test("when its file ends, the member advances locally and keeps playing", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const first = item("a1", "first", KYLE);
+  const second = item("b1", "second", SAM);
+  const room = {
+    ...BASE_ROOM,
+    current: { item: first, positionMs: 0, atMs: Date.now(), started: true, paused: false, durationMs: 30000 },
+    queues: { [KYLE]: [first], [SAM]: [second] },
+    masterQueue: [first, second],
+  };
+  const client = fakeClient({ room, memberId: SAM });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1", rejoin: true });
+  assert.ok(await waitFor(() => player.plays.length === 1 && player.current()?.id === first.trackId));
+
+  // The local file has played out while the room still says this song: the
+  // member does not wait for the room, it moves to the next song by itself.
   player.ended = true;
   player.emit("position");
-  assert.ok(await waitFor(() => client.calls.syncs.some(({ state }) => state.itemId === "")));
+  assert.ok(await waitFor(() => player.plays.length === 2), "the next song of the room's order is loaded");
+  assert.equal(player.plays[1].track.id, second.trackId);
+  assert.equal(player.plays[1].positionMs, 0);
+  assert.equal(player.plays[1].autoplay, true);
+  assert.equal(player.paused, false, "and it keeps playing");
+
+  // The room's own tick lags by up to a second and still names the song we
+  // left. It must not drag the member back onto it.
+  client.calls.sockets[0].onEvent({
+    type: "playback", roomId: "room-1", seq: 2,
+    data: { current: { item: first, positionMs: 0, atMs: Date.now(), started: true, paused: false, durationMs: 30000 } },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(player.plays.length, 2, "a stale current does not reload the played song");
+  assert.equal(player.current().id, second.trackId, "and the member stays on the next song");
 });
+
 test("an idle room stops this client's player", async (t) => {
   t.after(closeRoom);
   const player = new FakePlayer();
@@ -666,7 +739,7 @@ test("an idle room stops this client's player", async (t) => {
   socket.onEvent({ type: "playback", roomId: "room-1", seq: 1, data: { current: client.roomData.current } });
   await waitFor(() => player.plays.length === 1 && player.paused === false);
 
-  client.roomData = { ...HOST_ROOM, current: null, masterQueue: [], queues: {} };
+  client.roomData = { ...BASE_ROOM, current: null, masterQueue: [], queues: {} };
   socket.onEvent({ type: "playback", roomId: "room-1", seq: 2, data: { current: null } });
   assert.ok(await waitFor(() => player.paused === true), "nothing playing means nothing playing here");
 });
@@ -703,7 +776,7 @@ function offlineRoom() {
   const second = item("b1", "second", SAM);
   const third = item("c1", "third", KYLE);
   const room = {
-    ...HOST_ROOM,
+    ...BASE_ROOM,
     current: { item: first, positionMs: 0, atMs: Date.now(), started: true, paused: false, durationMs: 30000 },
     queues: { [KYLE]: [first, third], [SAM]: [second] },
     masterQueue: [first, second, third],

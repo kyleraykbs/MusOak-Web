@@ -1,7 +1,7 @@
 // The room you are in: who is here, what is playing, and the queue.
 //
 // This view reads the room from rooms-state.js, which applies the socket events
-// and keeps the shared player within two seconds of the host's queue position.
+// and keeps the shared player within two seconds of the room's position.
 
 import { h, mount, clear, popover, toast, fmtDuration, icon, iconButton, scheduleFrame } from "../dom.js";
 import { registerView, navigate, banner, currentClient, on, requireLogin } from "../app.js";
@@ -15,12 +15,10 @@ import {
   closedRoomReason,
   subscribe,
   leaveRoom,
-  drivenBy,
   refreshRoom,
   myQueue,
   nameOf,
   mayDrive,
-  isHost,
   positionMs,
   durationMs,
   remove,
@@ -51,9 +49,9 @@ let unsubscribe = null;
 let hookedPlayer = false;
 let positionLabel = null;
 
-// Loaded with the app, this view attaches the shared player to the room. The
-// host plays the mixed queue as its normal queue; every other member follows
-// the host's current song and position wherever they navigate.
+// Loaded with the app, this view attaches the shared player to the room. Every
+// member follows the room's current song and position the same way wherever
+// they navigate; the server is the clock.
 followWithPlayer(player);
 
 // --- the view --------------------------------------------------------------
@@ -165,11 +163,7 @@ function nowPlaying(room) {
         "div",
         { class: "subtitle", style: { padding: "0 4px 8px" } },
         h("div", { class: "title", text: current.item.title }),
-        h("div", {
-          text: isHost(room)
-            ? "Starting from the host's player."
-            : "Waiting for the host's player.",
-        })
+        h("div", { text: "Starting…" })
       )
     );
     return section;
@@ -178,15 +172,10 @@ function nowPlaying(room) {
   const line = h("div", { class: "subtitle" });
   positionLabel = line;
   const title = h("div", { class: "title", text: current.item.title });
-  // Whose clock this is: the host's player, or the server's while the host is
-  // away. A room that keeps playing with nobody hosting is worth saying.
-  const driver = drivenBy(room) === "server"
-    ? h("div", { class: "subtitle", text: "The host is away — the server is playing the queue." })
-    : null;
   const offlineNow = player.online && !player.online()
     ? h("div", { class: "subtitle", text: "Offline — playing what is on this device." })
     : null;
-  const text = h("div", { class: "grow" }, title, line, driver, offlineNow);
+  const text = h("div", { class: "grow" }, title, line, offlineNow);
   updateClock();
 
   const drives = mayDrive(room, room.me);
@@ -423,7 +412,7 @@ function stopTicker() {
   ticker = 0;
 }
 
-/** The clock under the title. The host's reported position is room time;
+/** The clock under the title. The room's position is room time;
  *  while the local player is on the same song, show its actual playhead. */
 export function roomClock(player, room, current, nowMs = Date.now()) {
   const local = player && typeof player.current === "function" ? player.current() : null;

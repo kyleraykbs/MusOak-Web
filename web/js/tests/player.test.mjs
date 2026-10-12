@@ -484,6 +484,74 @@ test("the queue's next songs are kept in memory, and the window is the limit", a
   }
 });
 
+test("a room that reorders its queue reorders what this page fetches", async () => {
+  const saved = {
+    queue: player.queue,
+    index: player._index,
+    offline: player._offline,
+    order: player._offlineOrder,
+    wanted: player._offlineWanted,
+    inFlight: player._offlineInFlight,
+    active: player._offlineActive,
+    bytes: player._offlineBytes,
+    variantFor: player._variantFor,
+    warm: player._warm,
+    client: player._client,
+    room: player._room,
+    fetch: globalThis.fetch,
+    create: globalThis.URL.createObjectURL,
+    revoke: globalThis.URL.revokeObjectURL,
+  };
+  const pending = [];
+  try {
+    player.setRoom(null);
+    player._offline = new Map();
+    player._offlineOrder = [];
+    player._offlineWanted = [];
+    player._offlineInFlight = new Set();
+    player._offlineActive = 0;
+    player._offlineBytes = 0;
+    player._variantFor = async (entry) => ({ variantId: `v-${entry.id}` });
+    player._warm = async () => true;
+    player._client = () => ({ mediaUrl: (variantId) => `/media/${variantId}` });
+    globalThis.URL.createObjectURL = () => "blob:x";
+    globalThis.URL.revokeObjectURL = () => {};
+    // Fetches hang until they are released, so what the test sees is the order
+    // the page decided to fetch in, not the order they happened to finish.
+    globalThis.fetch = (url) => new Promise((resolve) => pending.push([String(url), resolve]));
+
+    player.keepOffline(queue("x1", "x2", "x3", "x4"));
+    await settle();
+    assert.deepEqual(pending.map(([url]) => url), ["/media/v-x1", "/media/v-x2"], "two fetch at a time");
+
+    // The room's order changes under it: n1 is due next now, x3 and x4 have
+    // moved further out. The slot that frees has to go to n1.
+    player.keepOffline(queue("n1", "x3", "x4"));
+    await settle();
+    const [url, resolve] = pending.shift();
+    resolve({ ok: true, blob: async () => ({ size: 1 }) });
+    await settle();
+    assert.equal(url, "/media/v-x1");
+    assert.equal(pending.at(-1)[0], "/media/v-n1", "the song the room is about to reach is fetched before the ones behind it");
+  } finally {
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._offline = saved.offline;
+    player._offlineOrder = saved.order;
+    player._offlineWanted = saved.wanted;
+    player._offlineInFlight = saved.inFlight;
+    player._offlineActive = saved.active;
+    player._offlineBytes = saved.bytes;
+    player._variantFor = saved.variantFor;
+    player._warm = saved.warm;
+    player._client = saved.client;
+    player.setRoom(saved.room);
+    globalThis.fetch = saved.fetch;
+    globalThis.URL.createObjectURL = saved.create;
+    globalThis.URL.revokeObjectURL = saved.revoke;
+  }
+});
+
 test("a song kept in memory plays with nothing reachable", async () => {
   const saved = {
     ensureAudio: player.ensureAudio,

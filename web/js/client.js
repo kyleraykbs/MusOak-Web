@@ -715,12 +715,6 @@ export class Client {
     return this.post(`/api/v1/rooms/${roomId}/skip`).then(this.roomSnapshot);
   }
 
-  /** Report the host's ordinary player state; the server timestamps it and
-   *  broadcasts it to followers. */
-  roomSync(roomId, state) {
-    return this.post(`/api/v1/rooms/${roomId}/sync`, state);
-  }
-
   roomSeek(roomId, positionMs) {
     return this.post(`/api/v1/rooms/${roomId}/seek`, { positionMs }).then(this.roomSnapshot);
   }

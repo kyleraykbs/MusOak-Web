@@ -308,6 +308,8 @@ class Player {
     // "failed" with the time it failed at so it can be tried again later.
     this._offline = new Map();
     this._offlineOrder = [];      // track ids waiting for a fetch slot
+    this._offlineWanted = [];     // the window's order now: what a free slot is for
+    this._offlineInFlight = new Set();  // fetches under way: never re-queued, never cancelled
     this._offlineActive = 0;      // fetches in flight
     this._offlineBytes = 0;
 
@@ -1508,9 +1510,26 @@ class Player {
    */
   keepOffline(tracks = []) {
     const wanted = (Array.isArray(tracks) ? tracks : []).filter((track) => track?.id).slice(0, OFFLINE_AHEAD);
-    const ids = new Set(wanted.map((track) => String(track.id)));
+    // The window is a priority, not a list that only grows. The songs the room
+    // is about to reach are the ones that have to be here, so the order the
+    // fetches take is re-derived from this call every time: a song that was
+    // queued when it was nearer and has since moved further out gives its turn
+    // to the ones now in front of it, and one that has left the window gives it
+    // up altogether instead of being fetched ahead of a song that is due next.
+    // A fetch already under way is never disturbed - it keeps its slot until the
+    // bytes are here - and is not queued a second time either.
+    this._offlineWanted = wanted.map((track) => String(track.id));
+    const ids = new Set(this._offlineWanted);
     for (const track of wanted) this._queueOffline(track);
+    for (const queued of [...this._offlineOrder]) {
+      if (!ids.has(queued)) this._releaseOffline(queued);
+    }
+    this._offlineOrder = this._offlineWanted.filter((id) => {
+      const entry = this._offline.get(id);
+      return Boolean(entry) && entry.state === "pending" && !this._offlineInFlight.has(id);
+    });
     this._trimOffline(ids);
+    this._pumpOffline();
   }
 
   /**
@@ -1544,7 +1563,6 @@ class Player {
     this._offline.set(trackId, { state: "pending", variantId: "", url: "", bytes: 0, at: Date.now() });
     this._offlineOrder.push(trackId);
     this._emit("offline-changed", this.offlineSummary());
-    this._pumpOffline();
   }
 
   _pumpOffline() {
@@ -1552,8 +1570,10 @@ class Player {
       const trackId = this._offlineOrder.shift();
       const entry = this._offline.get(trackId);
       if (!entry || entry.state !== "pending") continue;
+      this._offlineInFlight.add(trackId);
       this._offlineActive += 1;
       this._fetchOffline(trackId).finally(() => {
+        this._offlineInFlight.delete(trackId);
         this._offlineActive -= 1;
         this._pumpOffline();
       });
