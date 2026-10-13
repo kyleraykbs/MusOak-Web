@@ -777,6 +777,16 @@ test("when its copy lands mid-song the element is moved onto it, at the same pos
     paused: false,
     ended: false,
     readyState: 4,
+    listeners: {},
+    addEventListener(name, fn) {
+      (this.listeners[name] = this.listeners[name] || []).push(fn);
+    },
+    removeEventListener(name, fn) {
+      this.listeners[name] = (this.listeners[name] || []).filter((each) => each !== fn);
+    },
+    fire(name) {
+      for (const fn of [...(this.listeners[name] || [])]) fn({ type: name });
+    },
     removeAttribute() {},
     load() {},
     pause() {
@@ -810,6 +820,12 @@ test("when its copy lands mid-song the element is moved onto it, at the same pos
     assert.equal(player.offlineState("a"), "ready");
     assert.equal(audio.src, "blob:a", "the element was moved onto the copy");
     assert.equal(player._pendingSeek, 42500, "at the exact position it had reached");
+    // Setting src starts the element at zero and the seek lands at
+    // loadedmetadata, so playing before that is audible as the song's first
+    // moment followed by a jump - the "it jumps back a second" a copy taking
+    // over mid-song caused. It waits.
+    assert.deepEqual(played, [], "the play waits for the position to land");
+    audio.fire("loadedmetadata");
     assert.deepEqual(played, ["blob:a"], "and carried on playing from there");
   } finally {
     player.audio = saved.audio;

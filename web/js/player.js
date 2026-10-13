@@ -1070,12 +1070,22 @@ class Player {
       this._wantResume(false);
     });
     if (typeof document !== "undefined") {
-      document.addEventListener("visibilitychange", () => this._retryWanted());
+      document.addEventListener("visibilitychange", () => {
+        this._retryWanted();
+        // A copy that arrived while this page was hidden takes over now, while
+        // somebody is looking at it and the browser will let it start.
+        const track = this.current();
+        if (track && !this._hidden()) this._swapToOffline(String(track.id || ""));
+      });
       // A page that has not been touched cannot start audio. Rather than make
       // somebody find the play button, the first touch anywhere tries again.
       const wake = () => this._retryWanted();
       document.addEventListener("pointerdown", wake, true);
       document.addEventListener("keydown", wake, true);
+      // A window that is merely behind another is still "visible", so nothing
+      // above fires when somebody comes back to it: focus is the only signal,
+      // and it is also the gesture the browser wants.
+      if (typeof window !== "undefined") window.addEventListener("focus", wake);
     }
     audio.volume = this._volume;
     audio.muted = this._muted;
@@ -1263,18 +1273,10 @@ class Player {
     this._prefetch();
     this.renderBar();
     this._wantResume(true);
-    const started = audio.play();
-    if (started?.catch) {
-      started.catch((error) => {
-        // A browser that has not been touched yet refuses to start audio. The
-        // file is here and the room is waiting on it, so this is said rather
-        // than swallowed: one click anywhere is the whole fix, and the bar
-        // would otherwise look broken.
-        this._blocked = true;
-        this._stateEvent();
-        this._blockedError = error?.message || "";
-      });
-    }
+    // A track that starts part-way in (a room's song, a restored session) has
+    // to wait for the seek the same way a copy taking over does, or the first
+    // moment heard is the file's beginning.
+    this._startAudio(this._pendingSeek);
     // The button becomes a pause button the moment play() is called, and the
     // sound can still be a moment behind it.
     this._setBuffering(audio.readyState < 3);
@@ -1635,6 +1637,12 @@ class Player {
     if (!track || String(track.id) !== id) return false;
     if (!this._variant || entry.variantId !== this._variant) return false;
     if (audio.src === entry.url) return false;     // already the copy; never swap back
+    // A page nobody is looking at must not be handed a new source: changing
+    // `src` and asking to play is the one thing a hidden tab can refuse, and a
+    // refusal there is the session stopping until somebody presses play. The
+    // copy is kept either way, and the next load - or the next time this page
+    // is visible - plays it from memory without a swap at all.
+    if (this._hidden()) return false;
     const atMs = Math.max(0, Math.round((Number(audio.currentTime) || 0) * 1000));
     const wasPaused = audio.paused !== false;
     this._pendingSeek = atMs;
@@ -1643,6 +1651,43 @@ class Player {
     audio.src = entry.url;
     if (wasPaused) return true;
     this._wantResume(true);
+    this._startAudio(atMs);
+    return true;
+  }
+
+  /** Whether this page is in a tab nobody is looking at. */
+  _hidden() {
+    return typeof document !== "undefined" && document.visibilityState === "hidden";
+  }
+
+  /**
+   * Start the element, waiting for a pending position to be applied first.
+   *
+   * `src` starts the element at zero and the seek lands at `loadedmetadata`,
+   * so playing immediately is audible as the song's first moment followed by a
+   * jump to where it should be - the "it jumps back a second and starts again"
+   * a copy taking over mid-song caused. With a position to land on, the play
+   * waits for it.
+   */
+  _startAudio(atMs) {
+    const audio = this.audio;
+    if (!audio) return;
+    if (!(atMs > 0)) {
+      this._play();
+      return;
+    }
+    const once = () => {
+      audio.removeEventListener("loadedmetadata", once);
+      // The element's own handler has applied the pending seek by now.
+      this._play();
+    };
+    audio.addEventListener("loadedmetadata", once);
+  }
+
+  /** Ask the element to play, and say so when the browser refuses. */
+  _play() {
+    const audio = this.audio;
+    if (!audio) return;
     const started = audio.play();
     if (started?.catch) {
       started.catch((error) => {
@@ -1651,7 +1696,6 @@ class Player {
         this._blockedError = error?.message || "";
       });
     }
-    return true;
   }
 
   /** Forget one song's copy, freeing the memory it held. */
