@@ -427,7 +427,17 @@ test("the queue's next songs are kept in memory, and the window is the limit", a
     player._offlineBytes = 0;
     player._variantFor = async (entry) => ({ variantId: `v-${entry.id}` });
     player._warm = async () => true;
-    player._client = () => ({ mediaUrl: (variantId) => `/media/${variantId}` });
+    player._client = () => ({
+      mediaUrl: (variantId) => `/media/${variantId}`,
+      startDownload: async () => ({}),
+      sources: async () => ({
+        sources: [
+          { variantId: "v-a", downloadable: true },
+          { variantId: "v-a2", downloadable: true },
+        ],
+        preferredVariantId: "",
+      }),
+    });
     globalThis.URL.createObjectURL = (blob) => `blob:${blob.size}:${Math.random().toString(36).slice(2)}`;
     globalThis.URL.revokeObjectURL = (url) => revoked.push(url);
     globalThis.fetch = async (url) => {
@@ -513,7 +523,17 @@ test("a room that reorders its queue reorders what this page fetches", async () 
     player._offlineBytes = 0;
     player._variantFor = async (entry) => ({ variantId: `v-${entry.id}` });
     player._warm = async () => true;
-    player._client = () => ({ mediaUrl: (variantId) => `/media/${variantId}` });
+    player._client = () => ({
+      mediaUrl: (variantId) => `/media/${variantId}`,
+      startDownload: async () => ({}),
+      sources: async () => ({
+        sources: [
+          { variantId: "v-a", downloadable: true },
+          { variantId: "v-a2", downloadable: true },
+        ],
+        preferredVariantId: "",
+      }),
+    });
     globalThis.URL.createObjectURL = () => "blob:x";
     globalThis.URL.revokeObjectURL = () => {};
     // Fetches hang until they are released, so what the test sees is the order
@@ -723,7 +743,17 @@ test("a track the device does not hold streams from the routed URL, without wait
     player._startDownload = () => {};
     player._prefetch = () => {};
     player._wantResume = () => {};
-    player._client = () => ({ mediaUrl: (variantId) => `/media/${variantId}` });
+    player._client = () => ({
+      mediaUrl: (variantId) => `/media/${variantId}`,
+      startDownload: async () => ({}),
+      sources: async () => ({
+        sources: [
+          { variantId: "v-a", downloadable: true },
+          { variantId: "v-a2", downloadable: true },
+        ],
+        preferredVariantId: "",
+      }),
+    });
 
     await player._load(0, { autoplay: true });
 
@@ -810,7 +840,17 @@ test("when its copy lands mid-song the element is moved onto it, at the same pos
     player._offlineBytes = 0;
     player._variantFor = async () => ({ variantId: "v-a" });
     player._warm = async () => true;
-    player._client = () => ({ mediaUrl: (variantId) => `/media/${variantId}` });
+    player._client = () => ({
+      mediaUrl: (variantId) => `/media/${variantId}`,
+      startDownload: async () => ({}),
+      sources: async () => ({
+        sources: [
+          { variantId: "v-a", downloadable: true },
+          { variantId: "v-a2", downloadable: true },
+        ],
+        preferredVariantId: "",
+      }),
+    });
     player._wantResume = () => {};
     globalThis.URL.createObjectURL = () => "blob:a";
     globalThis.fetch = async () => ({ ok: true, blob: async () => ({ size: 2048 }) });
@@ -878,7 +918,17 @@ test("changing track does not abort a fetch in flight, and its bytes are kept", 
     player._offlineActive = 0;
     player._variantFor = async (entry) => ({ variantId: `v-${entry.id}` });
     player._warm = async () => true;
-    player._client = () => ({ mediaUrl: (variantId) => `/media/${variantId}` });
+    player._client = () => ({
+      mediaUrl: (variantId) => `/media/${variantId}`,
+      startDownload: async () => ({}),
+      sources: async () => ({
+        sources: [
+          { variantId: "v-a", downloadable: true },
+          { variantId: "v-a2", downloadable: true },
+        ],
+        preferredVariantId: "",
+      }),
+    });
     globalThis.URL.createObjectURL = () => "blob:kept";
     globalThis.fetch = async (url, options) => {
       signals.push(options?.signal);
@@ -941,4 +991,185 @@ test("a song played from this page's own copy still names its source", () => {
 
   // And it feeds the pill: the label is the provider, as everywhere else.
   assert.equal(sourceLabel(memorySource(known, "y2")), "ytmusic");
+});
+
+// A file that will not arrive gets one more attempt - on another source of the
+// same song when it has one, since what usually fails is one provider's file -
+// and then the queue carries on. Stopping on it is silence and a red line.
+test("a file that will not arrive is tried from another source, then the queue moves on", async () => {
+  const saved = {
+    audio: player.audio,
+    ensureAudio: player.ensureAudio,
+    queue: player.queue,
+    index: player._index,
+    sources: player._sources,
+    variant: player._variant,
+    ready: player._ready,
+    variantFor: player._variantFor,
+    resolveFixed: player._resolveFixed,
+    client: player._client,
+    online: player.online,
+    report: player._report,
+    reportListen: player._reportListen,
+    room: player._room,
+    retriedFor: player._retriedFor,
+    failedVariant: player._failedVariant,
+  };
+  const asked = [];
+  const audio = {
+    src: "",
+    currentTime: 0,
+    paused: true,
+    readyState: 0,
+    removeAttribute() {},
+    load() {},
+    pause() {
+      this.paused = true;
+    },
+    play() {
+      this.paused = false;
+      return { catch() {} };
+    },
+  };
+  const resolution = (variantId) => ({
+    variantId,
+    sources: [{ variantId, downloadable: true }],
+    preferredVariantId: "",
+  });
+  const tick = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  try {
+    player.setRoom(null);
+    player.audio = audio;
+    player.ensureAudio = () => audio;
+    player.queue = queue("a", "b");
+    player._index = 0;
+    player._variant = "v-a";
+    player._loading = true;
+    player.online = () => true;
+    player._report = (error) => asked.push(`report:${error.message}`);
+    player._reportListen = () => {};
+    player._ready = async () => ({ state: "failed", error: "that file could not be downloaded" });
+    player._variantFor = async (entry) => resolution(String(entry.id) === "a" ? "v-a" : "v-b");
+    player._resolveFixed = async (entry, variantId) => resolution(variantId);
+    player._client = () => ({
+      mediaUrl: (variantId) => `/media/${variantId}`,
+      startDownload: async () => ({}),
+      sources: async () => ({
+        sources: [
+          { variantId: "v-a", downloadable: true },
+          { variantId: "v-a2", downloadable: true },
+        ],
+        preferredVariantId: "",
+      }),
+    });
+
+    // The file the element was given could not be fetched. The retry starts at
+    // once, and the red line it leaves is what the next song must not inherit.
+    await player._streamFallback({ variantId: "v-a", token: player._token, autoplay: false });
+    assert.equal(player._retriedFor, "a", "the failed song is the one being retried");
+    await tick(50);
+    assert.equal(player._variant, "v-a2", "the other source of the same song was tried");
+
+    // And when that one fails too, the queue moves on rather than stopping.
+    await player._streamFallback({ variantId: "v-a2", token: player._token, autoplay: false });
+    await tick(50);
+    assert.equal(player._index, 1, "the queue moved on to the next song");
+    assert.equal(player._variant, "v-b", "and it is what plays");
+    assert.equal(player._error, "", "the failed song's red line is not left on the next one");
+  } finally {
+    player.audio = saved.audio;
+    player.ensureAudio = saved.ensureAudio;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._sources = saved.sources;
+    player._variant = saved.variant;
+    player._ready = saved.ready;
+    player._variantFor = saved.variantFor;
+    player._resolveFixed = saved.resolveFixed;
+    player._client = saved.client;
+    player.online = saved.online;
+    player._report = saved.report;
+    player._reportListen = saved.reportListen;
+    player.setRoom(saved.room);
+    player._retriedFor = saved.retriedFor;
+    player._failedVariant = saved.failedVariant;
+    clearInterval(player._resumeTimer);
+    player._resumeTimer = null;
+    clearTimeout(player._saveTimer);
+    player._saveTimer = null;
+  }
+});
+
+// When the resolution itself failed there is no file to blame, so the retry is
+// the same request again - and a song that then plays is not skipped.
+test("a resolution that failed is asked again before anything is skipped", async () => {
+  const saved = {
+    audio: player.audio,
+    queue: player.queue,
+    index: player._index,
+    variantFor: player._variantFor,
+    warm: player._warm,
+    client: player._client,
+    online: player.online,
+    report: player._report,
+    room: player._room,
+    retriedFor: player._retriedFor,
+  };
+  const asked = [];
+  const audio = {
+    src: "",
+    currentTime: 0,
+    paused: true,
+    readyState: 0,
+    removeAttribute() {},
+    load() {},
+    pause() {
+      this.paused = true;
+    },
+    play() {
+      this.paused = false;
+      return { catch() {} };
+    },
+  };
+  try {
+    player.setRoom(null);
+    player.audio = audio;
+    player.queue = queue("a", "b");
+    player._index = 0;
+    player.online = () => true;
+    player._report = (error) => asked.push(`report:${error.message}`);
+    player._warm = async () => true;
+    player._variantFor = async (entry) => {
+      asked.push(`resolve:${entry.id}`);
+      if (asked.filter((each) => each === `resolve:${entry.id}`).length === 1) {
+        throw new Error("the server blinked");
+      }
+      return { variantId: "v-a", sources: [{ variantId: "v-a", downloadable: true }], preferredVariantId: "" };
+    };
+    player._client = () => ({ mediaUrl: (variantId) => `/media/${variantId}`, sources: async () => ({ sources: [] }) });
+
+    await player._load(0, { autoplay: false });
+    await new Promise((resolve) => setTimeout(resolve, 900));
+
+    const resolves = asked.filter((each) => each === "resolve:a");
+    assert.ok(resolves.length >= 2, "the same song was asked for again");
+    assert.ok(asked.includes("report:the server blinked"), "the failure was still said out loud");
+    assert.equal(player._index, 0, "and it played rather than being skipped");
+    assert.equal(player._error, "", "with no red line left under it");
+  } finally {
+    player.audio = saved.audio;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._variantFor = saved.variantFor;
+    player._warm = saved.warm;
+    player._client = saved.client;
+    player.online = saved.online;
+    player._report = saved.report;
+    player.setRoom(saved.room);
+    player._retriedFor = saved.retriedFor;
+    clearInterval(player._resumeTimer);
+    player._resumeTimer = null;
+    clearTimeout(player._saveTimer);
+    player._saveTimer = null;
+  }
 });

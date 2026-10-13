@@ -66,6 +66,9 @@ const SAVE_PLAYBACK_MS = 5000;
 const SAVE_SETTLE_MS = 400;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// How long a failed fetch waits before the one retry: long enough for a blip,
+// short enough that nobody reaches for the skip button.
+const FETCH_RETRY_PAUSE_MS = 700;
 const clamp01 = (value) => Math.min(1, Math.max(0, value));
 
 // The bar is repainted from the audio element's own events, several times a
@@ -328,6 +331,10 @@ class Player {
     // already held can be sitting at its end, and playing it from there ends it
     // again at once.
     this._pendingSeek = null;
+    // Which song has already had its one retry, and which rendition failed, so
+    // a failure cannot loop on the same source for ever.
+    this._retriedFor = "";
+    this._failedVariant = "";
 
     this._bar = null;
     this._seeking = false;
@@ -1150,6 +1157,8 @@ class Player {
       if (!this.online() && this._skipUnavailable()) return;
       this._error = "could not play that file";
       this._stateEvent();
+      this._failedVariant = String(this._variant || "");
+      this._recoverFromFailure();
     });
     this.audio = audio;
     return audio;
@@ -1229,8 +1238,17 @@ class Player {
       this._stateEvent();
       // Offline, a song that cannot be resolved is a song this page does not
       // have: the queue carries on with one it does.
-      if (!this.online()) this._skipUnavailable();
-      else this._report(error);
+      if (!this.online()) {
+        this._skipUnavailable();
+        return;
+      }
+      this._report(error);
+      // Online, the song gets one more attempt - on another source of it when
+      // it has one, because what failed is usually one provider's file and not
+      // the song - and then the queue carries on past it. Stopping here is
+      // silence and a red line under a track nobody can hear.
+      this._failedVariant = String(this._variant || variantId || "");
+      this._recoverFromFailure();
       return;
     }
     if (token !== this._token) return;   // the track changed while we looked
@@ -1280,6 +1298,84 @@ class Player {
     // The button becomes a pause button the moment play() is called, and the
     // sound can still be a moment behind it.
     this._setBuffering(audio.readyState < 3);
+  }
+
+  /**
+   * A song that would not fetch or would not play: one more attempt, then the
+   * queue moves on.
+   *
+   * The attempt is made on another source of the same song when it has one -
+   * what usually fails is one provider's file, not the song - and after that
+   * the next song in the queue is played. Stopping here is silence and a red
+   * line under a track nobody can hear; a skipped song is named in the banner
+   * and left behind.
+   */
+  _recoverFromFailure() {
+    const track = this.current();
+    const id = String(track?.id || "");
+    if (!id) return false;
+    if (this._retriedFor !== id) {
+      this._retriedFor = id;
+      this._retryOnAnotherSource(track, id);
+      return true;
+    }
+    return this._skipFailed();
+  }
+
+  /**
+   * The one retry: the same song, from a source other than the one that failed.
+   *
+   * The song's sources are asked for here rather than read off the screen - a
+   * load clears them, and a failure is exactly when the list is worth having -
+   * so a song found by a search has its other platforms tried before it is
+   * given up on. Nothing else to play means the queue moves on instead.
+   */
+  async _retryOnAnotherSource(track, id) {
+    const failed = String(this._failedVariant || "");
+    if (!failed) {
+      // The resolution itself failed, so no file can be blamed and no other
+      // source is meaningfully "other": ask again, a moment later, as before.
+      await sleep(FETCH_RETRY_PAUSE_MS);
+      if (String(this.current()?.id || "") !== id) return;
+      this._load(this._index, { startMs: this.positionMs(), autoplay: true });
+      return;
+    }
+    let sources = Array.isArray(this._sources.sources) ? this._sources.sources : [];
+    if (!sources.length) {
+      try {
+        const payload = await this._client().sources(id);
+        sources = Array.isArray(payload?.sources) ? payload.sources : [];
+      } catch {
+        sources = [];
+      }
+    }
+    // The song may have been left behind while the list was being fetched.
+    if (String(this.current()?.id || "") !== id) return;
+    const next = sources.find(
+      (source) =>
+        source.downloadable !== false &&
+        String(source.variantId || "") &&
+        String(source.variantId) !== failed
+    );
+    if (!next) {
+      this._skipFailed();
+      return;
+    }
+    this._load(this._index, {
+      startMs: this.positionMs(),
+      autoplay: true,
+      variantId: String(next.variantId),
+    });
+  }
+
+  /** The next song in the queue, after one that will not play. */
+  _skipFailed() {
+    for (let index = this._index + 1; index < this.queue.length; index += 1) {
+      this._error = "";
+      this.jumpTo(index, { autoplay: true });
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -1419,7 +1515,14 @@ class Player {
       this._loading = false;
       this._error = status.error || "that file could not be downloaded";
       this._stateEvent();
-      if (!this.online()) this._skipUnavailable();
+      if (!this.online()) {
+        this._skipUnavailable();
+        return;
+      }
+      // The file could not be fetched: one more attempt from another source of
+      // the same song, then the queue carries on.
+      this._failedVariant = String(attempt.variantId || "");
+      this._recoverFromFailure();
       return;
     }
     const audio = this.audio;
