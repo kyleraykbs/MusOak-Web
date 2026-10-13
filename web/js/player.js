@@ -69,6 +69,13 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // How long a failed fetch waits before the one retry: long enough for a blip,
 // short enough that nobody reaches for the skip button.
 const FETCH_RETRY_PAUSE_MS = 700;
+// How long the copy is given to become playable on the second element before
+// the element in hand is moved onto it the old way.
+const COPY_READY_TIMEOUT_MS = 2000;
+// The overlap the element being left is faded out over: short enough not to be
+// heard as two of anything, long enough that the pause lands in silence.
+const HANDOVER_FADE_MS = 40;
+const HANDOVER_STEP_MS = 10;
 const clamp01 = (value) => Math.min(1, Math.max(0, value));
 
 // The bar is repainted from the audio element's own events, several times a
@@ -1067,11 +1074,15 @@ class Player {
     if (this.audio) return this.audio;
     const audio = new Audio();
     audio.preload = "auto";
+    // Assigned before it is wired: the handlers ask whether the element they
+    // came from is still the one in hand.
+    this.audio = audio;
     // A media session is what keeps a phone playing with the screen off: it
     // tells the browser this page is a player, which is also what stops a
     // backgrounded tab being frozen and its audio cut off a few songs in.
     this._installMediaSession();
     audio.addEventListener("playing", () => {
+      if (audio !== this.audio) return;
       this._blocked = false;
       this._blockedError = "";
       this._wantResume(false);
@@ -1094,77 +1105,7 @@ class Player {
       // and it is also the gesture the browser wants.
       if (typeof window !== "undefined") window.addEventListener("focus", wake);
     }
-    audio.volume = this._volume;
-    audio.muted = this._muted;
-    audio.addEventListener("timeupdate", () => {
-      // Sound that is moving is sound the browser is not holding back, however
-      // it got started: the flag behind the "click the page once" hint has no
-      // business outliving the playback it was about.
-      this._blocked = false;
-      this._blockedError = "";
-      this._positionEvent();
-      this.savePlayback();          // at most every SAVE_PLAYBACK_MS, and only on a change
-    });
-    audio.addEventListener("durationchange", () => this._positionEvent());
-    audio.addEventListener("loadedmetadata", () => {
-      const pending = this._pendingSeek;
-      this._pendingSeek = null;
-      if (pending !== null) {
-        try {
-          audio.currentTime = Math.min(pending / 1000, audio.duration || pending / 1000);
-        } catch {
-          /* the file is not seekable yet: it starts at the beginning */
-        }
-      }
-      this._positionEvent();
-    });
-    audio.addEventListener("play", () => {
-      this._stateEvent();
-      this.savePlaybackNow();
-    });
-    audio.addEventListener("pause", () => {
-      this._stateEvent();
-      this.savePlaybackNow();
-    });
-    audio.addEventListener("playing", () => this._setBuffering(false));
-    audio.addEventListener("waiting", () => this._setBuffering(true));
-    audio.addEventListener("stalled", () => this._setBuffering(true));
-    audio.addEventListener("canplay", () => this._setBuffering(false));
-    audio.addEventListener("pause", () => this._setBuffering(false));
-    audio.addEventListener("ended", () => {
-      this._setBuffering(false);
-      // The room host is a normal queue player: its own queue advances on the
-      // element's end. Followers never advance locally; the host's next sync
-      // tells them which song is on.
-      if (!this._room || this._room.hostPlayback) this.next();
-    });
-    audio.addEventListener("error", () => {
-      if (!this._variant) return;
-      // The routed URL is given to the element before the backend holds the
-      // file, since the server streams it. If the element refuses it - the one
-      // trigger for the fallback: a variant this server cannot stream - wait
-      // for the backend's own download instead, and then play that.
-      const attempt = this._streaming;
-      if (attempt && !attempt.fellBack && attempt.token === this._token) {
-        attempt.fellBack = true;
-        this._streamFallback(attempt);
-        return;
-      }
-      // A load still in flight means this is the error of a file the element
-      // has already been moved off: it is not this song's failure to act on.
-      const settled = !this._loading;
-      this._loading = false;
-      this._buffering = false;
-      // Offline, a file that will not play is a file this page does not have:
-      // the next song it does have is more use than an error message.
-      if (!this.online() && this._skipUnavailable()) return;
-      this._error = "could not play that file";
-      this._stateEvent();
-      if (!settled) return;
-      this._failedVariant = String(this._variant || "");
-      this._recoverFromFailure();
-    });
-    this.audio = audio;
+    this._wireAudio(audio);
     return audio;
   }
 
@@ -1752,19 +1693,293 @@ class Player {
     if (this._hidden()) return false;
     const atMs = Math.max(0, Math.round((Number(audio.currentTime) || 0) * 1000));
     const wasPaused = audio.paused !== false;
+    // A source change is a pipeline reset, and that reset is the outage heard
+    // when the page's own copy takes over mid-song. The copy goes onto a second
+    // element instead, brought up to the position while the routed URL is still
+    // playing, and the switch is then that element's play.
+    this._handOverToCopy(entry, atMs, wasPaused);
+    return true;
+  }
+
+  /**
+   * The second element a copy is handed over to, made once and kept.
+   *
+   * It is a whole element of the player's own, wired the same way, because the
+   * hand-over makes it the element in hand: whatever it is playing, the queue,
+   * the bar and the room all follow it from that moment on.
+   */
+  _spareAudio() {
+    if (this._spare) return this._spare;
+    const audio = new Audio();
+    audio.preload = "auto";
+    this._wireAudio(audio);
+    this._spare = audio;
+    return audio;
+  }
+
+  /**
+   * Hand the playing element over to the page's own copy, without a gap.
+   *
+   * The copy is loaded on the second element and the music carries on from the
+   * routed URL while it gets there - a blob in memory is quick, and the whole
+   * point of this is that nobody hears it happen. The position is taken at the
+   * moment of the switch rather than when the copy landed, so nothing is
+   * rewound or skipped by however long that took.
+   */
+  async _handOverToCopy(entry, atMs, wasPaused) {
+    const from = this.audio;
+    if (!from) return;
+    const spare = this._spareAudio();
+    this._loadCopy(spare, entry.url);
+    const ready = await this._whenPlayable(spare, entry.url, COPY_READY_TIMEOUT_MS);
+    if (from !== this.audio) return;              // the track changed while waiting
+    if (!ready) {
+      // The copy never became playable on the second element. Moving the
+      // element in hand onto it is the gap this exists to avoid, but a gap is
+      // not silence, and the copy is the only thing left to play.
+      this._moveOntoCopy(entry, atMs, wasPaused);
+      return;
+    }
+    // Where the music is now, not where it was when the copy landed.
+    const at = Math.max(0, Math.round((Number(from.currentTime) || 0) * 1000));
+    try {
+      spare.currentTime = at / 1000;
+    } catch {
+      /* not seekable yet: it starts at the top */
+    }
+    if (wasPaused) {
+      // Nothing was playing, so nothing has to be faded: the copy simply
+      // becomes the element, still paused, at the same position.
+      this._adoptCopy(spare, at);
+      return;
+    }
+    try {
+      await spare.play();
+    } catch {
+      // The browser would not start it. The element in hand keeps the sound
+      // going, and the copy is taken up at the next load instead.
+      return;
+    }
+    if (from !== this.audio) return;
+    this._adoptCopy(spare, at);
+    this._fadeOut(from);
+  }
+
+  /** The second element becomes the one in hand, and the old one the spare. */
+  _adoptCopy(next, atMs) {
+    const from = this.audio;
+    this.audio = next;
+    this._spare = from;
+    // The routed URL is no longer in play, so its fallback no longer applies,
+    // and the position is already where it should be: nothing is pending.
+    this._streaming = null;
+    this._pendingSeek = null;
+    this._loading = false;
+    this._buffering = next.readyState < 3;
+    this._positionEvent();
+    this._stateEvent();
+    this.renderBar();
+  }
+
+  /** The element in hand is given the copy: the fallback for a spare that never came up. */
+  _moveOntoCopy(entry, atMs, wasPaused) {
+    const audio = this.audio;
+    if (!audio) return;
     this._pendingSeek = atMs;
-    // The routed URL is no longer in play, so its fallback no longer applies.
     this._streaming = null;
     audio.src = entry.url;
-    if (wasPaused) return true;
+    if (wasPaused) return;
     this._wantResume(true);
     this._startAudio(atMs);
-    return true;
+  }
+
+  /** Give an element the copy to hold, at the volume this page is at. */
+  _loadCopy(audio, url) {
+    audio.volume = this._volume;
+    audio.muted = this._muted;
+    if (audio.src === url) return;
+    audio.src = url;
+    try {
+      audio.load();
+    } catch {
+      /* nothing to load yet */
+    }
+  }
+
+  /** Whether an element can play the URL it was given, waited for up to `ms`. */
+  _whenPlayable(audio, url, ms) {
+    if (audio.src === url && audio.readyState >= 3) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      let timer = null;
+      const finish = (ok) => {
+        clearTimeout(timer);
+        audio.removeEventListener("canplay", onCanPlay);
+        audio.removeEventListener("error", onError);
+        resolve(ok);
+      };
+      const onCanPlay = () => finish(audio.src === url && audio.readyState >= 3);
+      const onError = () => finish(false);
+      audio.addEventListener("canplay", onCanPlay);
+      audio.addEventListener("error", onError);
+      timer = setTimeout(() => finish(false), ms);
+    });
+  }
+
+  /**
+   * Let the element being left go without a click.
+   *
+   * Both elements are at the same position, so the overlap is a seam of a few
+   * tens of milliseconds: short enough not to be heard as two of anything, long
+   * enough that the pause lands in silence rather than on a sample.
+   */
+  _fadeOut(audio) {
+    const level = Number(audio.volume);
+    if (!(level > 0) || typeof setInterval !== "function") {
+      audio.pause();
+      this._releaseAudio(audio);
+      return;
+    }
+    const steps = Math.max(1, Math.round(HANDOVER_FADE_MS / HANDOVER_STEP_MS));
+    const step = level / steps;
+    let left = level;
+    const timer = setInterval(() => {
+      left -= step;
+      if (left <= 0) {
+        clearInterval(timer);
+        audio.volume = level;
+        audio.pause();
+        this._releaseAudio(audio);
+        return;
+      }
+      audio.volume = left;
+    }, HANDOVER_STEP_MS);
+  }
+
+  /** Free what a spare was holding, so the copy is not kept on two elements. */
+  _releaseAudio(audio) {
+    try {
+      audio.removeAttribute("src");
+      audio.load();
+    } catch {
+      /* nothing to release */
+    }
   }
 
   /** Whether this page is in a tab nobody is looking at. */
   _hidden() {
     return typeof document !== "undefined" && document.visibilityState === "hidden";
+  }
+
+
+  /**
+   * Give an element the handlers that make it the player's element.
+   *
+   * Two of them exist: the one in hand and the spare a copy is handed over to.
+   * Each handler first asks whether the element it came from is still the one
+   * in hand, so a spare's events - or the events of an element that has just
+   * been left behind - cannot move the queue on or consume a position.
+   */
+  _wireAudio(audio) {
+    audio.volume = this._volume;
+    audio.muted = this._muted;
+    audio.addEventListener("timeupdate", () => {
+      if (audio !== this.audio) return;
+
+      // Sound that is moving is sound the browser is not holding back, however
+      // it got started: the flag behind the "click the page once" hint has no
+      // business outliving the playback it was about.
+      this._blocked = false;
+      this._blockedError = "";
+      this._positionEvent();
+      this.savePlayback();          // at most every SAVE_PLAYBACK_MS, and only on a change
+    });
+    audio.addEventListener("durationchange", () => {
+      if (audio !== this.audio) return;
+      this._positionEvent();
+    });
+    audio.addEventListener("loadedmetadata", () => {
+      if (audio !== this.audio) return;
+
+      const pending = this._pendingSeek;
+      this._pendingSeek = null;
+      if (pending !== null) {
+        try {
+          audio.currentTime = Math.min(pending / 1000, audio.duration || pending / 1000);
+        } catch {
+          /* the file is not seekable yet: it starts at the beginning */
+        }
+      }
+      this._positionEvent();
+    });
+    audio.addEventListener("play", () => {
+      if (audio !== this.audio) return;
+
+      this._stateEvent();
+      this.savePlaybackNow();
+    });
+    audio.addEventListener("pause", () => {
+      if (audio !== this.audio) return;
+
+      this._stateEvent();
+      this.savePlaybackNow();
+    });
+    audio.addEventListener("playing", () => {
+      if (audio !== this.audio) return;
+      this._setBuffering(false);
+    });
+    audio.addEventListener("waiting", () => {
+      if (audio !== this.audio) return;
+      this._setBuffering(true);
+    });
+    audio.addEventListener("stalled", () => {
+      if (audio !== this.audio) return;
+      this._setBuffering(true);
+    });
+    audio.addEventListener("canplay", () => {
+      if (audio !== this.audio) return;
+      this._setBuffering(false);
+    });
+    audio.addEventListener("pause", () => {
+      if (audio !== this.audio) return;
+      this._setBuffering(false);
+    });
+    audio.addEventListener("ended", () => {
+      if (audio !== this.audio) return;
+
+      this._setBuffering(false);
+      // The room host is a normal queue player: its own queue advances on the
+      // element's end. Followers never advance locally; the host's next sync
+      // tells them which song is on.
+      if (!this._room || this._room.hostPlayback) this.next();
+    });
+    audio.addEventListener("error", () => {
+      if (audio !== this.audio) return;
+
+      if (!this._variant) return;
+      // The routed URL is given to the element before the backend holds the
+      // file, since the server streams it. If the element refuses it - the one
+      // trigger for the fallback: a variant this server cannot stream - wait
+      // for the backend's own download instead, and then play that.
+      const attempt = this._streaming;
+      if (attempt && !attempt.fellBack && attempt.token === this._token) {
+        attempt.fellBack = true;
+        this._streamFallback(attempt);
+        return;
+      }
+      // A load still in flight means this is the error of a file the element
+      // has already been moved off: it is not this song's failure to act on.
+      const settled = !this._loading;
+      this._loading = false;
+      this._buffering = false;
+      // Offline, a file that will not play is a file this page does not have:
+      // the next song it does have is more use than an error message.
+      if (!this.online() && this._skipUnavailable()) return;
+      this._error = "could not play that file";
+      this._stateEvent();
+      if (!settled) return;
+      this._failedVariant = String(this._variant || "");
+      this._recoverFromFailure();
+    });
   }
 
   /**

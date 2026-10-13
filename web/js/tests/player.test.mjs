@@ -781,9 +781,46 @@ test("a track the device does not hold streams from the routed URL, without wait
   }
 });
 
-test("when its copy lands mid-song the element is moved onto it, at the same position", async () => {
+const spareElement = (played) => ({
+  src: "",
+  currentTime: 0,
+  duration: 200,
+  paused: true,
+  readyState: 0,
+  volume: 0,
+  muted: false,
+  listeners: {},
+  addEventListener(name, fn) {
+    (this.listeners[name] = this.listeners[name] || []).push(fn);
+  },
+  removeEventListener(name, fn) {
+    this.listeners[name] = (this.listeners[name] || []).filter((each) => each !== fn);
+  },
+  fire(name) {
+    for (const fn of [...(this.listeners[name] || [])]) fn({ type: name });
+  },
+  removeAttribute() {
+    this.src = "";
+  },
+  load() {},
+  pause() {
+    this.paused = true;
+  },
+  play() {
+    this.paused = false;
+    played.push(this.src);
+    return Promise.resolve();
+  },
+});
+
+// The copy landing mid-song is a hand-over, not a source change: the element
+// in hand is not disturbed, the copy is brought up on the second element while
+// the routed URL keeps playing, and the switch is that element's play. That is
+// the difference between a seam and the outage a pipeline reset makes.
+test("when its copy lands mid-song the music moves onto it without a gap", async () => {
   const saved = {
     audio: player.audio,
+    spare: player._spare,
     queue: player.queue,
     index: player._index,
     offline: player._offline,
@@ -807,6 +844,8 @@ test("when its copy lands mid-song the element is moved onto it, at the same pos
     paused: false,
     ended: false,
     readyState: 4,
+    volume: 1,
+    muted: false,
     listeners: {},
     addEventListener(name, fn) {
       (this.listeners[name] = this.listeners[name] || []).push(fn);
@@ -828,9 +867,12 @@ test("when its copy lands mid-song the element is moved onto it, at the same pos
       return { catch() {} };
     },
   };
+  const spare = spareElement(played);
+  const tick = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   try {
     player.setRoom(null);
     player.audio = audio;
+    player._spare = spare;
     player.queue = queue("a");
     player._index = 0;
     player._variant = "v-a";
@@ -843,13 +885,7 @@ test("when its copy lands mid-song the element is moved onto it, at the same pos
     player._client = () => ({
       mediaUrl: (variantId) => `/media/${variantId}`,
       startDownload: async () => ({}),
-      sources: async () => ({
-        sources: [
-          { variantId: "v-a", downloadable: true },
-          { variantId: "v-a2", downloadable: true },
-        ],
-        preferredVariantId: "",
-      }),
+      sources: async () => ({ sources: [{ variantId: "v-a", downloadable: true }], preferredVariantId: "" }),
     });
     player._wantResume = () => {};
     globalThis.URL.createObjectURL = () => "blob:a";
@@ -858,17 +894,25 @@ test("when its copy lands mid-song the element is moved onto it, at the same pos
     await player._fetchOffline("a");
 
     assert.equal(player.offlineState("a"), "ready");
-    assert.equal(audio.src, "blob:a", "the element was moved onto the copy");
-    assert.equal(player._pendingSeek, 42500, "at the exact position it had reached");
-    // Setting src starts the element at zero and the seek lands at
-    // loadedmetadata, so playing before that is audible as the song's first
-    // moment followed by a jump - the "it jumps back a second" a copy taking
-    // over mid-song caused. It waits.
-    assert.deepEqual(played, [], "the play waits for the position to land");
-    audio.fire("loadedmetadata");
-    assert.deepEqual(played, ["blob:a"], "and carried on playing from there");
+    assert.equal(audio.src, "/media/v-a", "the element in hand is not disturbed");
+    assert.equal(spare.src, "blob:a", "the copy is loaded on the second element");
+    assert.deepEqual(played, [], "and nothing has been started yet");
+
+    // The copy is playable: the switch is its play, at the position the music
+    // has actually reached, and the element being left is faded out.
+    spare.readyState = 4;
+    spare.fire("canplay");
+    await tick(120);
+
+    assert.equal(player.audio, spare, "the copy is the element in hand now");
+    assert.equal(spare.currentTime, 42.5, "at the position the music had reached");
+    assert.deepEqual(played, ["blob:a"], "started rather than reloaded");
+    assert.equal(player._pendingSeek, null, "with nothing left pending");
+    assert.equal(audio.paused, true, "and the routed element left behind");
+    assert.equal(audio.volume, 1, "with its volume put back for the next hand-over");
   } finally {
     player.audio = saved.audio;
+    player._spare = saved.spare;
     player.queue = saved.queue;
     player._index = saved.index;
     player._offline = saved.offline;
@@ -886,6 +930,158 @@ test("when its copy lands mid-song the element is moved onto it, at the same pos
   }
 });
 
+// A copy that never comes up on the second element falls back to moving the
+// element in hand onto it: a gap, but not silence.
+test("a copy that never becomes playable is moved onto the old way", async () => {
+  const saved = {
+    audio: player.audio,
+    spare: player._spare,
+    queue: player.queue,
+    index: player._index,
+    offline: player._offline,
+    bytes: player._offlineBytes,
+    variant: player._variant,
+    variantFor: player._variantFor,
+    warm: player._warm,
+    client: player._client,
+    wantResume: player._wantResume,
+    streaming: player._streaming,
+    pendingSeek: player._pendingSeek,
+    room: player._room,
+    fetch: globalThis.fetch,
+    create: globalThis.URL.createObjectURL,
+  };
+  const played = [];
+  const audio = {
+    src: "/media/v-a",
+    currentTime: 42.5,
+    duration: 200,
+    paused: false,
+    ended: false,
+    readyState: 4,
+    volume: 1,
+    muted: false,
+    listeners: {},
+    addEventListener(name, fn) {
+      (this.listeners[name] = this.listeners[name] || []).push(fn);
+    },
+    removeEventListener(name, fn) {
+      this.listeners[name] = (this.listeners[name] || []).filter((each) => each !== fn);
+    },
+    fire(name) {
+      for (const fn of [...(this.listeners[name] || [])]) fn({ type: name });
+    },
+    removeAttribute() {},
+    load() {},
+    pause() {
+      this.paused = true;
+    },
+    play() {
+      this.paused = false;
+      played.push(this.src);
+      return { catch() {} };
+    },
+  };
+  const spare = spareElement(played);
+  const tick = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  try {
+    player.setRoom(null);
+    player.audio = audio;
+    player._spare = spare;
+    player.queue = queue("a");
+    player._index = 0;
+    player._variant = "v-a";
+    player._streaming = { token: player._token, trackId: "a", variantId: "v-a", autoplay: true, fellBack: false };
+    player._offline = new Map([["a", { state: "pending", variantId: "", url: "", bytes: 0, at: Date.now() }]]);
+    player._offlineBytes = 0;
+    player._variantFor = async () => ({ variantId: "v-a" });
+    player._warm = async () => true;
+    player._client = () => ({
+      mediaUrl: (variantId) => `/media/${variantId}`,
+      startDownload: async () => ({}),
+      sources: async () => ({ sources: [{ variantId: "v-a", downloadable: true }], preferredVariantId: "" }),
+    });
+    player._wantResume = () => {};
+    globalThis.URL.createObjectURL = () => "blob:a";
+    globalThis.fetch = async () => ({ ok: true, blob: async () => ({ size: 2048 }) });
+
+    await player._fetchOffline("a");
+    spare.fire("error");                       // the copy will not come up
+    await tick(50);
+
+    assert.equal(player.audio, audio, "the element in hand is the one that takes it");
+    assert.equal(audio.src, "blob:a", "moved onto the copy");
+    assert.equal(player._pendingSeek, 42500, "at the exact position it had reached");
+    assert.deepEqual(played, [], "the play waits for the position to land");
+    audio.fire("loadedmetadata");
+    assert.deepEqual(played, ["blob:a"], "and carried on playing from there");
+  } finally {
+    player.audio = saved.audio;
+    player._spare = saved.spare;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._offline = saved.offline;
+    player._offlineBytes = saved.bytes;
+    player._variant = saved.variant;
+    player._variantFor = saved.variantFor;
+    player._warm = saved.warm;
+    player._client = saved.client;
+    player._wantResume = saved.wantResume;
+    player._streaming = saved.streaming;
+    player._pendingSeek = saved.pendingSeek;
+    player.setRoom(saved.room);
+    globalThis.fetch = saved.fetch;
+    globalThis.URL.createObjectURL = saved.create;
+  }
+});
+
+// A browser that will not start the copy leaves the element in hand playing:
+// the copy is taken up at the next load instead.
+test("a copy the browser will not start does not take over", async () => {
+  const saved = { audio: player.audio, spare: player._spare, room: player._room };
+  const played = [];
+  const audio = {
+    src: "/media/v-a",
+    currentTime: 42.5,
+    paused: false,
+    readyState: 4,
+    volume: 1,
+    muted: false,
+    listeners: {},
+    addEventListener(name, fn) {
+      (this.listeners[name] = this.listeners[name] || []).push(fn);
+    },
+    removeEventListener() {},
+    fire(name) {
+      for (const fn of [...(this.listeners[name] || [])]) fn({ type: name });
+    },
+    removeAttribute() {},
+    load() {},
+    pause() {
+      this.paused = true;
+    },
+    play() {
+      this.paused = false;
+      played.push(this.src);
+      return { catch() {} };
+    },
+  };
+  const spare = spareElement(played);
+  spare.play = () => Promise.reject(new Error("not allowed"));
+  try {
+    player.setRoom(null);
+    player.audio = audio;
+    player._spare = spare;
+    await player._handOverToCopy({ url: "blob:a", variantId: "v-a" }, 42500, false);
+
+    assert.equal(player.audio, audio, "the element in hand is still the one playing");
+    assert.equal(audio.paused, false, "and it never stopped");
+  } finally {
+    player.audio = saved.audio;
+    player._spare = saved.spare;
+    player.setRoom(saved.room);
+  }
+});
 test("changing track does not abort a fetch in flight, and its bytes are kept", async () => {
   const saved = {
     queue: player.queue,
@@ -1171,5 +1367,69 @@ test("a resolution that failed is asked again before anything is skipped", async
     player._resumeTimer = null;
     clearTimeout(player._saveTimer);
     player._saveTimer = null;
+  }
+});
+
+// What is still to be downloaded has to follow the queue it is downloaded for:
+// a shuffle makes different songs the next ones due, and a fetch that was
+// queued when its song was nearer must give its turn up.
+test("what is still to be downloaded follows a shuffle", async () => {
+  const saved = {
+    queue: player.queue,
+    index: player._index,
+    offline: player._offline,
+    bytes: player._offlineBytes,
+    order: player._offlineOrder,
+    wanted: player._offlineWanted,
+    inFlight: player._offlineInFlight,
+    active: player._offlineActive,
+    fetchOffline: player._fetchOffline,
+    warm: player.warm,
+    room: player._room,
+    shuffle: player._shuffle,
+  };
+  const asked = [];
+  try {
+    player.setRoom(null);
+    player._shuffle = true;
+    player.queue = queue("a", "b", "c", "d", "e", "f");
+    player._index = 0;
+    player._offline = new Map();
+    player._offlineBytes = 0;
+    player._offlineOrder = [];
+    player._offlineWanted = [];
+    player._offlineInFlight = new Set();
+    player._offlineActive = 0;
+    player.warm = () => {};
+    player._fetchOffline = async (id) => {
+      asked.push(id);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    };
+
+    player._prefetch();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const firstRound = [...asked];
+
+    player.shuffleQueue();
+    const order = player.queue.map((entry) => entry.id);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    const after = asked.slice(firstRound.length);
+    const stillWanted = order.filter((id) => !player._offline.get(id) || player._offline.get(id).state !== "ready");
+    const wantedOrder = stillWanted.filter((id) => after.includes(id));
+    assert.deepEqual(after, wantedOrder, "the songs still to be downloaded are fetched in the queue's order");
+  } finally {
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._offline = saved.offline;
+    player._offlineBytes = saved.bytes;
+    player._offlineOrder = saved.order;
+    player._offlineWanted = saved.wanted;
+    player._offlineInFlight = saved.inFlight;
+    player._offlineActive = saved.active;
+    player._fetchOffline = saved.fetchOffline;
+    player.warm = saved.warm;
+    player.setRoom(saved.room);
+    player._shuffle = saved.shuffle;
   }
 });
