@@ -70,6 +70,47 @@ export function plannedFetches(record, tracks) {
   return plan;
 }
 
+/**
+ * The order a playlist's songs should be fetched in.
+ *
+ * A playlist being kept is usually the queue being played, and the order it
+ * will be heard in is the queue's - after a shuffle that is no longer the order
+ * the playlist is stored in. The songs the player is about to reach come first,
+ * highest undownloaded first, and everything else keeps the list's own order.
+ */
+export function queueOrder(tracks, queue = [], index = 0) {
+  const list = Array.isArray(tracks) ? [...tracks] : [];
+  const rank = new Map();
+  let next = 0;
+  for (const track of Array.isArray(queue) ? queue.slice(Math.max(0, Math.floor(Number(index) || 0))) : []) {
+    const id = String(track?.id ?? track?.trackId ?? "");
+    if (id && !rank.has(id)) {
+      rank.set(id, next);
+      next += 1;
+    }
+  }
+  if (!rank.size) return list;
+  return list.sort((left, right) => {
+    const a = rank.has(String(left.id)) ? rank.get(String(left.id)) : next;
+    const b = rank.has(String(right.id)) ? rank.get(String(right.id)) : next;
+    return a - b;
+  });
+}
+
+/** A playlist's songs, ordered by the queue this page is playing. */
+async function inQueueOrder(tracks) {
+  let queue = [];
+  let index = 0;
+  try {
+    const { player } = await import("./player.js");
+    queue = player.queue || [];
+    index = Math.max(0, Number(player._index) || 0);
+  } catch {
+    /* no player to order by: the list keeps its own order */
+  }
+  return queueOrder(tracks, queue, index);
+}
+
 // --- the index of kept playlists -------------------------------------------
 
 /** id -> {id, name, trackIds, bytes, savedAt}, so reads are synchronous. */
@@ -430,7 +471,9 @@ export async function download(playlistId, name, tracks, onProgress) {
   const stopped = () => view.state.cancelled || !view.node.isConnected;
 
   try {
-    const list_ = tracks && tracks.length ? tracks : ((await client.playlist(playlistId)).tracks || []);
+    const list_ = await inQueueOrder(
+      tracks && tracks.length ? tracks : ((await client.playlist(playlistId)).tracks || [])
+    );
     const total = list_.length;
     const entries = [];
     let bytes = 0;
@@ -541,7 +584,7 @@ async function syncOne(playlistId, name, { quiet = true } = {}) {
   syncing.add(playlistId);
   try {
     const detail = await client.playlist(playlistId);
-    const tracks = detail.tracks || [];
+    const tracks = await inQueueOrder(detail.tracks || []);
     const oldByTrack = new Map((record.trackIds || []).map((entry) => [entry.trackId, entry.variantId]));
     const cache = await openCache();
     const entries = [];

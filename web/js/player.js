@@ -324,6 +324,7 @@ class Player {
     // "failed" with the time it failed at so it can be tried again later.
     this._offline = new Map();
     this._offlineOrder = [];      // track ids waiting for a fetch slot
+    this._offlineAbort = new Map();  // track id -> the controller of its fetch
     this._offlineWanted = [];     // the window's order now: what a free slot is for
     this._offlineInFlight = new Set();  // fetches under way: never re-queued, never cancelled
     this._offlineActive = 0;      // fetches in flight
@@ -1580,10 +1581,16 @@ class Player {
     for (const queued of [...this._offlineOrder]) {
       if (!ids.has(queued)) this._releaseOffline(queued);
     }
-    this._offlineOrder = this._offlineWanted.filter((id) => {
-      const entry = this._offline.get(id);
-      return Boolean(entry) && entry.state === "pending" && !this._offlineInFlight.has(id);
-    });
+    // A fetch under way is only worth its slot while its song is still one of
+    // the next few due. After a shuffle the songs in front have changed, and
+    // waiting on a fetch that no longer matters is the queue downloading in an
+    // order it will not hear: the ones now in front go first, and the fetch
+    // that has fallen down the order is let go. The backend is not stopped - it
+    // keeps what it has - the slot is simply given to the song that is due now.
+    const front = new Set(this._offlineWanted.slice(0, OFFLINE_FETCHES));
+    for (const trackId of [...this._offlineInFlight]) {
+      if (!front.has(trackId)) this._abortOffline(trackId);
+    }
     this._trimOffline(ids);
     this._pumpOffline();
   }
@@ -1622,18 +1629,36 @@ class Player {
   }
 
   _pumpOffline() {
+    // The order is the wanted list, re-derived here rather than only when it
+    // changes: a fetch that has just been let go is picked up again in its
+    // place instead of staying out of the queue because it was in flight when
+    // the order was last written down.
+    this._offlineOrder = (this._offlineWanted || []).filter((id) => {
+      const entry = this._offline.get(id);
+      return Boolean(entry) && entry.state === "pending" && !this._offlineInFlight.has(id);
+    });
     while (this._offlineActive < OFFLINE_FETCHES && this._offlineOrder.length) {
       const trackId = this._offlineOrder.shift();
       const entry = this._offline.get(trackId);
       if (!entry || entry.state !== "pending") continue;
+      // The slot owns the way out of the fetch it started.
+      const controller = new AbortController();
+      this._offlineAbort.set(trackId, controller);
       this._offlineInFlight.add(trackId);
       this._offlineActive += 1;
-      this._fetchOffline(trackId).finally(() => {
+      this._fetchOffline(trackId, controller.signal).finally(() => {
+        this._offlineAbort.delete(trackId);
         this._offlineInFlight.delete(trackId);
         this._offlineActive -= 1;
         this._pumpOffline();
       });
     }
+  }
+
+  /** Let go of a fetch whose song is no longer one of the next few due. */
+  _abortOffline(trackId) {
+    const controller = this._offlineAbort.get(String(trackId || ""));
+    if (controller) controller.abort();
   }
 
   /**
@@ -1643,13 +1668,13 @@ class Player {
    * what `_load` looks for, and it is asked for the same way a download is:
    * the backend has to hold it first, which is what `_warm` is.
    */
-  async _fetchOffline(trackId) {
+  async _fetchOffline(trackId, signal = null) {
     try {
       const resolved = await this._variantFor({ id: trackId });
       const variantId = resolved?.variantId || "";
       if (!variantId) throw new Error("no source");
-      if (!(await this._warm(variantId))) throw new Error("the file did not arrive");
-      const response = await fetch(this._client().mediaUrl(variantId));
+      if (!(await this._warm(variantId, signal))) throw new Error("the file did not arrive");
+      const response = await fetch(this._client().mediaUrl(variantId), signal ? { signal } : undefined);
       if (!response.ok) throw new Error(`media ${response.status}`);
       const blob = await response.blob();
       const entry = this._offline.get(trackId);
@@ -1663,6 +1688,9 @@ class Player {
       // If this is the track on the element, the copy takes over right here.
       this._swapToOffline(trackId);
     } catch {
+      // Let go on purpose is not a failure: the song is still wanted and still
+      // pending, and the next pump picks it up in its new place.
+      if (signal?.aborted) return;
       const entry = this._offline.get(trackId);
       if (entry && entry.state === "pending") {
         entry.state = "failed";
@@ -2143,15 +2171,17 @@ class Player {
    * The backend does the downloading, so "fetched" means the status says so;
    * asking now is what makes the advance into the next track cost nothing.
    */
-  async _warm(variantId) {
+  async _warm(variantId, signal = null) {
     if (!variantId) return false;
     if (this._status.get(variantId)?.state === "ready") return true;
     try {
       const client = this._client();
       this._startDownload(variantId, client);
       // Nothing waits on this: it gives up rather than polling a stuck
-      // download for the rest of the session.
+      // download for the rest of the session - or when the slot it was waiting
+      // in was given to a song that is due sooner.
       for (let attempt = 0; attempt < 150; attempt += 1) {
+        if (signal?.aborted) return false;
         const status = await client.mediaStatus(variantId);
         if (this._status.get(variantId)?.state !== "ready") this._status.set(variantId, status);
         if (status.state === "ready") return true;

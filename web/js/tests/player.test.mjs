@@ -1151,7 +1151,9 @@ test("changing track does not abort a fetch in flight, and its bytes are kept", 
     await settle();
 
     assert.equal(player.offlineState("b"), "ready", "its bytes were kept, not thrown away");
-    assert.ok(signals.length >= 1 && signals.every((signal) => signal === undefined), "nothing was given an AbortSignal");
+    // The fetch started here, by hand, is not a slot the pump owns: nothing
+    // may abort it. (A fetch the pump starts is given its slot's signal.)
+    assert.equal(signals[0], undefined, "the fetch in hand was given no AbortSignal");
   } finally {
     player.queue = saved.queue;
     player._index = saved.index;
@@ -1408,6 +1410,8 @@ test("what is still to be downloaded follows a shuffle", async () => {
     player._fetchOffline = async (id) => {
       asked.push(id);
       await new Promise((resolve) => setTimeout(resolve, 40));
+      const entry = player._offline.get(id);
+      if (entry) entry.state = "ready";
     };
 
     player._prefetch();
@@ -1435,5 +1439,73 @@ test("what is still to be downloaded follows a shuffle", async () => {
     player.warm = saved.warm;
     player.setRoom(saved.room);
     player._shuffle = saved.shuffle;
+  }
+});
+
+// A fetch under way is only worth its slot while its song is still one of the
+// next few due. After a shuffle the songs in front have changed, and waiting on
+// a fetch that no longer matters is the queue downloading in an order it will
+// not hear: the fetch that fell down the order is let go and the slot goes to
+// the song that is due now.
+test("a fetch whose song is no longer due gives up its slot", async () => {
+  const saved = {
+    queue: player.queue,
+    index: player._index,
+    offline: player._offline,
+    bytes: player._offlineBytes,
+    order: player._offlineOrder,
+    wanted: player._offlineWanted,
+    inFlight: player._offlineInFlight,
+    active: player._offlineActive,
+    abort: player._offlineAbort,
+    fetchOffline: player._fetchOffline,
+    room: player._room,
+  };
+  const asked = [];
+  const aborted = [];
+  try {
+    player.setRoom(null);
+    player.queue = queue("a", "b", "c", "d");
+    player._index = 0;
+    player._offline = new Map(["a", "b", "c", "d"].map((id) => [id, { state: "pending", variantId: "", url: "", bytes: 0, at: Date.now() }]));
+    player._offlineBytes = 0;
+    player._offlineOrder = [];
+    player._offlineWanted = ["a", "b", "c", "d"];
+    player._offlineInFlight = new Set();
+    player._offlineActive = 0;
+    player._offlineAbort = new Map();
+    // Each fetch holds until its slot is let go.
+    player._fetchOffline = (id, signal) =>
+      new Promise((resolve) => {
+        asked.push(id);
+        signal?.addEventListener("abort", () => {
+          aborted.push(id);
+          resolve();
+        });
+      });
+
+    player._pumpOffline();
+    assert.deepEqual(asked, ["a", "b"], "the two slots went to the songs at the front");
+
+    // The queue is shuffled so that c and d are the next ones due.
+    player.queue = queue("c", "d", "a", "b");
+    player.keepOffline([track("c"), track("d"), track("a"), track("b")]);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    assert.deepEqual(aborted, ["a", "b"], "the fetches that fell out of the front were let go");
+    assert.ok(asked.includes("c") && asked.includes("d"), "and the songs now due were started");
+    assert.deepEqual(asked.slice(0, 4), ["a", "b", "c", "d"], "in the queue's order, not the old one");
+  } finally {
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._offline = saved.offline;
+    player._offlineBytes = saved.bytes;
+    player._offlineOrder = saved.order;
+    player._offlineWanted = saved.wanted;
+    player._offlineInFlight = saved.inFlight;
+    player._offlineActive = saved.active;
+    player._offlineAbort = saved.abort;
+    player._fetchOffline = saved.fetchOffline;
+    player.setRoom(saved.room);
   }
 });

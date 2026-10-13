@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { mediaCacheKey, totalBytes, plannedFetches } from "../offline.js";
+import { mediaCacheKey, queueOrder, totalBytes, plannedFetches } from "../offline.js";
 
 const HERE = "https://music.example.com";
 const ELSEWHERE = "https://other.example.com";
@@ -74,4 +74,34 @@ test("with no index at all, everything is fetched", () => {
 
 test("a song with no rendition yet is not planned", () => {
   assert.deepEqual(plannedFetches(null, [{ trackId: "a", variantId: "" }, { id: "b" }]), []);
+});
+
+// A playlist being kept is usually the queue being played, and the order it will
+// be heard in is the queue's - after a shuffle that is not the order the
+// playlist is stored in. The songs due next come first, highest undownloaded
+// first, and everything else keeps the list's own order.
+test("a kept playlist is fetched in the queue's order", () => {
+  const list = ["a", "b", "c", "d"].map((id) => ({ id }));
+  const shuffled = ["c", "d", "a", "b"].map((id) => ({ id }));
+
+  assert.deepEqual(
+    queueOrder(list, shuffled, 0).map((each) => each.id),
+    ["c", "d", "a", "b"],
+    "the queue's order wins over the list's"
+  );
+  assert.deepEqual(
+    queueOrder(list, shuffled, 2).map((each) => each.id),
+    ["a", "b", "c", "d"],
+    "and the songs already played are not ahead of the ones due"
+  );
+  assert.deepEqual(
+    queueOrder([{ id: "x" }, { id: "b" }, { id: "y" }], [{ id: "b" }], 0).map((each) => each.id),
+    ["b", "x", "y"],
+    "a song the queue does not hold keeps its place in the list, at the end"
+  );
+  assert.deepEqual(
+    queueOrder(list, [], 0).map((each) => each.id),
+    ["a", "b", "c", "d"],
+    "with no queue playing, nothing is reordered"
+  );
 });
