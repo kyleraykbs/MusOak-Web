@@ -1150,6 +1150,9 @@ class Player {
         this._streamFallback(attempt);
         return;
       }
+      // A load still in flight means this is the error of a file the element
+      // has already been moved off: it is not this song's failure to act on.
+      const settled = !this._loading;
       this._loading = false;
       this._buffering = false;
       // Offline, a file that will not play is a file this page does not have:
@@ -1157,6 +1160,7 @@ class Player {
       if (!this.online() && this._skipUnavailable()) return;
       this._error = "could not play that file";
       this._stateEvent();
+      if (!settled) return;
       this._failedVariant = String(this._variant || "");
       this._recoverFromFailure();
     });
