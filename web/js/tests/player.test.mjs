@@ -905,10 +905,14 @@ test("when its copy lands mid-song the music moves onto it without a gap", async
     await tick(120);
 
     assert.equal(player.audio, spare, "the copy is the element in hand now");
+    assert.equal(audio.paused, false, "and the routed element is still playing while the copy settles");
     assert.equal(spare.currentTime, 42.5, "at the position the music had reached");
     assert.deepEqual(played, ["blob:a"], "started rather than reloaded");
     assert.equal(player._pendingSeek, null, "with nothing left pending");
-    assert.equal(audio.paused, true, "and the routed element left behind");
+    // Both play for a moment first: the new element's first samples are behind
+    // the pipeline's latency, so the old one is not let go until they arrive.
+    await tick(200);
+    assert.equal(audio.paused, true, "and then the routed element is left behind");
     assert.equal(audio.volume, 1, "with its volume put back for the next hand-over");
   } finally {
     player.audio = saved.audio;

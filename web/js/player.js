@@ -76,6 +76,12 @@ const COPY_READY_TIMEOUT_MS = 2000;
 // heard as two of anything, long enough that the pause lands in silence.
 const HANDOVER_FADE_MS = 40;
 const HANDOVER_STEP_MS = 10;
+// How long both elements play before the one being left is faded out. `play()`
+// resolving is not the same as sound arriving - the new element's first samples
+// are behind the pipeline's own latency - and a fade that starts any earlier
+// ends in the hole it was meant to cover. Measured at ~120ms of silence on a
+// machine where the swap was otherwise seamless.
+const HANDOVER_OVERLAP_MS = 180;
 const clamp01 = (value) => Math.min(1, Math.max(0, value));
 
 // The bar is repainted from the audio element's own events, several times a
@@ -1762,7 +1768,10 @@ class Player {
     }
     if (from !== this.audio) return;
     this._adoptCopy(spare, at);
-    this._fadeOut(from);
+    // Both play for a moment before the old one is let go: the overlap is what
+    // covers the new element's pipeline latency, and the two are at the same
+    // position, so what is heard is one performance rather than a hole.
+    setTimeout(() => this._fadeOut(from), HANDOVER_OVERLAP_MS);
   }
 
   /** The second element becomes the one in hand, and the old one the spare. */
