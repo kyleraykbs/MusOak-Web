@@ -1509,3 +1509,72 @@ test("a fetch whose song is no longer due gives up its slot", async () => {
     player.setRoom(saved.room);
   }
 });
+
+// A transition stops the element for a moment so the old position is not read
+// as the next song's - and reporting "paused" to the lock screen there takes the
+// card away, and with it the page's standing as something that is playing, which
+// is what a backgrounded phone needs to be allowed to start the next file at
+// all. The card follows what the player means to do, not the element's instant.
+test("a transition keeps the lock screen's card playing", () => {
+  const session = { playbackState: "", setActionHandler() {}, setPositionState() {} };
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "navigator", {
+    value: { mediaSession: session },
+    configurable: true,
+  });
+  const saved = {
+    audio: player.audio,
+    queue: player.queue,
+    index: player._index,
+    wanted: player._playingWanted,
+    loading: player._loading,
+    room: player._room,
+    resume: player._resumeWanted,
+  };
+  const audio = {
+    src: "/media/v-a",
+    currentTime: 10,
+    duration: 200,
+    paused: false,
+    readyState: 4,
+    play() {
+      this.paused = false;
+      return { catch() {} };
+    },
+    pause() {
+      this.paused = true;
+    },
+  };
+  try {
+    player.setRoom(null);
+    player.audio = audio;
+    player.queue = queue("a", "b");
+    player._index = 0;
+    player._playingWanted = true;
+    player._positionEvent();
+    assert.equal(session.playbackState, "playing", "playing is playing");
+
+    // The next song is being fetched and the element is stopped for it.
+    player._loading = true;
+    audio.paused = true;
+    player._positionEvent();
+    assert.equal(session.playbackState, "playing", "the card stays while the next song is fetched");
+
+    // The listener pausing is a pause, and the card goes.
+    player.pause();
+    player._positionEvent();
+    assert.equal(session.playbackState, "paused", "a pause is a pause");
+  } finally {
+    player.audio = saved.audio;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._playingWanted = saved.wanted;
+    player._loading = saved.loading;
+    player.setRoom(saved.room);
+    player._resumeWanted = saved.resume;
+    clearInterval(player._resumeTimer);
+    player._resumeTimer = 0;
+    if (descriptor) Object.defineProperty(globalThis, "navigator", descriptor);
+    else delete globalThis.navigator;
+  }
+});

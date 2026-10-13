@@ -345,6 +345,11 @@ class Player {
     // already held can be sitting at its end, and playing it from there ends it
     // again at once.
     this._pendingSeek = null;
+    // Whether this player means to be playing, which is not the same as whether
+    // the element happens to be playing: a transition stops the element for a
+    // moment so the old position is not read as the new song's, and the lock
+    // screen must not be told the listener paused there.
+    this._playingWanted = false;
     // Which song has already had its one retry, and which rendition failed, so
     // a failure cannot loop on the same source for ever.
     this._retriedFor = "";
@@ -555,6 +560,7 @@ class Player {
   }
 
   pause() {
+    this._playingWanted = false;
     this._wantResume(false);
     this.audio?.pause();
   }
@@ -565,6 +571,7 @@ class Player {
       this.jumpTo(Math.max(this._index, 0));
       return;
     }
+    this._playingWanted = true;
     this._wantResume(true);
     const playing = this.audio.play();
     if (playing?.catch) playing.catch(() => { /* the browser refused; the button stays honest */ });
@@ -1234,7 +1241,9 @@ class Player {
     this._loading = false;
     if (!autoplay) {
       // The file is here and the bar shows where it is; the moment is someone
-      // else's to choose.
+      // else's to choose. The old song was stopped to fetch this one, so this
+      // is a stopped player, and the lock screen should say so.
+      this._playingWanted = false;
       this._stateEvent();
       this.renderBar();
       return;
@@ -2047,6 +2056,7 @@ class Player {
   _play() {
     const audio = this.audio;
     if (!audio) return;
+    this._playingWanted = true;
     const started = audio.play();
     if (started?.catch) {
       started.catch((error) => {
@@ -2201,6 +2211,7 @@ class Player {
   }
 
   _stopAudio() {
+    this._playingWanted = false;
     if (!this.audio) return;
     this.audio.pause();
     this.audio.removeAttribute("src");
@@ -2289,7 +2300,11 @@ class Player {
   _syncMediaSession() {
     const session = typeof navigator === "undefined" ? null : navigator.mediaSession;
     if (!session) return;
-    session.playbackState = this.isPaused() ? "paused" : "playing";
+    // The intent, not the element: a transition stops the element for a moment,
+    // and reporting "paused" there takes the lock screen's card away - and with
+    // it the page's standing as something that is playing, which is what a
+    // backgrounded phone needs to be allowed to start the next file at all.
+    session.playbackState = this._playingWanted ? "playing" : "paused";
     if (typeof session.setPositionState !== "function") return;
     const duration = this.measuredDurationMs();
     const position = this.positionMs();
