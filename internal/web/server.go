@@ -21,8 +21,8 @@ import (
 	"strings"
 	"time"
 
-	webui "codeberg.org/kyleraykbs/musoak-web"
-	"codeberg.org/kyleraykbs/musoak-web/internal/config"
+	webui "github.com/kyleraykbs/MusOak-Web"
+	"github.com/kyleraykbs/MusOak-Web/internal/config"
 	"crypto/sha256"
 	"encoding/hex"
 	"mime"

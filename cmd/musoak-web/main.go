@@ -12,8 +12,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"codeberg.org/kyleraykbs/musoak-web/internal/config"
-	"codeberg.org/kyleraykbs/musoak-web/internal/web"
+	"github.com/kyleraykbs/MusOak-Web/internal/config"
+	"github.com/kyleraykbs/MusOak-Web/internal/web"
 )
 
 func main() {

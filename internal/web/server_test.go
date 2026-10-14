@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"codeberg.org/kyleraykbs/musoak-web/internal/config"
+	"github.com/kyleraykbs/MusOak-Web/internal/config"
 	"os"
 	"path/filepath"
 )

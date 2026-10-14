@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"strings"
 
-	"codeberg.org/kyleraykbs/musoak-web/internal/config"
+	"github.com/kyleraykbs/MusOak-Web/internal/config"
 )
 
 // handleAPI routes the app's API calls to the backend the user chose.
