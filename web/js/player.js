@@ -1151,13 +1151,17 @@ class Player {
     }
 
     if (audio.src) {
-      // The old track is over: it must not be read as the new track's position
-      // while the new file is fetched.
+      // The old track is unloaded, not merely paused and rewound: while the next
+      // file is fetched, a play that comes from anywhere else - the retry of a
+      // refused play, a wake-up after a phone woke up - would start the song
+      // that was playing before, under a bar naming another one. An element
+      // with no source has nothing to start.
       audio.pause();
+      audio.removeAttribute("src");
       try {
-        audio.currentTime = 0;
+        audio.load();
       } catch {
-        /* nothing to rewind yet */
+        /* nothing to unload yet */
       }
     }
     this._emit("track-changed", track);

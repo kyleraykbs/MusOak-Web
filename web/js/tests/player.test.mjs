@@ -1752,3 +1752,70 @@ test("a room's song is fetched without waiting for its sources", async () => {
     player._status = saved.status;
   }
 });
+
+// Changing songs takes the last one off the element. Paused and rewound is not
+// enough: anything that asks the element to play while the next file is being
+// fetched - the retry of a refused play, a wake-up - started the song that was
+// playing before, under a bar naming the new one.
+test("the song that was playing is unloaded when the track changes", async () => {
+  const saved = {
+    audio: player.audio,
+    ensureAudio: player.ensureAudio,
+    queue: player.queue,
+    index: player._index,
+    client: player._client,
+    variantFor: player._variantFor,
+    ready: player._ready,
+    startDownload: player._startDownload,
+    prefetch: player._prefetch,
+    room: player._room,
+    pendingSeek: player._pendingSeek,
+  };
+  const audio = {
+    src: "/media/v-old",
+    currentTime: 42,
+    duration: 200,
+    paused: false,
+    readyState: 4,
+    removeAttribute(name) {
+      if (name === "src") this.src = "";
+    },
+    load() {},
+    pause() {
+      this.paused = true;
+    },
+    play() {
+      this.paused = false;
+      return { catch() {} };
+    },
+  };
+  try {
+    player.setRoom(null);
+    player.audio = audio;
+    player.ensureAudio = () => audio;
+    player.queue = queue("a");
+    player._index = 0;
+    player._startDownload = () => {};
+    player._prefetch = () => {};
+    player._variantFor = async () => ({ variantId: "v-a", sources: [], preferredVariantId: "" });
+    // The file is not here yet, which is the window this is about.
+    player._ready = () => new Promise(() => {});
+
+    await player._load(0, { autoplay: true });
+
+    assert.equal(audio.src, "", "the old song is off the element while the next one is fetched");
+    assert.equal(audio.paused, true, "and it is not playing");
+  } finally {
+    player.audio = saved.audio;
+    player.ensureAudio = saved.ensureAudio;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._client = saved.client;
+    player._variantFor = saved.variantFor;
+    player._ready = saved.ready;
+    player._startDownload = saved.startDownload;
+    player._prefetch = saved.prefetch;
+    player.setRoom(saved.room);
+    player._pendingSeek = saved.pendingSeek;
+  }
+});

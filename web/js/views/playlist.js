@@ -434,7 +434,13 @@ async function loadPlaylist() {
               track,
               position,
               client,
-              onActivate: () => playTracks(tracks, position, { playlistId: activeId }),
+              // Clicking a song queues the list up to it, not the whole list:
+              // what is below the click is not what was asked for, and a queue
+              // of everything makes every later choice a place in a long list
+              // rather than the song that was picked. "Play all" is the button
+              // for all of it.
+              onActivate: () =>
+                playTracks(tracks.slice(0, position + 1), position, { playlistId: activeId }),
               menu: trackMenu(track, [{ label: "Remove from playlist", onClick: () => removeEntry(position) }], {
                 playlistId: activeId,
               }),
