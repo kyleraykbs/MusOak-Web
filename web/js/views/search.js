@@ -136,37 +136,16 @@ function playTracks(tracks, start = 0) {
 }
 
 /** A result opens what it is: an artist into their page, an album into theirs,
- *  and a provider playlist into its own. */
+ *  and a platform playlist into a page of the songs the platform lists for it.
+ *  Browsing is not importing: the songs are read live, nothing is written, and
+ *  bringing them in is a button on that page. */
 function openCollection(kind, item) {
-  if (kind === "artist" || kind === "album") navigate(kind, { id: item.id, from: { view: "search", params: {} } });
-  else void openPlaylist(item);
-}
-
-/** A playlist opens where it is. One that is not in the library yet has no page
- *  to open, so it is brought in first - that is what makes its tracks playable -
- *  and the click then lands on it. What it used to do was sync and say so in a
- *  toast, leaving the click nowhere, with a count that read a field the response
- *  does not carry and so always said "0 track(s)". */
-async function openPlaylist(item) {
   const from = { view: "search", params: {} };
-  // Already here: its page, without asking the provider anything.
-  if (item.synced) {
-    navigate("playlist", { id: item.id, from });
+  if (kind === "artist" || kind === "album") {
+    navigate(kind, { id: item.id, from });
     return;
   }
-  const client = currentClient();
-  if (!client) return;
-  try {
-    const result = await client.syncPlaylist(item.id, item.provider || "");
-    const id = String(result?.playlist?.id || "");
-    if (id) {
-      navigate("playlist", { id, from });
-      return;
-    }
-    toast(`Synced ${item.title || "the playlist"}: ${Number(result?.added) || 0} track(s)`);
-  } catch (error) {
-    handle(error);
-  }
+  navigate("providerPlaylist", { id: item.id, from });
 }
 
 function collectionMenu(kind, item) {

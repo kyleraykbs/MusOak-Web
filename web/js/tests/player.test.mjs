@@ -1863,3 +1863,44 @@ test("the song being waited on is downloaded as the primary", async () => {
     player._status = saved.status;
   }
 });
+
+// A warm that failed is asked for again. The fetch can fail for a reason that
+// has nothing to do with the song - a provider hiccup, or a play taking the
+// pipe for something somebody was waiting on - and remembering the failure as
+// "already asked for" is how a room joined mid-song ends up fetching nothing:
+// the queue ahead of the song stays cold for the rest of the session.
+test("a warm that fails is asked for again", async () => {
+  const starts = [];
+  const tick = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const client = {
+    startDownload: async (variantId) => {
+      starts.push(variantId);
+      return { state: "failed" };
+    },
+    mediaStatus: async () => ({ state: "failed" }),
+  };
+  const saved = {
+    client: player._client,
+    started: player._started,
+    status: player._status,
+    variantFor: player._variantFor,
+  };
+  try {
+    player._client = () => client;
+    player._started = new Set();
+    player._status = new Map();
+    player._variantFor = async () => ({ variantId: "v-a" });
+
+    player.warm({ id: "t-a", title: "A song" });
+    for (let i = 0; i < 8; i += 1) await tick(0);
+    player.warm({ id: "t-a", title: "A song" });
+    for (let i = 0; i < 8; i += 1) await tick(0);
+
+    assert.deepEqual(starts, ["v-a", "v-a"], "the second warm asks again after the first failed");
+  } finally {
+    player._client = saved.client;
+    player._started = saved.started;
+    player._status = saved.status;
+    player._variantFor = saved.variantFor;
+  }
+});

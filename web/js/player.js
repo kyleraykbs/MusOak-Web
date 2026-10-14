@@ -2247,9 +2247,21 @@ class Player {
         const status = await client.mediaStatus(variantId);
         if (this._status.get(variantId)?.state !== "ready") this._status.set(variantId, status);
         if (status.state === "ready") return true;
-        if (status.state === "failed") return false;
+        if (status.state === "failed") {
+          // The fetch failed - a provider hiccup, or a play that took the pipe
+          // for a song somebody was waiting on. Forget the ask, or this variant
+          // is never requested again and the room's next songs are never
+          // fetched ahead of time: which is a room joined mid-song that sits
+          // there without downloading a thing.
+          this._started.delete(variantId);
+          return false;
+        }
         await sleep(POLL_MS);
       }
+      // Nothing came of it in the time this was willing to wait: the ask is
+      // forgotten so the next warm can make it again. The server deduplicates
+      // the request anyway, so asking twice costs nothing.
+      this._started.delete(variantId);
     } catch {
       /* the track will say so when it is reached */
     }

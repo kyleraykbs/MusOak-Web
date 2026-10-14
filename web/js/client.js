@@ -694,6 +694,18 @@ export class Client {
     }));
   }
 
+  /**
+   * A platform playlist as the provider has it, tracks and all. Nothing is
+   * imported: this is the read a click on a playlist in search does, so the
+   * songs are on screen without the library changing.
+   */
+  providerPlaylist(id) {
+    return this.get(`/api/v1/provider-playlists/${id}`).then((payload) => ({
+      playlist: payload?.playlist || {},
+      tracks: payload?.tracks || [],
+    }));
+  }
+
   syncPlaylist(playlistId, provider = "") {
     const body = provider ? { provider } : {};
     return this.post(`/api/v1/playlists/${playlistId}/sync`, body).then((payload) => ({

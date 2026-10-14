@@ -933,3 +933,29 @@ test("coming back online puts the follower on the room's own song again", async 
     `the room's song is loaded (${player.plays.at(-1)?.track?.id})`
   );
 });
+
+// The room's pause has to reach this member's own player. It is the one action
+// where the room and the client disagree in the middle of doing nothing: the
+// room says paused, this page's sound is still going, and a button that only
+// stops the bot is a button that did not work.
+test("the room's pause pauses this member's own player", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const client = fakeClient({ memberId: SAM });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1", rejoin: true });
+  const track = item("a1", "first", KYLE);
+  const socket = client.calls.sockets[0];
+
+  client.roomData = roomWith(track, { started: true, paused: false, atMs: Date.now() });
+  socket.onEvent({ type: "playback", roomId: "room-1", seq: 1, data: { current: client.roomData.current } });
+  assert.ok(await waitFor(() => player.plays.length === 1 && player.paused === false), "the room's song plays here");
+
+  client.roomData = roomWith(track, { started: true, paused: true, positionMs: 4000, atMs: Date.now() });
+  socket.onEvent({ type: "playback", roomId: "room-1", seq: 2, data: { current: client.roomData.current } });
+  assert.ok(await waitFor(() => player.paused === true), "the room's pause reaches this page's player");
+
+  client.roomData = roomWith(track, { started: true, paused: false, positionMs: 4000, atMs: Date.now() });
+  socket.onEvent({ type: "playback", roomId: "room-1", seq: 3, data: { current: client.roomData.current } });
+  assert.ok(await waitFor(() => player.paused === false), "and the room's play starts it again");
+});

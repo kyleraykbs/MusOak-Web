@@ -294,3 +294,36 @@ test("a server that refuses is a server that answered", async () => {
   assert.equal(serverAnswered(new Error("network")), false);
   assert.equal(serverAnswered(undefined), false);
 });
+
+// Clicking a playlist in search opens the platform's list: the songs as the
+// provider has them, read live, with the import as a button. This is the half
+// that used to be a sync behind the click - which imported nothing worth having
+// and left "playlist not found" when it then tried to open a library page that
+// did not exist yet.
+test("a platform playlist lists its songs and imports only when asked", async () => {
+  const { playlistTrackRows, importIntoLibrary } = await import("../views/provider-playlist.js");
+
+  const tracks = [
+    { providerTrackId: "p1", title: "First", artists: ["Someone"], durationMs: 185000 },
+    { providerTrackId: "p2", title: "Second", artists: ["Other"], durationMs: 0 },
+  ];
+  const rows = playlistTrackRows(null, tracks);
+  assert.equal(rows.length, 2, "one row per song the provider lists");
+  assert.ok(!String(rows[0].className || "").includes("clickable"), "the rows are not rows you can play: nothing is in the library yet");
+  const titles = rows.map(
+    (row) => row.children.find((child) => child.className === "grow")?.children?.[0]?.textContent
+  );
+  assert.deepEqual(titles, ["First", "Second"]);
+
+  const calls = [];
+  const client = {
+    syncPlaylist: async (id, provider) => {
+      calls.push([id, provider]);
+      return { playlist: { id: "local-1" }, added: 2 };
+    },
+  };
+  assert.deepEqual(calls, [], "listing the songs imports nothing");
+  const imported = await importIntoLibrary(client, { id: "row-1", provider: "ytmusic" });
+  assert.deepEqual(calls, [["row-1", "ytmusic"]], "the import asks the server once, with the provider");
+  assert.deepEqual(imported, { id: "local-1", added: 2 }, "and answers with where it landed");
+});

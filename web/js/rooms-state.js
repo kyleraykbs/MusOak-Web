@@ -1053,7 +1053,12 @@ async function followRoom(running) {
     itemId: running.itemId,
     loaded: onTrack && running.loadedItemId === itemId && Boolean(running.variantId),
     loading: onTrack && Boolean(media.loading || media.buffering),
-    playing: Boolean(current.started) && !current.paused && !player.isPaused(),
+    // Whether this member's own player is playing - which is what pause and
+    // resume act on. Folding the room's own state into this is what made a room
+    // pause a no-op on this page: `playing` was already false because the room
+    // was paused, so the branch that pauses the local player never ran, and the
+    // sound kept going until a refresh. The room's state travels as `current`.
+    playing: !player.isPaused(),
     autoplay: Boolean(current.started) && !current.paused,
     localPositionMs: player.positionMs?.() || 0,
     measuredMs: player.measuredDurationMs?.() || 0,

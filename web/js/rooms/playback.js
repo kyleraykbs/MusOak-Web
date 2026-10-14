@@ -101,7 +101,10 @@ export function nextItem(state, playedItemId) {
  *               at the room's position without playing
  *   `advance` — this member has finished `itemId` and the room has not said so
  *               yet: move to `nextItemId` at once, from the start
- *   `pause` / `resume` — the room's pause is this member's pause
+ *   `pause` / `resume` — the room's pause is this member's pause. `input.playing`
+ *               is whether *this member's* player is playing, not whether the
+ *               room is: the two are different questions and mixing them is
+ *               what stopped a room pause from reaching the local player.
  *   `seek`    — a real gap: put this member at `positionMs`
  *   `hold`    — nothing to do; keep playing
  */

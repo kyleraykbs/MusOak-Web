@@ -9,7 +9,7 @@ import { state, saveLocal } from "../state.js";
 import { player } from "../player.js";
 import { artworkTile, trackMenu } from "./playlist.js";
 import { avatarFor, inviteFriendsToRoom } from "./share.js";
-import { listDrag, dragHandle, queueButton, roomQueueTrack, titleClass, heldBadge, orderFromPlaying, roomRowSubtitle, artistLine } from "./queue.js";
+import { listDrag, dragHandle, roomQueueTrack, titleClass, heldBadge, orderFromPlaying, roomRowSubtitle, artistLine } from "./queue.js";
 import {
   currentRoom,
   closedRoomReason,
@@ -365,7 +365,6 @@ function queueRow(room, item, index, mine, draggable = false, playingNow = false
     heldBadge(String(item.trackId || "")),
     // The plus queues the song and the menu holds its other actions, the same
     // way round as the player's own queue, so both lists read the same.
-    queueButton(roomQueueTrack(item)),
     iconButton("dots", {
       title: "Song actions",
       class: "btn flat small",

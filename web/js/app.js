@@ -29,6 +29,7 @@ const VIEW_MODULES = [
   "./views/catalog.js",
   "./views/playlists.js",
   "./views/playlist.js",
+  "./views/provider-playlist.js",
   "./views/favourites.js",
   "./views/history.js",
   "./views/queue.js",

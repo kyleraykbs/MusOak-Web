@@ -603,10 +603,10 @@ function queueRow(projection, row) {
   // when the server is out of reach.
   const badge = heldBadge(row.track?.id || row.trackId || row.key);
   if (badge) buttons.push(badge);
-  // The queue button and the menu every song has, wherever it is listed: the
-  // track's own actions, with the plus just before the menu.
+  // The menu a song has wherever it is listed. No plus here: these rows are the
+  // queue, and a button that queues what is already queued is a button that
+  // cannot do anything.
   if (row.track?.id) {
-    buttons.push(queueButton(row.track));
     buttons.push(
       iconButton("dots", {
         title: "Song actions",
