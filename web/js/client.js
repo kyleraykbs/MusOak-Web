@@ -675,6 +675,8 @@ export class Client {
     return this.post(`/api/v1/playlists/${playlistId}/sync`, body).then((payload) => ({
       playlist: payload?.playlist || {},
       tracks: payload?.tracks || [],
+      added: Number(payload?.added) || 0,
+      providerErrors: payload?.providerErrors || [],
     }));
   }
 
