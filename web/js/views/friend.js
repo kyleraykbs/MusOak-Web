@@ -20,7 +20,7 @@ import {
   avatarFor, displayName, driftDecision, inviteToRoom, isOnline, listeningLine,
   queueTrack, shareTrack, DRIFT_TOLERANCE_MS, FOLLOW_POLL_MS,
 } from "./share.js";
-import { artistLine, artistLineNode } from "./queue.js";
+import { artistLine, artistLineNode, queueButton } from "./queue.js";
 import { trackMenu } from "./playlist.js";
 import { uploadTrack } from "./manage.js";
 
@@ -120,6 +120,7 @@ function trackRow(client, track, { note = "" } = {}) {
     ),
     track?.durationMs ? h("span", { class: "time", text: fmtDuration(track.durationMs) }) : null,
     starButton(track.id),
+    queueButton(track),
     menuButton((anchor) => popover(anchor, trackMenu(track)))
   );
 }

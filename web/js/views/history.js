@@ -8,7 +8,7 @@
 import { currentClient, on, registerView, requireLogin } from "../app.js";
 import { fmtDuration, h, mount } from "../dom.js";
 import { isSignedIn } from "../state.js";
-import { artistLine, playTracks, reportError } from "./queue.js";
+import { artistLine, playTracks, queueButton, reportError } from "./queue.js";
 import { artworkTile, emptyState } from "./playlist.js";
 
 registerView({
@@ -139,6 +139,7 @@ function row(item, client, onActivate) {
       h("div", { class: "title", text: track.title || "" }),
       h("div", { class: "subtitle", text: artistLine(track) })
     ),
-    h("span", { class: "time", text: item.detail })
+    h("span", { class: "time", text: item.detail }),
+    queueButton(track)
   );
 }
