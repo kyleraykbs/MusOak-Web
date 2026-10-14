@@ -16,7 +16,7 @@
 // reducers be tested without a browser.
 
 import { state, rememberRoom, forgetRoom } from "./state.js";
-import { decide, driftAction } from "./rooms/playback.js";
+import { TOLERANCE_MS, decide, driftAction, roomLength, roomPosition } from "./rooms/playback.js";
 import { toast } from "./dom.js";
 
 /** Who may drive a room. */
@@ -35,7 +35,7 @@ export const EVENTS = {
 };
 
 /** How far this client may run from the room's position before it seeks. */
-export const DRIFT_TOLERANCE_MS = 2000;
+export const DRIFT_TOLERANCE_MS = TOLERANCE_MS;
 
 /** How often the local player is checked against the room's position. */
 export const FOLLOW_TICK_MS = 500;
@@ -440,16 +440,16 @@ export function pendingQueue(state) {
  * measured in.
  */
 export function positionMs(state, nowMs = Date.now()) {
-  const current = state.current;
-  if (!current || !current.started) return current ? num(current.positionMs) : 0;
-  if (current.paused) return num(current.positionMs);
-  const serverNow = num(nowMs) + num(state.serverOffsetMs);
-  return Math.max(0, num(current.positionMs) + (serverNow - num(current.atMs)));
+  if (!state.current) return 0;
+  // The arithmetic is the core's, next to the drift rule that measures against
+  // it and the transition that uses it: one implementation of where the room
+  // is, not two that can disagree.
+  return roomPosition(state.current, num(nowMs) + num(state.serverOffsetMs));
 }
 
 /** How long the current song runs for, as the room knows it. */
 export function durationMs(state) {
-  return state.current ? num(state.current.durationMs) : 0;
+  return roomLength(state.current);
 }
 
 /** Move one id to just before `beforeId` (or to the end when it is empty). */
