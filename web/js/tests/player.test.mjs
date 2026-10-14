@@ -1821,3 +1821,45 @@ test("the song that was playing is unloaded when the track changes", async () =>
     player._pendingSeek = saved.pendingSeek;
   }
 });
+
+// The song being loaded is asked for as the primary download, and one that is
+// already being fetched ahead of time is asked again as primary, so the backend
+// knows to give it the pipe instead of letting the prefetch's streams compete
+// with it. Everything else is asked for as background work.
+test("the song being waited on is downloaded as the primary", async () => {
+  const calls = [];
+  const tick = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const client = {
+    startDownload: async (...args) => {
+      calls.push(args);
+      return {};
+    },
+  };
+  const saved = { client: player._client, started: player._started, status: player._status };
+  try {
+    player._client = () => client;
+    player._started = new Set();
+    player._status = new Map();
+
+    player._startDownload("v-playing", null, true);
+    player._startDownload("v-next");
+    player._startDownload("v-playing", null, true);
+    player._startDownload("v-next");
+    await tick(0);
+    await tick(0);
+
+    assert.deepEqual(
+      calls,
+      [
+        ["v-playing", false, true],
+        ["v-next", false, false],
+        ["v-playing", false, true],
+      ],
+      "the played song is primary (twice, so a warm-ahead fetch is promoted), the next one is not, and a background fetch is only asked once"
+    );
+  } finally {
+    player._client = saved.client;
+    player._started = saved.started;
+    player._status = saved.status;
+  }
+});

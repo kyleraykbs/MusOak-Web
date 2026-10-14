@@ -637,8 +637,15 @@ export class Client {
 
   // --- media -------------------------------------------------------------
 
-  startDownload(variantId, wait = true) {
-    return this.post(`/api/v1/media/${variantId}/download${wait ? "?wait=1" : ""}`).then((value) => value || {});
+  /**
+   * Ask the backend for a variant's file. `wait` waits for it to be whole
+   * before answering; `priority` marks it as the song somebody is waiting to
+   * hear, which gives it the whole pipe - the server cancels the downloads
+   * running for anything else and starts nothing new until it is done.
+   */
+  startDownload(variantId, wait = true, priority = false) {
+    const query = [wait ? "wait=1" : "", priority ? "priority=1" : ""].filter(Boolean).join("&");
+    return this.post(`/api/v1/media/${variantId}/download${query ? `?${query}` : ""}`).then((value) => value || {});
   }
 
   mediaStatus(variantId) {

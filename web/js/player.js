@@ -1241,7 +1241,12 @@ class Player {
       // download reaches the position anyway. Asked for now, shown as
       // downloading in the bar, played when it is whole - and the server serves
       // a whole file with byte ranges, so every seek after that is instant.
-      this._startDownload(resolved.variantId);
+      // Primary: this is the song the bar is naming and a person is waiting for,
+      // so the backend gives it the whole pipe - the prefetch's downloads for
+      // other songs are cancelled for it, and it starts as fast as the provider
+      // can go. The songs after this one are asked for below, which is why they
+      // are not primary: they are for later.
+      this._startDownload(resolved.variantId, null, true);
       // The songs after this one are asked for now, while this one downloads:
       // the page holds them by the time they are reached, and outside a room
       // it keeps its own copies of the window ahead as it always did. This is
@@ -1450,13 +1455,15 @@ class Player {
     };
   }
 
-  /** Wait until the backend has the file, showing how far along it is. */
-  async _ready(variantId, token) {
+  /** Wait until the backend has the file, showing how far along it is. A wait
+   *  for the song a person is waiting to hear is primary; a warm-ahead is not,
+   *  so that one queues behind whatever is being listened to. */
+  async _ready(variantId, token, primary = false) {
     const ready = this._status.get(variantId);
     if (ready?.state === "ready") return ready;
     const client = this._client();
     this._loading = true;
-    this._startDownload(variantId, client);
+    this._startDownload(variantId, client, primary);
     const deadline = Date.now() + READY_TIMEOUT_MS;
     for (;;) {
       let status;
@@ -1503,7 +1510,9 @@ class Player {
    * instant instead of a re-buffer. The bar says it is downloading while it is.
    */
   async _waitForFile(attempt) {
-    const status = await this._ready(attempt.variantId, attempt.token);
+    // Primary: the player is holding a load on this file, so it owns the pipe
+    // until it is here.
+    const status = await this._ready(attempt.variantId, attempt.token, true);
     if (attempt.token !== this._token || status === null) return;
     if (status.state === "failed") {
       this._loading = false;
@@ -1534,13 +1543,16 @@ class Player {
     this._setBuffering(audio.readyState < 3);
   }
 
-  /** Ask the backend for a file, once. */
-  _startDownload(variantId, client = null) {
-    if (!variantId || this._started.has(variantId)) return;
+  /** Ask the backend for a file, once - twice if this is the song being waited
+   *  on, since a fetch that is already running ahead of time has to be told that
+   *  it is now the one holding up a person. */
+  _startDownload(variantId, client = null, primary = false) {
+    if (!variantId) return;
+    if (this._started.has(variantId) && !primary) return;
     if (this._status.get(variantId)?.state === "ready") return;
     this._started.add(variantId);
     Promise.resolve()
-      .then(() => (client || this._client()).startDownload(variantId, false))
+      .then(() => (client || this._client()).startDownload(variantId, false, primary))
       .then((status) => {
         if (!status || typeof status !== "object") return;
         // The answer to "start downloading" is never that the file is ready:
