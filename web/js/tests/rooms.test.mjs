@@ -959,3 +959,43 @@ test("the room's pause pauses this member's own player", async (t) => {
   socket.onEvent({ type: "playback", roomId: "room-1", seq: 3, data: { current: client.roomData.current } });
   assert.ok(await waitFor(() => player.paused === false), "and the room's play starts it again");
 });
+
+// The same thing through the engine, where it was seen: a song change moves the
+// member on, the room's own beat is still naming the song they left, and the
+// pause pressed in that window has to reach their player.
+test("a pause pressed after a song change reaches this member", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const first = item("a1", "first", KYLE);
+  const second = item("b1", "second", SAM);
+  const room = {
+    ...BASE_ROOM,
+    current: { item: first, positionMs: 0, atMs: Date.now(), started: true, paused: false, durationMs: 30000 },
+    queues: { [KYLE]: [first], [SAM]: [second] },
+    masterQueue: [first, second],
+  };
+  const client = fakeClient({ room, memberId: SAM });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1", rejoin: true });
+  assert.ok(await waitFor(() => player.plays.length === 1 && player.current()?.id === first.trackId));
+
+  // The local file runs out first: the member moves to the next song by itself.
+  player.ended = true;
+  player.emit("position");
+  assert.ok(await waitFor(() => player.plays.length === 2), "the member advanced locally");
+
+  // The room pauses while its own beat still names the song that just played.
+  const socket = client.calls.sockets[0];
+  socket.onEvent({
+    type: "playback", roomId: "room-1", seq: 2,
+    data: { current: { item: first, positionMs: 0, atMs: Date.now(), started: true, paused: true, durationMs: 30000 } },
+  });
+  assert.ok(await waitFor(() => player.paused === true), "the pause reaches the player despite the stale item");
+
+  // And the room playing again starts this member again.
+  socket.onEvent({
+    type: "playback", roomId: "room-1", seq: 3,
+    data: { current: { item: first, positionMs: 0, atMs: Date.now(), started: true, paused: false, durationMs: 30000 } },
+  });
+  assert.ok(await waitFor(() => player.paused === false), "and its play starts the member again");
+});

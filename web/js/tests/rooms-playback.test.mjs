@@ -156,3 +156,21 @@ test("drift inside the tolerance holds; beyond it, one seek", () => {
   assert.equal(badlyBehind.positionMs, 0);
   assert.equal(badlyBehind.direction, "forward");
 });
+// A member who has moved on to the next song still belongs to the room: the
+// beat can be naming the song they finished, and a pause or a play in that
+// window is the room's, not the stale item's. Swallowing those with the
+// "already moved past" rule is a pause button that does nothing for a second
+// after every song change.
+test("the room's pause reaches a member who has moved past the beat's song", () => {
+  const past = new Set(["a"]);
+  const current = running({ id: "a", paused: true, started: true });
+
+  const paused = decide({ ...base, current, advancedPast: past });
+  assert.equal(paused.action, "pause", "a paused room pauses them despite the stale item");
+
+  const playingAgain = decide({ ...base, current: running({ id: "a", paused: false }), advancedPast: past, playing: false });
+  assert.equal(playingAgain.action, "resume", "and its play starts them again");
+
+  const quietAndPlaying = decide({ ...base, current, advancedPast: past, playing: false });
+  assert.equal(quietAndPlaying.action, "hold", "nothing to do when the room is paused and so are they");
+});

@@ -120,8 +120,15 @@ export function decide(input) {
 
   // A song this member already moved past: the server's own advance is on its
   // way (the tick lags by up to a second), and following the stale anchor would
-  // pull them back onto a song they have finished. Leave it alone.
-  if (advancedPast.has(itemId)) return { action: "hold" };
+  // pull them back onto a song they have finished. There is nothing to load -
+  // but the room's transport still governs this member's, so a pause here
+  // pauses them and a play starts them again. Swallowing those with the load is
+  // how a pause pressed just after a song change did nothing at all.
+  if (advancedPast.has(itemId)) {
+    if (current.paused) return playing ? { action: "pause" } : { action: "hold" };
+    if (!playing) return { action: "resume" };
+    return { action: "hold" };
+  }
 
   // The file for this item is on its way: nothing to decide until it lands.
   if (loaded && input.loading) return { action: "hold", status: "Loading the track…" };
