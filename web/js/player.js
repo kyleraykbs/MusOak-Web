@@ -1222,21 +1222,16 @@ class Player {
       this._streaming = null;
       audio.src = kept.url;
     } else {
-      // Stream, don't wait: the routed URL is playable before the backend has
-      // finished the file, because the server proxies the provider's bytes. The
-      // whole file is still downloaded in the background, so the page's own copy
-      // can take over mid-song (see `_swapToOffline`), and so offline play has
-      // something to keep. Waiting for the backend to hold it is the fallback
-      // only, and lives in the element's error handler (see `_streamFallback`).
-      this._streaming = {
-        token,
-        trackId: String(track.id || ""),
-        variantId: resolved.variantId,
-        autoplay: Boolean(autoplay),
-        fellBack: false,
-      };
+      // The file is fetched and then played, rather than streamed as it is
+      // fetched. A stream buys seconds at the start and costs a song that cannot
+      // be seeked: the routed bytes start at zero, so a room's position or a
+      // resumed one plays the beginning for a moment and then stalls until the
+      // download reaches the position anyway. Asked for now, shown as
+      // downloading in the bar, played when it is whole - and the server serves
+      // a whole file with byte ranges, so every seek after that is instant.
       this._startDownload(resolved.variantId);
-      audio.src = this._client().mediaUrl(resolved.variantId);
+      this._waitForFile({ variantId: resolved.variantId, token, autoplay: Boolean(autoplay) });
+      return;
     }
     this._loading = false;
     if (!autoplay) {
@@ -1483,7 +1478,14 @@ class Player {
    * started never runs one - and it stops as soon as the file is ready or the
    * track changes.
    */
-  async _streamFallback(attempt) {
+  /**
+   * Fetch the file the load is for, and play it when the backend holds it.
+   *
+   * This is the load's own path now, not a fallback: what plays is always a
+   * whole file, which is what makes a seek - a room's position, a resumed one -
+   * instant instead of a re-buffer. The bar says it is downloading while it is.
+   */
+  async _waitForFile(attempt) {
     const status = await this._ready(attempt.variantId, attempt.token);
     if (attempt.token !== this._token || status === null) return;
     if (status.state === "failed") {
@@ -1504,18 +1506,14 @@ class Player {
     if (!audio) return;
     audio.src = this._client().mediaUrl(attempt.variantId);
     this._loading = false;
+    this._streaming = null;
     this._stateEvent();
     this.renderBar();
     if (!attempt.autoplay) return;
     this._wantResume(true);
-    const started = audio.play();
-    if (started?.catch) {
-      started.catch((error) => {
-        this._blocked = true;
-        this._stateEvent();
-        this._blockedError = error?.message || "";
-      });
-    }
+    // The position the song was asked to start at, applied before any sound -
+    // the file is whole here, and a seek into it is free.
+    this._startAudio(this._pendingSeek);
     this._setBuffering(audio.readyState < 3);
   }
 
@@ -2022,8 +2020,10 @@ class Player {
       // for the backend's own download instead, and then play that.
       const attempt = this._streaming;
       if (attempt && !attempt.fellBack && attempt.token === this._token) {
+        // Only a room member that plays what the room assigns reaches here: a
+        // file that would not start is asked for again through the fetch path.
         attempt.fellBack = true;
-        this._streamFallback(attempt);
+        this._waitForFile(attempt);
         return;
       }
       // A load still in flight means this is the error of a file the element

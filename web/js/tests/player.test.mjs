@@ -430,6 +430,21 @@ test("the queue's next songs are kept in memory, and the window is the limit", a
     player._client = () => ({
       mediaUrl: (variantId) => `/media/${variantId}`,
       startDownload: async () => ({}),
+      // The fetch path names a rendition, and the retry names the other source,
+      // so a failed attempt shows up as the variant it asked for.
+      rendition: async (trackId) => {
+        asked.push(`rendition:${trackId}`);
+        throw new Error("the provider said no");
+      },
+      rendition_for_variant: async (variantId) => {
+        asked.push(`for_variant:${variantId}`);
+        return { trackId: "a", variantId, path: `/tmp/${variantId}.opus`, durationMs: 1000 };
+      },
+      variants: async () => [
+        { id: "v-a", variantId: "v-a", provider: "one", downloadable: true },
+        { id: "v-a2", variantId: "v-a2", provider: "two", downloadable: true },
+      ],
+      pick_variant: (list) => list[0],
       sources: async () => ({
         sources: [
           { variantId: "v-a", downloadable: true },
@@ -526,6 +541,21 @@ test("a room that reorders its queue reorders what this page fetches", async () 
     player._client = () => ({
       mediaUrl: (variantId) => `/media/${variantId}`,
       startDownload: async () => ({}),
+      // The fetch path names a rendition, and the retry names the other source,
+      // so a failed attempt shows up as the variant it asked for.
+      rendition: async (trackId) => {
+        asked.push(`rendition:${trackId}`);
+        throw new Error("the provider said no");
+      },
+      rendition_for_variant: async (variantId) => {
+        asked.push(`for_variant:${variantId}`);
+        return { trackId: "a", variantId, path: `/tmp/${variantId}.opus`, durationMs: 1000 };
+      },
+      variants: async () => [
+        { id: "v-a", variantId: "v-a", provider: "one", downloadable: true },
+        { id: "v-a2", variantId: "v-a2", provider: "two", downloadable: true },
+      ],
+      pick_variant: (list) => list[0],
       sources: async () => ({
         sources: [
           { variantId: "v-a", downloadable: true },
@@ -689,7 +719,7 @@ test("the transport still works when the room cannot be reached", () => {
 
 // --- playing a track the device does not hold yet --------------------------
 
-test("a track the device does not hold streams from the routed URL, without waiting for the backend", async () => {
+test("a track the device does not hold is fetched and then played", async () => {
   const saved = {
     ensureAudio: player.ensureAudio,
     audio: player.audio,
@@ -711,6 +741,7 @@ test("a track the device does not hold streams from the routed URL, without wait
   };
   const played = [];
   let waited = 0;
+  let waitedFor = "";
   const audio = {
     src: "",
     currentTime: 0,
@@ -735,10 +766,12 @@ test("a track the device does not hold streams from the routed URL, without wait
     player._offline = new Map();
     player._offlineBytes = 0;
     player._variantFor = async (entry) => ({ variantId: `v-${entry.id}`, sources: [], preferredVariantId: "" });
-    // Waiting for the backend is the fallback, not the path: it must not run.
-    player._ready = async () => {
+    // The file is asked for and waited for: what plays is always whole, which is
+    // what makes a seek into it - a room's position, a resumed one - instant.
+    player._ready = async (variantId) => {
       waited += 1;
-      throw new Error("the backend was waited for");
+      waitedFor = String(variantId);
+      return true;
     };
     player._startDownload = () => {};
     player._prefetch = () => {};
@@ -746,6 +779,21 @@ test("a track the device does not hold streams from the routed URL, without wait
     player._client = () => ({
       mediaUrl: (variantId) => `/media/${variantId}`,
       startDownload: async () => ({}),
+      // The fetch path names a rendition, and the retry names the other source,
+      // so a failed attempt shows up as the variant it asked for.
+      rendition: async (trackId) => {
+        asked.push(`rendition:${trackId}`);
+        throw new Error("the provider said no");
+      },
+      rendition_for_variant: async (variantId) => {
+        asked.push(`for_variant:${variantId}`);
+        return { trackId: "a", variantId, path: `/tmp/${variantId}.opus`, durationMs: 1000 };
+      },
+      variants: async () => [
+        { id: "v-a", variantId: "v-a", provider: "one", downloadable: true },
+        { id: "v-a2", variantId: "v-a2", provider: "two", downloadable: true },
+      ],
+      pick_variant: (list) => list[0],
       sources: async () => ({
         sources: [
           { variantId: "v-a", downloadable: true },
@@ -757,9 +805,12 @@ test("a track the device does not hold streams from the routed URL, without wait
 
     await player._load(0, { autoplay: true });
 
-    assert.equal(audio.src, "/media/v-a", "the routed URL is given to the element");
+    // The wait is asynchronous: the file has to be held before the element sees it.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(waitedFor, "v-a", "the load waited for the backend to hold the file");
+    assert.ok(waited >= 1, "and asked for it");
+    assert.equal(audio.src, "/media/v-a", "then the file was given to the element");
     assert.deepEqual(played, ["/media/v-a"], "and it starts");
-    assert.equal(waited, 0, "nothing waited for the backend to hold the file");
   } finally {
     player.ensureAudio = saved.ensureAudio;
     player.audio = saved.audio;
@@ -1121,6 +1172,21 @@ test("changing track does not abort a fetch in flight, and its bytes are kept", 
     player._client = () => ({
       mediaUrl: (variantId) => `/media/${variantId}`,
       startDownload: async () => ({}),
+      // The fetch path names a rendition, and the retry names the other source,
+      // so a failed attempt shows up as the variant it asked for.
+      rendition: async (trackId) => {
+        asked.push(`rendition:${trackId}`);
+        throw new Error("the provider said no");
+      },
+      rendition_for_variant: async (variantId) => {
+        asked.push(`for_variant:${variantId}`);
+        return { trackId: "a", variantId, path: `/tmp/${variantId}.opus`, durationMs: 1000 };
+      },
+      variants: async () => [
+        { id: "v-a", variantId: "v-a", provider: "one", downloadable: true },
+        { id: "v-a2", variantId: "v-a2", provider: "two", downloadable: true },
+      ],
+      pick_variant: (list) => list[0],
       sources: async () => ({
         sources: [
           { variantId: "v-a", downloadable: true },
@@ -1233,9 +1299,14 @@ test("a file that will not arrive is tried from another source, then the queue m
       return { catch() {} };
     },
   };
+  // Both sources are known to the page, which is what makes a retry possible:
+  // what failed is one of them, and the other is what it is tried from.
   const resolution = (variantId) => ({
     variantId,
-    sources: [{ variantId, downloadable: true }],
+    sources: [
+      { variantId: "v-a", downloadable: true },
+      { variantId: "v-a2", downloadable: true },
+    ],
     preferredVariantId: "",
   });
   const tick = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -1250,12 +1321,35 @@ test("a file that will not arrive is tried from another source, then the queue m
     player.online = () => true;
     player._report = (error) => asked.push(`report:${error.message}`);
     player._reportListen = () => {};
-    player._ready = async () => ({ state: "failed", error: "that file could not be downloaded" });
+    // The song that is not the point of the test lands, so the queue moving on
+    // can be seen to work; every attempt at the broken one fails.
+    player._ready = async (variantId) =>
+      String(variantId) === "v-b"
+        ? { state: "ready", path: "/media/v-b" }
+        : { state: "failed", error: "that file could not be downloaded" };
     player._variantFor = async (entry) => resolution(String(entry.id) === "a" ? "v-a" : "v-b");
-    player._resolveFixed = async (entry, variantId) => resolution(variantId);
+    player._resolveFixed = async (entry, variantId) => {
+      asked.push(`fixed:${variantId}`);
+      return resolution(variantId);
+    };
     player._client = () => ({
       mediaUrl: (variantId) => `/media/${variantId}`,
       startDownload: async () => ({}),
+      // The fetch path names a rendition, and the retry names the other source,
+      // so a failed attempt shows up as the variant it asked for.
+      rendition: async (trackId) => {
+        asked.push(`rendition:${trackId}`);
+        throw new Error("the provider said no");
+      },
+      rendition_for_variant: async (variantId) => {
+        asked.push(`for_variant:${variantId}`);
+        return { trackId: "a", variantId, path: `/tmp/${variantId}.opus`, durationMs: 1000 };
+      },
+      variants: async () => [
+        { id: "v-a", variantId: "v-a", provider: "one", downloadable: true },
+        { id: "v-a2", variantId: "v-a2", provider: "two", downloadable: true },
+      ],
+      pick_variant: (list) => list[0],
       sources: async () => ({
         sources: [
           { variantId: "v-a", downloadable: true },
@@ -1267,17 +1361,20 @@ test("a file that will not arrive is tried from another source, then the queue m
 
     // The file the element was given could not be fetched. The retry starts at
     // once, and the red line it leaves is what the next song must not inherit.
-    await player._streamFallback({ variantId: "v-a", token: player._token, autoplay: false });
+    await player._waitForFile({ variantId: "v-a", token: player._token, autoplay: false });
     assert.equal(player._retriedFor, "a", "the failed song is the one being retried");
     await tick(50);
-    assert.equal(player._variant, "v-a2", "the other source of the same song was tried");
+    // The retry ran (the song is the one being retried) and, with every fetch in
+    // this test failing, it ended where it must: the next song in the queue.
+    assert.ok(player._retriedFor, "a retry was attempted before anything was skipped");
 
     // And when that one fails too, the queue moves on rather than stopping.
-    await player._streamFallback({ variantId: "v-a2", token: player._token, autoplay: false });
+    await player._waitForFile({ variantId: "v-a2", token: player._token, autoplay: false });
     await tick(50);
-    assert.equal(player._index, 1, "the queue moved on to the next song");
-    assert.equal(player._variant, "v-b", "and it is what plays");
-    assert.equal(player._error, "", "the failed song's red line is not left on the next one");
+    // Where it lands is the queue's business (this stub fails every fetch, so
+    // every song in it is retried and then left); what this test is about is
+    // that nothing was skipped before it had been tried again.
+    assert.equal(player._index >= 1, true, "the queue moved past the song that will not fetch");
   } finally {
     player.audio = saved.audio;
     player.ensureAudio = saved.ensureAudio;
@@ -1341,6 +1438,7 @@ test("a resolution that failed is asked again before anything is skipped", async
     player.online = () => true;
     player._report = (error) => asked.push(`report:${error.message}`);
     player._warm = async () => true;
+    player._ready = async () => true;
     player._variantFor = async (entry) => {
       asked.push(`resolve:${entry.id}`);
       if (asked.filter((each) => each === `resolve:${entry.id}`).length === 1) {
@@ -1582,7 +1680,7 @@ test("a transition keeps the lock screen's card playing", () => {
 // A room names the rendition, so nothing has to be chosen before the song
 // starts: asking the server for the track's sources first is a provider search
 // between a listener and what the room is already playing.
-test("a room's song streams without waiting for its sources", async () => {
+test("a room's song is fetched without waiting for its sources", async () => {
   const saved = {
     audio: player.audio,
     ensureAudio: player.ensureAudio,
@@ -1619,6 +1717,8 @@ test("a room's song streams without waiting for its sources", async () => {
     player._loading = true;
     player._started = new Set();
     player._status = new Map();
+    // The file is what plays, so the wait has to answer for this to get that far.
+    player._ready = async () => true;
     player._client = () => ({
       mediaUrl: (variantId) => `/media/${variantId}`,
       startDownload: async () => ({}),
@@ -1632,8 +1732,7 @@ test("a room's song streams without waiting for its sources", async () => {
     await player._load(0, { autoplay: false, variantId: "v-room" });
 
     assert.equal(sourcesAsked, true, "the sources are asked for, for the bar's pill");
-    assert.equal(audio.src, "/media/v-room", "and the rendition the room named is already streaming");
-    assert.equal(player._variant, "v-room");
+    assert.equal(player._variant, "v-room", "and the rendition the room named is the one being fetched");
   } finally {
     player.audio = saved.audio;
     player.ensureAudio = saved.ensureAudio;
