@@ -16,6 +16,7 @@
 // reducers be tested without a browser.
 
 import { state, rememberRoom, forgetRoom } from "./state.js";
+import { decide, driftAction } from "./rooms/playback.js";
 import { toast } from "./dom.js";
 
 /** Who may drive a room. */
@@ -464,12 +465,11 @@ export function moveItem(itemIds, movedId, beforeId = "") {
 /**
  * What to do about the local position: `"hold"` while it is within the
  * tolerance, otherwise `"back"` or `"forward"` — the seek that closes the gap.
+ * The rule itself lives in rooms/playback.js, next to the clock it measures
+ * against; this keeps the name the app has always asked it by.
  */
 export function driftDecision(localMs, roomMs, toleranceMs = DRIFT_TOLERANCE_MS) {
-  const drift = num(localMs) - num(roomMs);
-  if (drift > toleranceMs) return "back";
-  if (drift < -toleranceMs) return "forward";
-  return "hold";
+  return driftAction(localMs, roomMs, { toleranceMs, cooldownMs: 0 });
 }
 
 // --- the connection --------------------------------------------------------
@@ -886,6 +886,13 @@ export function followWithPlayer(playbackPlayer) {
     // lags by up to a second, so a `current` still naming one of these says
     // nothing new and must not drag this member back onto it.
     advancedPast: new Set(),
+    // When the file for the current item was handed to the player, and when a
+    // correction last landed: the two readings the drift rule needs.
+    loadedAtMs: 0,
+    lastCorrectMs: 0,
+    // The last thing said about this member's playback, so a status is said
+    // when it changes and not on every tick.
+    status: "",
     syncing: false,
     pending: false,
   };
@@ -956,6 +963,15 @@ function requestSync() {
     });
 }
 
+/** Say what is happening while it happens, and say it once: a tick that finds
+ *  the same thing again has nothing new to report. */
+function setStatus(running, message) {
+  const text = str(message);
+  if (running.status === text) return;
+  running.status = text;
+  sayStatus(text);
+}
+
 /** What to say when the browser will not start the sound: the one hint that
  *  turns "the room is stuck" into "click once". */
 function blockedHint(player) {
@@ -972,8 +988,13 @@ function forgetTrack() {
   plugin.resolving = "";
   plugin.failedItemId = "";
   plugin.failedAt = 0;
+  plugin.loadedAtMs = 0;
 }
 
+/** One follow step: read the room and the player, let the core decide (see
+ *  rooms/playback.js), and do what it says. Every reading about the player
+ *  arrives as data; the decision itself is arithmetic elsewhere, where it can
+ *  be tested without a socket, a player or a room. */
 async function followRoom(running) {
   const player = running.player;
   const room = currentRoom();
@@ -990,178 +1011,134 @@ async function followRoom(running) {
     running.advancedPast.clear();
   }
 
-  const current = room.current;
-  if (!current?.item) {
-    forgetTrack();
-    running.advancedPast.clear();
+  const current = room.current || null;
+  const item = current && current.item ? current.item : null;
+  if (!item) {
     // A room with nothing on is not a room whose song this page should keep
-    // wearing. What is on the element is whatever was there before - another
+    // wearing: what is on the element is whatever was there before - another
     // room's song, or the user's own - and it is let go of rather than left
     // sitting in the bar looking like this room's (and outliving every room
     // after it). Unlinking the room is not enough: that leaves the audio.
+    forgetTrack();
+    running.advancedPast.clear();
+    setStatus(running, "");
     if (player.current?.()) player.clear?.();
     if (!player.isPaused()) player.pause();
     return;
   }
-  const item = current.item;
+
   const trackId = str(item.trackId);
   const itemId = str(item.id) || trackId;
   if (!trackId) return;
 
-  // The room's tick lags by up to a second. A `current` still naming a song
-  // this member has already moved past locally says nothing new: the local
-  // player is ahead of it, and adopting it would thrash between the two.
-  if (running.advancedPast.has(itemId)) return;
-
-  if (running.itemId !== itemId) {
-    running.itemId = itemId;
-    running.loadedItemId = "";
-    running.variantId = "";
-    running.track = null;
-    running.failedItemId = "";
-    running.failedAt = 0;
-    sayStep(`song:${itemId}`, `Room: ${item.title || "the next song"}`);
-  }
-  // The hint about a browser holding playback is only ever true while the
-  // player is paused. The sound starting clears it here, before this tick's own
-  // early returns can leave a "click the page once" sitting over a song that is
-  // playing - which is the one thing the notice must never become.
-  if (running.blockedSaid && !player.isPaused()) {
-    running.blockedSaid = false;
-    sayStatus("");
-  }
+  // The room's next songs, on this device and in memory: what makes the next
+  // transition instant is having been fetched while this one played.
   warmAhead(player, room, itemId);
 
   // With nothing reachable there is nothing to resolve and nothing to measure
   // drift against: the order and the copies this page holds are what is left.
   if (!player.online?.()) {
+    setStatus(running, "");
     followOfflineRoom(running, room);
     return;
   }
 
-  if (!running.variantId) {
-    if (running.resolving === trackId) return;
-    if (running.failedItemId === itemId && Date.now() - running.failedAt < RESOLVE_BACKOFF_MS) return;
-    running.resolving = trackId;
-    sayStatus("Finding a source…");
-    let variant = "";
-    let track = null;
-    try {
-      [variant, track] = await Promise.all([resolveVariant(trackId, player), loadTrack(active, trackId)]);
-    } finally {
-      if (plugin === running) running.resolving = "";
-    }
-    if (plugin !== running || running.itemId !== itemId) return;
-    running.track = track;
-    running.variantId = variant;
-    if (!variant) {
-      running.failedItemId = itemId;
-      running.failedAt = Date.now();
-      sayStatus("That song could not be found.");
+  const onTrack = player.current()?.id === trackId;
+  const media = player.state() || {};
+  const now = Date.now();
+  const answer = decide({
+    state: room,
+    current,
+    // What this member is on, and whether its file is here.
+    itemId: running.itemId,
+    loaded: onTrack && running.loadedItemId === itemId && Boolean(running.variantId),
+    loading: onTrack && Boolean(media.loading || media.buffering),
+    playing: Boolean(current.started) && !current.paused && !player.isPaused(),
+    autoplay: Boolean(current.started) && !current.paused,
+    localPositionMs: player.positionMs?.() || 0,
+    measuredMs: player.measuredDurationMs?.() || 0,
+    ended: Boolean(player.hasEnded?.()),
+    blocked: Boolean(player.isBlocked?.()),
+    serverNowMs: now + num(room.serverOffsetMs),
+    nowMs: now,
+    loadedAtMs: running.loadedAtMs,
+    sinceCorrectMs: running.lastCorrectMs ? now - running.lastCorrectMs : Infinity,
+    advancedPast: running.advancedPast,
+  });
+
+  switch (answer.action) {
+    case "load":
+    case "advance": {
+      // The transition is the client's: the item this member finished is marked
+      // before anything else, because every tick is racing the room's own
+      // advance and the mark is what keeps the two from fighting.
+      let target = item;
+      let at = answer.positionMs;
+      let autoplay = Boolean(answer.autoplay);
+      if (answer.action === "advance") {
+        running.advancedPast.add(str(answer.fromItemId));
+        target = list(room.masterQueue).find((entry) => str(entry.id) === str(answer.itemId)) || null;
+        at = 0;
+        autoplay = true;
+      }
+      if (!target) {
+        if (!player.isPaused()) player.pause();
+        return;
+      }
+      await loadItem(running, target, { positionMs: at, autoplay });
       return;
     }
-  }
-
-  const onTrack = player.current()?.id === trackId;
-  const media = player.state();
-  const loadingHere = onTrack && Boolean(media && (media.loading || media.buffering));
-  const sameTrack = onTrack && str(player.variantId()) === running.variantId;
-  if (loadingHere && running.loadedItemId === itemId) {
-    sayStatus("Loading the track…");
-    return;
-  }
-
-  // The local file has played out while the room is still on this song. The
-  // client is self-advancing now, so it does not wait for the room's own next
-  // tick: it moves on to the next song of the room's order by itself.
-  const playing = current.started && !current.paused;
-  if (playing && player.hasEnded?.() && running.loadedItemId === itemId) {
-    advanceLocally(running, room, itemId).catch((error) => console.error("room advance failed", error));
-    return;
-  }
-
-  if (!sameTrack || running.loadedItemId !== itemId) {
-    running.loadedItemId = itemId;
-    player.playVariant(running.track || { id: trackId, title: item.title }, running.variantId, {
-      positionMs: current.started ? positionMs(room, Date.now()) : 0,
-      autoplay: playing,
-    });
-    return;
-  }
-
-  sayStatus("");
-  if (!current.started || current.paused) {
-    if (!player.isPaused()) player.pause();
-    return;
-  }
-
-  const want = positionMs(room, Date.now());
-  const measured = player.measuredDurationMs?.() || 0;
-  if (measured > 0 && want >= measured) {
-    // The song this page holds has run out. Pausing here and waiting for the
-    // room's own clock to catch up is the stall at the end of a song: the room
-    // starts its item at the boundary while this file starts a load later, and
-    // its length is the *file's* - a trimmed copy is shorter than the length the
-    // room was told - so this page reaches the end first, pauses a beat before
-    // the element would have ended, and the self-advance below (which waits for
-    // the file to end) never fires. The room is playing and this song is over
-    // here, so this page moves on by itself, exactly as it does when the file
-    // ends: the room's next tick either agrees or is a correction.
-    advanceLocally(running, room, itemId).catch((error) => console.error("room advance failed", error));
-    return;
-  }
-  if (player.isPaused()) {
-    const held = blockedHint(player);
-    running.blockedSaid = Boolean(held);
-    sayStatus(held);
-    if (player.hasEnded?.()) player.seek(want);
-    player.resume();
-    return;
-  }
-  if (driftDecision(player.positionMs(), want) !== "hold") {
-    sayStep(`sync:${itemId}`, `Syncing to the room (${shortLength(want)})`);
-    player.seek(want);
+    case "wait":
+    case "pause":
+      setStatus(running, "");
+      if (!player.isPaused()) player.pause();
+      return;
+    case "resume": {
+      // The one hint that turns "the room is stuck" into "click once".
+      const held = answer.blocked ? blockedHint(player) : "";
+      setStatus(running, held);
+      if (player.hasEnded?.()) player.seek(answer.positionMs ?? positionMs(room, Date.now()));
+      player.resume();
+      return;
+    }
+    case "seek":
+      setStatus(running, "");
+      running.lastCorrectMs = now;
+      sayStep(`sync:${itemId}`, `Syncing to the room (${shortLength(answer.positionMs)})`);
+      player.seek(answer.positionMs);
+      return;
+    case "hold":
+    default:
+      setStatus(running, answer.status || "");
+      return;
   }
 }
 
-/**
- * Move this member to the next song of the room's order without waiting for
- * the room to say so. The song that just ended is remembered, so a server tick
- * still naming it — the room has not advanced yet — is ignored rather than
- * pulling the client back onto it.
- */
-async function advanceLocally(running, room, itemId) {
+/** Put this member on one of the room's items: find a source for the track,
+ *  fetch what the bar needs, and hand the player the rendition and where in it
+ *  to start. */
+async function loadItem(running, item, { positionMs: at = 0, autoplay = true } = {}) {
   const player = running.player;
-  // Mark the song as passed before anything else: every tick is racing the
-  // room's own advance, and the mark is what keeps the two from fighting.
-  running.advancedPast.add(itemId);
+  const trackId = str(item.trackId);
+  const itemId = str(item.id) || trackId;
+  if (!trackId || !itemId) return;
 
-  const next = pendingQueue(room)[0];
-  if (!next || !str(next.trackId)) {
-    // Nothing left in the room's order: hold, quietly, until it moves.
-    if (!player.isPaused()) player.pause();
-    return;
-  }
+  // A track whose sources could not be read is left alone for a while, and one
+  // already being resolved is not asked twice: the answer is on its way.
+  const cooling =
+    running.failedItemId === itemId && running.failedAt && Date.now() - running.failedAt < RESOLVE_BACKOFF_MS;
+  if (cooling || running.resolving === trackId) return;
 
-  const trackId = str(next.trackId);
-  const nextId = str(next.id) || trackId;
-  running.itemId = nextId;
+  running.itemId = itemId;
   running.loadedItemId = "";
   running.variantId = "";
   running.track = null;
   running.failedItemId = "";
   running.failedAt = 0;
-  sayStep(`song:${nextId}`, `Room: ${next.title || "the next song"}`);
-  warmAhead(player, room, nextId);
+  sayStep(`song:${itemId}`, `Room: ${item.title || "the next song"}`);
 
-  if (!player.online?.()) {
-    followOfflineRoom(running, room, { force: true });
-    return;
-  }
-
-  if (running.resolving === trackId) return;
   running.resolving = trackId;
-  sayStatus("Finding a source…");
+  setStatus(running, "Finding a source…");
   let variant = "";
   let track = null;
   try {
@@ -1169,19 +1146,21 @@ async function advanceLocally(running, room, itemId) {
   } finally {
     if (plugin === running) running.resolving = "";
   }
-  if (plugin !== running || running.itemId !== nextId) return;
+  if (plugin !== running || running.itemId !== itemId) return;
   running.track = track;
-  running.variantId = variant;
-  if (!variant) {
-    running.failedItemId = nextId;
+  running.variantId = str(variant);
+  if (!running.variantId) {
+    running.failedItemId = itemId;
     running.failedAt = Date.now();
-    sayStatus("That song could not be found.");
+    setStatus(running, "That song could not be found.");
     return;
   }
-  running.loadedItemId = nextId;
-  player.playVariant(running.track || { id: trackId, title: next.title }, running.variantId, {
-    positionMs: 0,
-    autoplay: true,
+  running.loadedItemId = itemId;
+  running.loadedAtMs = Date.now();
+  setStatus(running, "");
+  player.playVariant(running.track || { id: trackId, title: item.title }, running.variantId, {
+    positionMs: Math.max(0, num(at)),
+    autoplay,
   });
 }
 
