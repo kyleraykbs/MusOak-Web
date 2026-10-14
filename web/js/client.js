@@ -6,11 +6,14 @@
 // on several backends at once.
 
 export class ServerError extends Error {
-  constructor(status, message) {
+  constructor(status, message, { timedOut = false } = {}) {
     super(message || `server returned ${status}`);
     this.name = "ServerError";
     this.status = status;
     this.message = message || "";
+    // This client gave up waiting, which is not the server being gone: a
+    // resolve searches providers, and that takes as long as it takes.
+    this.timedOut = Boolean(timedOut);
   }
 
   get unauthorized() {
@@ -52,18 +55,24 @@ export function randomId() {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+/** Whether an error is this client's own request timing out. */
+export function isTimeout(error) {
+  return Boolean(error?.timedOut);
+}
+
 export class Client {
   /** One backend, one session. */
-  constructor({ server, token = "", memberId = "", memberName = "" } = {}) {
+  constructor({ server, token = "", memberId = "", memberName = "", timeout = REQUEST_TIMEOUT } = {}) {
     this.server = (server || "").replace(/\/+$/, "");
     this.token = token;
     this.memberId = memberId;
     this.memberName = memberName;
+    this.timeout = timeout;
   }
 
   // --- plumbing ----------------------------------------------------------
 
-  async request(method, path, body) {
+  async request(method, path, body, { timeout = this.timeout } = {}) {
     const headers = { Accept: "application/json", "X-Musoak-Server": this.server };
     if (body !== undefined && body !== null) headers["Content-Type"] = "application/json";
     if (this.token) headers.Authorization = `Bearer ${this.token}`;
@@ -71,7 +80,7 @@ export class Client {
     if (this.memberName) headers["X-Member-Name"] = this.memberName;
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+    const timer = setTimeout(() => controller.abort(), timeout);
     let response;
     try {
       response = await fetch(path, {
@@ -81,6 +90,16 @@ export class Client {
         signal: controller.signal,
       });
     } catch (error) {
+      // Giving up on a slow request is not the server being unreachable, and
+      // saying it was is what took the app offline mid-song: a resolve searches
+      // providers and outlasts any timeout worth having, and an app that
+      // believed it was offline stopped streaming and played only what was
+      // already on the device.
+      if (error?.name === "AbortError") {
+        throw new ServerError(0, `${path} took longer than ${Math.round(timeout / 1000)}s`, {
+          timedOut: true,
+        });
+      }
       this.reportReachable(false);
       throw new ServerError(0, `cannot reach ${this.server || "the server"}: ${error.message}`);
     } finally {

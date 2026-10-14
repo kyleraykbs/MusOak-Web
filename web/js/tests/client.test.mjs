@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { Client, ServerError, randomId } from "../client.js";
+import { Client, ServerError, isTimeout, randomId } from "../client.js";
 
 const BACKEND = "https://music.example.com";
 
@@ -205,4 +205,45 @@ test("a member id is made even where the browser has no crypto.randomUUID", (t) 
   t.after(() => delete crypto.randomUUID);
 
   assert.match(randomId(), /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+});
+
+// A request this client gives up on is not the server being there or not: a
+// resolve searches providers and outlasts any timeout worth having, and an app
+// that read it as unreachable went offline mid-song, stopped streaming and
+// played only what was already on the device.
+test("a request that times out does not say the server is unreachable", async () => {
+  globalThis.fetch = (url, init = {}) =>
+    new Promise((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => {
+        const error = new Error("The operation was aborted.");
+        error.name = "AbortError";
+        reject(error);
+      });
+    });
+
+  const reachable = [];
+  const client = new Client({ server: BACKEND, timeout: 20 });
+  client.reportReachable = (ok) => reachable.push(ok);
+
+  await assert.rejects(
+    () => client.get("/api/v1/tracks/t1/sources"),
+    (error) => {
+      assert.equal(isTimeout(error), true, "the error says it was this client's timeout");
+      assert.match(error.message, /took longer than/, "and says what happened");
+      return true;
+    }
+  );
+  assert.deepEqual(reachable, [], "the server was not called unreachable");
+});
+
+test("a request that really fails still says so", async () => {
+  globalThis.fetch = async () => {
+    throw new TypeError("Failed to fetch");
+  };
+  const reachable = [];
+  const client = new Client({ server: BACKEND, timeout: 20 });
+  client.reportReachable = (ok) => reachable.push(ok);
+
+  await assert.rejects(() => client.get("/api/v1/clock"), /cannot reach/);
+  assert.deepEqual(reachable, [false], "the server is reported unreachable");
 });

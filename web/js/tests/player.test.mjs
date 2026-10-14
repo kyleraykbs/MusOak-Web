@@ -1578,3 +1578,74 @@ test("a transition keeps the lock screen's card playing", () => {
     else delete globalThis.navigator;
   }
 });
+
+// A room names the rendition, so nothing has to be chosen before the song
+// starts: asking the server for the track's sources first is a provider search
+// between a listener and what the room is already playing.
+test("a room's song streams without waiting for its sources", async () => {
+  const saved = {
+    audio: player.audio,
+    ensureAudio: player.ensureAudio,
+    queue: player.queue,
+    index: player._index,
+    sources: player._sources,
+    variant: player._variant,
+    client: player._client,
+    loading: player._loading,
+    streaming: player._streaming,
+    room: player._room,
+    started: player._started,
+    status: player._status,
+  };
+  const audio = {
+    src: "",
+    currentTime: 0,
+    paused: true,
+    readyState: 0,
+    removeAttribute() {},
+    load() {},
+    pause() {},
+    play() {
+      return { catch() {} };
+    },
+  };
+  let sourcesAsked = false;
+  try {
+    player.setRoom(null);
+    player.audio = audio;
+    player.ensureAudio = () => audio;
+    player.queue = queue("a");
+    player._index = 0;
+    player._loading = true;
+    player._started = new Set();
+    player._status = new Map();
+    player._client = () => ({
+      mediaUrl: (variantId) => `/media/${variantId}`,
+      startDownload: async () => ({}),
+      // Never answers: the song must not wait for it.
+      sources: () => {
+        sourcesAsked = true;
+        return new Promise(() => {});
+      },
+    });
+
+    await player._load(0, { autoplay: false, variantId: "v-room" });
+
+    assert.equal(sourcesAsked, true, "the sources are asked for, for the bar's pill");
+    assert.equal(audio.src, "/media/v-room", "and the rendition the room named is already streaming");
+    assert.equal(player._variant, "v-room");
+  } finally {
+    player.audio = saved.audio;
+    player.ensureAudio = saved.ensureAudio;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._sources = saved.sources;
+    player._variant = saved.variant;
+    player._client = saved.client;
+    player._loading = saved.loading;
+    player._streaming = saved.streaming;
+    player.setRoom(saved.room);
+    player._started = saved.started;
+    player._status = saved.status;
+  }
+});

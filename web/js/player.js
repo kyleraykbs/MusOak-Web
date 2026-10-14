@@ -1359,26 +1359,40 @@ class Player {
   }
 
   /** A variant a room assigned: the sources are only there to name it. */
-  async _resolveFixed(track, variantId) {
-    try {
-      const { sources, preferredVariantId } = await this._client().sources(track.id);
-      return {
-        sources,
-        preferredVariantId,
-        variantId,
-        source: sources.find((source) => source.variantId === variantId) || null,
-      };
-    } catch {
-      // The sources call failed: name the rendition from what the page already
-      // knows about the track rather than leaving the bar's pill blank.
-      const known = this._variants.get(String(track.id || ""));
-      return {
-        sources: Array.isArray(known?.sources) ? known.sources : [],
-        preferredVariantId: known?.preferredVariantId || "",
-        variantId,
-        source: memorySource(known, variantId),
-      };
-    }
+  _resolveFixed(track, variantId) {
+    // The room named the rendition, so there is nothing to choose and nothing
+    // to wait for: the sources are there to name it in the bar, and asking for
+    // them first is a provider search between a listener and the song the room
+    // is already playing. They are fetched behind the stream and the bar
+    // catches up when they land.
+    const id = String(track.id || "");
+    const known = this._variants.get(id);
+    const name = (sources) => {
+      const found = (Array.isArray(sources) ? sources : []).find(
+        (source) => source.variantId === variantId
+      );
+      return found || memorySource(known, variantId) || null;
+    };
+    this._client()
+      .sources(track.id)
+      .then(({ sources, preferredVariantId }) => {
+        this._variants.set(id, { sources, preferredVariantId, variantId, source: name(sources) });
+        // Only while this is still the song being played: a late answer must
+        // not repaint the bar for whatever came after it.
+        if (String(this.current()?.id || "") !== id) return;
+        this._sources = { sources, preferredVariantId };
+        this._source = name(sources);
+        this.renderBar();
+      })
+      .catch(() => {
+        /* the pill keeps what this page already knew about the track */
+      });
+    return {
+      sources: Array.isArray(known?.sources) ? known.sources : [],
+      preferredVariantId: known?.preferredVariantId || "",
+      variantId,
+      source: name(known?.sources),
+    };
   }
 
   /** Where the track's file comes from, and every source it could come from. */

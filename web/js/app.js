@@ -11,7 +11,7 @@ import {
   state, on, emit, loadLocal, saveLocal, sessionFor, session, updateSession,
   isSignedIn, setServer, rememberServer, knownServers, serverLabel, serverId, forgetServer, forgetRoom, renameServer as setServerName, iconVersion, userIdOf,
 } from "./state.js";
-import { Client, randomId } from "./client.js";
+import { Client, isTimeout, randomId } from "./client.js";
 import { enterRoom, rejoinRoom, roomsTabTarget } from "./rooms-state.js";
 
 const views = new Map();
@@ -762,7 +762,9 @@ async function checkServer({ force = false } = {}) {
     await client.get("/api/v1/clock");
     state.online = true;
   } catch (error) {
-    state.online = serverAnswered(error);
+    // A request this page gave up on says nothing either way: the server may be
+    // working on something slow, and the light should not flicker for it.
+    if (!isTimeout(error)) state.online = serverAnswered(error);
   }
   if (force || state.online !== before) {
     renderCorner();
