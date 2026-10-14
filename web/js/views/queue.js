@@ -13,12 +13,13 @@
 // running. The room's state is read from rooms-state, never from a socket of
 // our own.
 
-import { h, mount, fmtDuration, icon, iconButton, iconOr, popover } from "../dom.js";
+import { h, mount, fmtDuration, icon, iconButton, iconOr, popover, toast } from "../dom.js";
 import { banner, currentClient, inBrowser, navigate, on, registerView, requireLogin } from "../app.js";
 import { player } from "../player.js";
 import {
   clear as clearRoom,
   currentRoom,
+  enqueue,
   myQueue,
   nameOf,
   remove as removeRoomItem,
@@ -236,6 +237,48 @@ export function enqueueTracks(tracks) {
 /** Put a list at the front of the queue, right after what is playing now. */
 export function queueNextTracks(tracks) {
   player.playNext(Array.from(tracks || []));
+}
+
+/**
+ * Put one song on the end of the queue that will play it: the room's own queue
+ * while a room session is live, and this device's queue otherwise.
+ *
+ * In a room the room decides what plays, so a song that only reached the local
+ * queue would never be heard; `enqueue` is the same path the room's own queue
+ * is added through, and the player's own queue is not the one running there.
+ */
+export function queueTrack(track) {
+  if (!track?.id) return;
+  const name = `\u201c${track.title || "the song"}\u201d`;
+  if (currentRoom()) {
+    run(() => enqueue(track));
+    toast(`Queued ${name} in the room`);
+    return;
+  }
+  enqueueTracks([track]);
+  toast(`Queued ${name}`);
+}
+
+/**
+ * The "+" a song's row carries, wherever a song is listed: search results, a
+ * playlist, an album, a room's queue and the queue page alike.
+ *
+ * One control, one reading: the same plus, the same "Queue" tooltip, and the
+ * same place, just before the row's own menu. A press queues and does nothing
+ * else, so it is stopped before the row's click - it neither plays the song nor
+ * opens the menu it sits beside. `class` follows the row's menu, which is the
+ * one thing the lists do not already agree on.
+ */
+export function queueButton(track, { class: className = "btn flat small" } = {}) {
+  return iconButton("plus", {
+    title: "Queue",
+    class: className,
+    onclick: (event) => {
+      event.stopPropagation();
+      event.preventDefault();
+      queueTrack(track);
+    },
+  });
 }
 
 // --- the view --------------------------------------------------------------
@@ -560,8 +603,10 @@ function queueRow(projection, row) {
   // when the server is out of reach.
   const badge = heldBadge(row.track?.id || row.trackId || row.key);
   if (badge) buttons.push(badge);
-  // The menu every song has, wherever it is listed: the track's own actions.
+  // The queue button and the menu every song has, wherever it is listed: the
+  // track's own actions, with the plus just before the menu.
   if (row.track?.id) {
+    buttons.push(queueButton(row.track));
     buttons.push(
       iconButton("dots", {
         title: "Song actions",

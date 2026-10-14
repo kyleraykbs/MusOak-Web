@@ -27,6 +27,7 @@ class ShimNode {
   setAttribute(name, value) { this.attributes[name] = value; }
   setAttributeNS(_ns, name, value) { this.attributes[name] = value; }
   appendChild(child) { this.children.push(child); return child; }
+  remove() { this.removed = true; }
   addEventListener(name, handler) { this.listeners.push([name, handler]); }
   removeEventListener() {}
   querySelector() { return null; }
@@ -37,6 +38,7 @@ class ShimNode {
 
 globalThis.Node = ShimNode;
 globalThis.document = {
+  body: new ShimNode("body"),
   createElement: (tag) => new ShimNode(tag),
   createElementNS: (_ns, tag) => new ShimNode(tag),
   createTextNode: (text) => {
@@ -189,6 +191,95 @@ test("the uploads search keeps what matches the title, the artists or the file n
   assert.deepEqual(ids(matchingUploads(uploads, "SLOWDIVE")), ["2"]);
   assert.deepEqual(ids(matchingUploads(uploads, "track-02")), ["2"]);
   assert.deepEqual(ids(matchingUploads(uploads, "nothing here")), []);
+});
+
+test("the plus queues a song and does not let the row's own click through", async () => {
+  const { queueButton } = await import("../views/queue.js");
+  const { player } = await import("../player.js");
+
+  const saved = { queue: player.queue, index: player._index, prefetch: player._prefetch, play: player.play };
+  const plays = [];
+  try {
+    // A queue already playing, so the add is a plain append: the assertion is
+    // about the press, not about the queue starting on its first song.
+    player.queue = [{ id: "seed", title: "Seed" }];
+    player._index = 0;
+    player._prefetch = () => {};
+    player.play = (...args) => plays.push(args);
+
+    const button = queueButton({ id: "t1", title: "Song", artists: ["Someone"] });
+    assert.equal(button.attributes.title, "Queue");
+    assert.equal(button.attributes["aria-label"], "Queue");
+
+    let stopped = 0;
+    let prevented = 0;
+    button.listeners.find(([name]) => name === "click")[1]({
+      stopPropagation: () => { stopped += 1; },
+      preventDefault: () => { prevented += 1; },
+    });
+
+    assert.deepEqual(player.queue.map((track) => track.id), ["seed", "t1"], "the song is queued");
+    assert.deepEqual(plays, [], "and it is not played");
+    // The press is swallowed before it reaches the row, which is what keeps a
+    // queue from also being a play or a menu.
+    assert.equal(stopped, 1);
+    assert.equal(prevented, 1);
+  } finally {
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._prefetch = saved.prefetch;
+    player.play = saved.play;
+  }
+});
+
+test("a song's row carries the plus beside its menu, wherever the row is drawn", async () => {
+  const { trackRow } = await import("../views/playlist.js");
+  const row = trackRow({
+    track: { id: "t1", title: "Song", artists: ["Someone"] },
+    position: 0,
+    client: null,
+    onActivate: () => {},
+    menu: [],
+  });
+  const labels = row.children.map((child) => child.attributes?.["aria-label"]).filter(Boolean);
+  assert.deepEqual(labels, ["Queue", "More actions"], "the plus sits left of the row's menu");
+});
+
+test("in a room the plus queues for the room, not for this device", async () => {
+  const { queueButton } = await import("../views/queue.js");
+  const { player } = await import("../player.js");
+  const { enterRoom, closeRoom } = await import("../rooms-state.js");
+
+  const enqueued = [];
+  const client = {
+    memberId: "me-1",
+    joinRoom: () =>
+      Promise.resolve({
+        room: { id: "room-1", name: "kitchen", host: "me-1", members: [], memberCount: 1, queues: {}, masterQueue: [] },
+        memberId: "me-1",
+      }),
+    roomSocket: () => ({ send() {}, close() {} }),
+    roomEnqueue: (roomId, ids) => {
+      enqueued.push({ roomId, ids });
+      return Promise.resolve({});
+    },
+  };
+  const saved = player.queue;
+  try {
+    await enterRoom({ client, roomId: "room-1" });
+    player.queue = [{ id: "seed" }];
+
+    queueButton({ id: "t1", title: "Song" }).listeners.find(([name]) => name === "click")[1]({
+      stopPropagation() {},
+      preventDefault() {},
+    });
+
+    assert.deepEqual(enqueued, [{ roomId: "room-1", ids: "t1" }], "the room's own queue takes it");
+    assert.deepEqual(player.queue.map((track) => track.id), ["seed"], "the local queue is left alone");
+  } finally {
+    player.queue = saved;
+    closeRoom();
+  }
 });
 
 test("a server that refuses is a server that answered", async () => {

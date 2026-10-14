@@ -22,7 +22,7 @@ import {
 import { banner, currentClient, navigate, refreshCurrent, registerView, requireLogin, toggleFavorite, inBrowser } from "../app.js";
 import { isSignedIn, state } from "../state.js";
 import { currentRoom } from "../rooms-state.js";
-import { artistLine, artistLineNode, enqueueTracks, providerErrorLines, queueNextTracks, goToArtistItem, playTracks, reportError, shuffleItems } from "./queue.js";
+import { artistLine, artistLineNode, enqueueTracks, providerErrorLines, queueButton, queueNextTracks, goToArtistItem, playTracks, reportError, shuffleItems } from "./queue.js";
 import { shareTrack } from "./share.js";
 
 registerView({
@@ -296,6 +296,7 @@ export function trackRow({ track, position, client, onActivate, menu = [] }) {
       artistLineNode(artistLine(track), (track.artistIds || [])[0])
     ),
     h("span", { class: "time", text: track.durationMs ? fmtDuration(track.durationMs) : "" }),
+    queueButton(track, { class: "btn flat round" }),
     iconButton("dots", {
       title: "More actions",
       onclick: (event) => popover(event.currentTarget, menu),

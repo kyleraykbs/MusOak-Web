@@ -12,7 +12,7 @@ import {
 } from "../app.js";
 import { player } from "../player.js";
 import { platformFilter, platformsFor, knownPlatforms } from "../platforms.js";
-import { artistLink, providerErrorLines } from "./queue.js";
+import { artistLine, artistLink, providerErrorLines, queueButton } from "./queue.js";
 import { trackMenu } from "./playlist.js";
 import { state, saveLocal } from "../state.js";
 
@@ -37,11 +37,6 @@ export function pinUserUploads(groups = []) {
     (group?.userUpload ? uploads : providers).push(group);
   }
   return [...uploads, ...providers];
-}
-
-/** "Artist, Artist" for a track or album payload. */
-export function artistLine(item) {
-  return (item?.artists || []).filter(Boolean).join(", ");
 }
 
 /** The providers of one search group, deduplicated and sorted. */
@@ -297,6 +292,7 @@ function trackRow(group) {
         : null
     ),
     track.durationMs ? h("div", { class: "time", text: fmtDuration(track.durationMs) }) : null,
+    queueButton(track, { class: "btn flat round" }),
     menuButton((anchor) => popover(anchor, trackMenu(track)))
   );
 }
