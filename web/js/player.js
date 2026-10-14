@@ -1150,6 +1150,14 @@ class Player {
       return;
     }
 
+    // Nothing asks the element to play while the file is on its way, and the bar
+    // says paused until it is there. A play that arrives in this window used to
+    // start whatever the element still held (see below); a retry that wanted one
+    // is stopped here for the same reason, and the wait hands autoplay to the
+    // play itself, so the click survives without being held as a live request.
+    this._playingWanted = false;
+    this._wantResume(false);
+    this.renderBar();
     if (audio.src) {
       // The old track is unloaded, not merely paused and rewound: while the next
       // file is fetched, a play that comes from anywhere else - the retry of a

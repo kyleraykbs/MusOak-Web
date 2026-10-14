@@ -1805,6 +1805,8 @@ test("the song that was playing is unloaded when the track changes", async () =>
 
     assert.equal(audio.src, "", "the old song is off the element while the next one is fetched");
     assert.equal(audio.paused, true, "and it is not playing");
+    assert.equal(player._playingWanted, false, "nothing is asking it to play while the file is on its way");
+    assert.equal(player._resumeWanted, false, "and the retry that wanted one is stopped");
   } finally {
     player.audio = saved.audio;
     player.ensureAudio = saved.ensureAudio;
