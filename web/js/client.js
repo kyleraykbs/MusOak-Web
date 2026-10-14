@@ -699,8 +699,12 @@ export class Client {
    * imported: this is the read a click on a playlist in search does, so the
    * songs are on screen without the library changing.
    */
-  providerPlaylist(id) {
-    return this.get(`/api/v1/provider-playlists/${id}`).then((payload) => ({
+  providerPlaylist(id, provider = "") {
+    // With a provider, the id is the platform's own - what a pasted link
+    // carries - and the library need never have seen the playlist. Without one
+    // it is the row a search hit came from.
+    const query = provider ? `?provider=${encodeURIComponent(provider)}` : "";
+    return this.get(`/api/v1/provider-playlists/${id}${query}`).then((payload) => ({
       playlist: payload?.playlist || {},
       tracks: payload?.tracks || [],
     }));

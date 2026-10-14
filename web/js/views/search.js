@@ -145,7 +145,7 @@ function openCollection(kind, item) {
     navigate(kind, { id: item.id, from });
     return;
   }
-  navigate("providerPlaylist", { id: item.id, from });
+  navigate("providerPlaylist", { id: item.id, provider: item.provider || "", from });
 }
 
 function collectionMenu(kind, item) {

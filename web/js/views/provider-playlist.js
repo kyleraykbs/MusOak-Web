@@ -25,7 +25,7 @@ async function render(container, params = {}) {
   }
   mount(container, emptyState("note", "Loading the playlist..."));
   try {
-    const answer = await client.providerPlaylist(params.id);
+    const answer = await client.providerPlaylist(params.id, params.provider || "");
     if (!container.isConnected) return;
     paint(container, params, client, answer);
   } catch (error) {
@@ -117,10 +117,24 @@ export function playlistTrackRows(client, tracks) {
 }
 
 /** Bring the playlist in: the one act on this page that writes anything. It
- *  answers with what came in, and the caller decides where to go from there. */
+ *  answers with what came in, and the caller decides where to go from there.
+ *
+ * Two ways in, because a playlist can arrive two ways. One the library has a
+ * row for is synced, which fills that row's tracklist and answers at once. One
+ * the library has never seen - a pasted link or a platform id - is imported as
+ * a job: nothing here waits on a provider reading a hundred tracks, and the
+ * playlist shows up in Playlists when it is done. */
 export async function importIntoLibrary(client, playlist) {
-  const result = await client.syncPlaylist(playlist.id, playlist.provider || "");
-  return { id: String(result?.playlist?.id || ""), added: Number(result?.added) || 0 };
+  if (playlist.id) {
+    const result = await client.syncPlaylist(playlist.id, playlist.provider || "");
+    return { id: String(result?.playlist?.id || ""), added: Number(result?.added) || 0, queued: false };
+  }
+  await client.importPlaylist({
+    provider: playlist.provider || "",
+    id: String(playlist.providerPlaylistId || ""),
+    name: playlist.title || "",
+  });
+  return { id: "", added: 0, queued: true };
 }
 
 /** Import, then open the playlist where it now lives: the library page, with
@@ -129,8 +143,12 @@ async function runImport(client, playlist, button) {
   button.disabled = true;
   button.textContent = "Importing...";
   try {
-    const { id, added } = await importIntoLibrary(client, playlist);
-    toast(`Imported ${playlist.title || "the playlist"}: ${added} new track(s)`);
+    const { id, added, queued } = await importIntoLibrary(client, playlist);
+    toast(
+      queued
+        ? `Importing ${playlist.title || "the playlist"} — it will appear in Playlists`
+        : `Imported ${playlist.title || "the playlist"}: ${added} new track(s)`
+    );
     if (id) navigate("playlist", { id, from: { view: "providerPlaylist", params: { id: playlist.id } } });
   } catch (error) {
     button.disabled = false;

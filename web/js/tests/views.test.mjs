@@ -325,5 +325,19 @@ test("a platform playlist lists its songs and imports only when asked", async ()
   assert.deepEqual(calls, [], "listing the songs imports nothing");
   const imported = await importIntoLibrary(client, { id: "row-1", provider: "ytmusic" });
   assert.deepEqual(calls, [["row-1", "ytmusic"]], "the import asks the server once, with the provider");
-  assert.deepEqual(imported, { id: "local-1", added: 2 }, "and answers with where it landed");
+  assert.deepEqual(imported, { id: "local-1", added: 2, queued: false }, "and answers with where it landed");
+
+  // A playlist the library has never seen - a pasted link, a platform id - is
+  // imported as a job instead: nothing here waits on a provider reading a
+  // hundred tracks, and the button must still do something.
+  const jobs = [];
+  const linking = {
+    importPlaylist: async (request) => {
+      jobs.push(request);
+      return { jobId: "job-1" };
+    },
+  };
+  const byLink = await importIntoLibrary(linking, { providerPlaylistId: "PL123", provider: "ytmusic", title: "A list" });
+  assert.deepEqual(jobs, [{ provider: "ytmusic", id: "PL123", name: "A list" }], "the link import starts a job");
+  assert.equal(byLink.queued, true, "and says so, rather than pretending it is done");
 });
