@@ -109,22 +109,45 @@ async function syncAndSay(client, { id, name, album = false }, refresh) {
   await refresh();
 }
 
-// --- the artist page --------------------------------------------------------
-
-async function renderArtist(container, params = {}) {
+/** The shape both provider-collection pages have, written once: a server to
+ *  ask, an id to ask about, a line while it loads, and a paint that draws
+ *  whatever came back. The artist page and the album page differ in what they
+ *  ask for and what they draw, which is all they should differ in. */
+function collectionPage(container, params, { icon, what, plural, loading }) {
   const client = currentClient();
   const sheet = h("div", { style: { display: "contents" } });
   mount(container, sheet);
-
   if (!client) {
-    mount(sheet, emptyState("people", "No server", "Add a server first: artists live on one."));
-    return;
+    mount(sheet, emptyState(icon, "No server", `Add a server first: ${plural} live on one.`));
+    return null;
   }
   if (!params.id) {
-    mount(sheet, emptyState("people", "No artist", "That link does not name an artist."));
-    return;
+    mount(sheet, emptyState(icon, `No ${what}`, `That link does not name an ${what}.`));
+    return null;
   }
-  mount(sheet, emptyState("people", "Loading the artist..."));
+  mount(sheet, emptyState(icon, loading));
+  return { client, sheet };
+}
+
+/** What a page says when its one load failed: the same sentence with the page's
+ *  own noun. */
+function collectionFailed(sheet, icon, what, error) {
+  if (sheet.isConnected) {
+    mount(sheet, emptyState(icon, `That ${what} could not be loaded`, String(error?.message || error)));
+  }
+}
+
+// --- the artist page --------------------------------------------------------
+
+async function renderArtist(container, params = {}) {
+  const page = collectionPage(container, params, {
+    icon: "people",
+    what: "artist",
+    plural: "artists",
+    loading: "Loading the artist...",
+  });
+  if (!page) return;
+  const { client, sheet } = page;
 
   let artist;
   const load = async () => {
@@ -167,7 +190,7 @@ async function renderArtist(container, params = {}) {
   try {
     await load();
   } catch (error) {
-    if (sheet.isConnected) mount(sheet, emptyState("people", "That artist could not be loaded", String(error?.message || error)));
+    collectionFailed(sheet, "people", "artist", error);
   }
 }
 
@@ -210,19 +233,14 @@ function albumRow(client, album, params, refresh) {
 // --- the album page ---------------------------------------------------------
 
 async function renderAlbum(container, params = {}) {
-  const client = currentClient();
-  const sheet = h("div", { style: { display: "contents" } });
-  mount(container, sheet);
-
-  if (!client) {
-    mount(sheet, emptyState("note", "No server", "Add a server first: albums live on one."));
-    return;
-  }
-  if (!params.id) {
-    mount(sheet, emptyState("note", "No album", "That link does not name an album."));
-    return;
-  }
-  mount(sheet, emptyState("note", "Loading the album..."));
+  const page = collectionPage(container, params, {
+    icon: "note",
+    what: "album",
+    plural: "albums",
+    loading: "Loading the album...",
+  });
+  if (!page) return;
+  const { client, sheet } = page;
 
   let album;
   let syncing = false;
@@ -320,6 +338,6 @@ async function renderAlbum(container, params = {}) {
   try {
     await load();
   } catch (error) {
-    if (sheet.isConnected) mount(sheet, emptyState("note", "That album could not be loaded", String(error?.message || error)));
+    collectionFailed(sheet, "note", "album", error);
   }
 }
