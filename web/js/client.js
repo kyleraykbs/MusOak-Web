@@ -68,6 +68,12 @@ export class Client {
     this.memberId = memberId;
     this.memberName = memberName;
     this.timeout = timeout;
+    // GETs already on their way, by method and path. One page can ask the same
+    // question twice - a view drawing as the shell checks the server, a retry
+    // while the first is still out - and two identical reads in flight are one
+    // answer. The entry is dropped the moment the request settles, so a failure
+    // leaves nothing behind to answer the next call with.
+    this._inflight = new Map();
   }
 
   // --- plumbing ----------------------------------------------------------
@@ -126,7 +132,18 @@ export class Client {
   }
 
   get(path) {
-    return this.request("GET", path);
+    // An identical GET already on its way is that same request, not a second
+    // one: the caller shares its promise, and sees the same answer or the same
+    // failure. A read is safe to share; anything with a body or a method that
+    // changes something is not, which is why only this path is pooled.
+    const key = `GET ${path}`;
+    const pending = this._inflight.get(key);
+    if (pending) return pending;
+    const request = this.request("GET", path).finally(() => {
+      if (this._inflight.get(key) === request) this._inflight.delete(key);
+    });
+    this._inflight.set(key, request);
+    return request;
   }
 
   /**

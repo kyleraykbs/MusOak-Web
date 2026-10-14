@@ -247,3 +247,51 @@ test("a request that really fails still says so", async () => {
   await assert.rejects(() => client.get("/api/v1/clock"), /cannot reach/);
   assert.deepEqual(reachable, [false], "the server is reported unreachable");
 });
+
+// A page asks the same question twice for the same reason it asks once: a view
+// drawing while the shell checks the server, a retry while the first is still
+// out. Two identical reads in flight are one answer and one round trip.
+test("identical reads in flight share one request", async () => {
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return jsonResponse({ id: "u1" });
+  };
+  const client = new Client({ server: BACKEND });
+
+  const [first, second] = await Promise.all([client.me(), client.get("/api/v1/me")]);
+  assert.equal(calls, 1, "the second caller rides the first request");
+  assert.deepEqual(first, second, "and both see the same answer");
+});
+
+test("a shared read that fails leaves nothing behind", async () => {
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    throw new TypeError("Failed to fetch");
+  };
+  const client = new Client({ server: BACKEND });
+
+  await Promise.all([
+    client.get("/api/v1/clock").catch(() => {}),
+    client.get("/api/v1/clock").catch(() => {}),
+  ]);
+  assert.equal(calls, 1, "still one shared attempt");
+
+  // The failed entry is dropped, not kept to answer the retry with the same
+  // failure: asking again asks the server again.
+  await client.get("/api/v1/clock").catch(() => {});
+  assert.equal(calls, 2);
+});
+
+test("only reads are shared: the same write twice is two writes", async () => {
+  const calls = stubFetch(() => jsonResponse({}));
+  const client = new Client({ server: BACKEND });
+
+  await Promise.all([
+    client.post("/api/v1/me/friends", { username: "a" }),
+    client.post("/api/v1/me/friends", { username: "a" }),
+  ]);
+  assert.equal(calls.length, 2, "a write is never pooled");
+});

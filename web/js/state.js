@@ -6,6 +6,8 @@
 
 const KEY = "musoak-web";
 const listeners = new Map();
+/** Whether a batched write is still owed to localStorage. */
+let saving = false;
 
 export const state = {
   /** GET /ui/config: what this deployment offers. */
@@ -199,6 +201,22 @@ export function forgetRoom() {
 }
 
 export function saveLocal() {
+  // One interaction changes several things - switching backend remembers the
+  // entry and then the choice, clicking a tab remembers where it was left and
+  // then navigates - and each of those calls used to serialise the whole state
+  // and write it straight to localStorage. Fold the writes of one turn into
+  // one: the payload is read here at flush time, so it is still the newest
+  // state, and the microtask lands long before the page could be reloaded and
+  // see it. Reading `state` is what everything does; only a reload reads this.
+  if (saving) return;
+  saving = true;
+  queueMicrotask(() => {
+    saving = false;
+    writeLocal();
+  });
+}
+
+function writeLocal() {
   const payload = {
     server: state.server,
     servers: state.servers,

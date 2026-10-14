@@ -226,8 +226,16 @@ export function popover(anchor, items) {
   menu.style.left = `${left}px`;
   menuAnchor = anchor;
 
+  // The listeners are attached a turn late (see below), so the timer that does
+  // it is held here: a menu closed before that turn must not leave it running.
+  let listenerTimer = 0;
   const close = () => {
     if (menuAnchor === anchor) menuAnchor = null;
+    // A second press on the button removes the node directly rather than
+    // closing it, and a menu that is already gone must not have a timer still
+    // about to attach window listeners the close above could never remove.
+    clearTimeout(listenerTimer);
+    listenerTimer = 0;
     menu.remove();
     document.removeEventListener("mousedown", onOutside, true);
     document.removeEventListener("keydown", onKey);
@@ -244,7 +252,12 @@ export function popover(anchor, items) {
   const onKey = (event) => {
     if (event.key === "Escape") close();
   };
-  setTimeout(() => {
+  listenerTimer = setTimeout(() => {
+    listenerTimer = 0;
+    // A second press on the button removes this menu without closing it, so
+    // this may be about to attach listeners for a menu that is already gone -
+    // and the close above could never take them off again.
+    if (!menu.isConnected) return;
     document.addEventListener("mousedown", onOutside, true);
     document.addEventListener("keydown", onKey);
     window.addEventListener("resize", close);

@@ -13,7 +13,7 @@ globalThis.localStorage = {
   removeItem: (key) => store.delete(key),
 };
 
-import { state, knownServers, rememberServer, forgetServer, serverLabel, serverId, sessionFor } from "../state.js";
+import { state, knownServers, rememberServer, forgetServer, serverLabel, serverId, sessionFor, setServer, updateSession } from "../state.js";
 
 const reset = () => {
   state.config = { defaultServer: "", loginPopup: false, servers: [], allowCustomServer: true };
@@ -108,12 +108,43 @@ test("removing a server that is not the current one leaves the session alone", (
   assert.equal(sessionFor("https://other.example.com").token, "");
 });
 
-test("the removed list survives a reload", () => {
+test("the removed list survives a reload", async () => {
   reset();
   state.hiddenServers = [];
   rememberServer({ url: "https://music.example.com" });
   forgetServer("https://music.example.com");
+  // The write is folded into the end of the turn (see the batching test below),
+  // so it lands a microtask after the call rather than inside it.
+  await flushLocal();
   const stored = globalThis.localStorage.getItem("musoak-web");
   assert.match(stored, /hiddenServers/);
   assert.match(stored, /music\.example\.com/);
+});
+
+/** Let a batched write land. */
+const flushLocal = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+test("a turn's several state changes become one write", async () => {
+  reset();
+  let writes = 0;
+  const setItem = globalThis.localStorage.setItem;
+  globalThis.localStorage.setItem = (key, value) => {
+    writes += 1;
+    return setItem(key, value);
+  };
+  try {
+    // One interaction: a backend switch remembers the entry and then the
+    // choice, which used to serialise and write the whole state twice.
+    setServer("https://music.example.com");
+    setServer("https://laptop.example.com");
+    updateSession({ token: "t1" });
+    assert.equal(writes, 0, "nothing is written while the turn is still open");
+    await flushLocal();
+    assert.equal(writes, 1, "the whole turn is one setItem");
+    const stored = JSON.parse(globalThis.localStorage.getItem("musoak-web"));
+    assert.equal(stored.server, "https://laptop.example.com", "and it is the newest state");
+    assert.equal(stored.sessions[serverId("https://laptop.example.com")].token, "t1");
+  } finally {
+    globalThis.localStorage.setItem = setItem;
+  }
 });

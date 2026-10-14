@@ -17,7 +17,7 @@ import {
   banner, currentClient, emit, navigate, on, requireLogin, toggleFavorite,
 } from "./app.js";
 import { ServerError } from "./client.js";
-import { h, mount, dialog, fmtDuration, icon, iconButton } from "./dom.js";
+import { h, mount, dialog, icon, iconButton } from "./dom.js";
 import { lyricsPanel } from "./views/lyrics.js";
 import { session, state, updateSession } from "./state.js";
 import { openSourcePicker, pickSource, sourceLabel, findSourceDialog } from "./views/sources.js";
@@ -640,10 +640,7 @@ class Player {
 
   setVolume(value) {
     this._volume = clamp01(Number(value) || 0);
-    if (this.audio) this.audio.volume = this._volume;
-    this._emit("volume-changed", this._volume);
-    this.renderBar();
-    this._remember();
+    this._applyVolume();
   }
 
   volume() {
@@ -652,7 +649,19 @@ class Player {
 
   setMuted(muted) {
     this._muted = Boolean(muted);
-    if (this.audio) this.audio.muted = this._muted;
+    this._applyVolume();
+  }
+
+  /** Put the level on the element, and say so everywhere.
+   *
+   *  A volume and a mute are the same change as far as the page is concerned:
+   *  one element to tell, one bar to repaint, one thing to remember. Both used
+   *  to repeat those four steps. */
+  _applyVolume() {
+    if (this.audio) {
+      this.audio.volume = this._volume;
+      this.audio.muted = this._muted;
+    }
     this._emit("volume-changed", this._volume);
     this.renderBar();
     this._remember();

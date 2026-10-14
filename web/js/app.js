@@ -180,13 +180,7 @@ export async function boot() {
 
   // The server's state, from the client's own calls and a slow poll between
   // them: a light that only changes when something asked is a light that lies.
-  window.addEventListener("musoak:reachable", (event) => {
-    const ok = Boolean(event?.detail?.ok);
-    if (ok === Boolean(state.online)) return;
-    state.online = ok;
-    renderCorner();
-    emit("online-changed", ok);
-  });
+  window.addEventListener("musoak:reachable", (event) => markReachable(event?.detail?.ok));
   window.addEventListener("online", () => markReachable(true));
   window.addEventListener("offline", () => markReachable(false));
   window.addEventListener("focus", () => checkServer());
@@ -208,7 +202,7 @@ async function restoreRoom() {
     forgetRoom();
     return;
   }
-  if (!(await askToRejoin(saved))) {
+  if (!(await askJoin("Rejoin your room?", `You were listening in “${saved.name || "a room"}”. Join it again?`))) {
     forgetRoom();
     return;
   }
@@ -237,9 +231,13 @@ async function roomStillUp(roomId) {
   }
 }
 
-/** Resolves true when the listener says yes, and false when they say no or
- *  dismiss the box. */
-function askToRejoin(room) {
+/** Ask a yes/no question and resolve with the answer.
+ *
+ *  Escape and the declining action are both "no", and the promise settles once,
+ *  whichever arrives first. Rejoining the room a reload remembers and taking an
+ *  invitation from the bell are the same question with different words, so the
+ *  shape lives once. */
+function askJoin(title, body, { confirm = "Join", cancel = "Not now" } = {}) {
   return new Promise((resolve) => {
     let settled = false;
     const done = (value) => {
@@ -253,11 +251,11 @@ function askToRejoin(room) {
     };
     document.addEventListener("keydown", onKey);
     dialog({
-      title: "Rejoin your room?",
-      body: `You were listening in “${room.name || "a room"}”. Join it again?`,
+      title,
+      body,
       actions: [
-        { label: "Not now", onClick: () => done(false) },
-        { label: "Join", class: "suggested", onClick: () => done(true) },
+        { label: cancel, onClick: () => done(false) },
+        { label: confirm, class: "suggested", onClick: () => done(true) },
       ],
     });
   });
@@ -298,38 +296,14 @@ async function announceInvites(payload) {
   for (const note of invites) {
     announcedRooms.add(String(note.roomId));
     const from = note.from?.displayName || note.from?.username || "Someone";
-    if (await askToJoinRoom(from, names.get(String(note.roomId)))) {
+    const room = names.get(String(note.roomId));
+    const body = room
+      ? `${from} invited you to room \u201c${room}\u201d.`
+      : `${from} invited you to a room.`;
+    if (await askJoin("Room invite", body, { cancel: "Dismiss" })) {
       navigate("rooms", { roomId: note.roomId });
     }
   }
-}
-
-/** Resolves true when they take the invitation, and false when they dismiss it
- *  or press Escape. */
-function askToJoinRoom(from, room) {
-  return new Promise((resolve) => {
-    let settled = false;
-    const done = (value) => {
-      if (settled) return;
-      settled = true;
-      document.removeEventListener("keydown", onKey);
-      resolve(value);
-    };
-    const onKey = (event) => {
-      if (event.key === "Escape") done(false);
-    };
-    document.addEventListener("keydown", onKey);
-    dialog({
-      title: "Room invite",
-      body: room
-        ? `${from} invited you to room \u201c${room}\u201d.`
-        : `${from} invited you to a room.`,
-      actions: [
-        { label: "Dismiss", onClick: () => done(false) },
-        { label: "Join", class: "suggested", onClick: () => done(true) },
-      ],
-    });
-  });
 }
 
 async function loadViews() {
