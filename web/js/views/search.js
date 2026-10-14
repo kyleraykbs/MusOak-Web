@@ -145,7 +145,12 @@ function openCollection(kind, item) {
     navigate(kind, { id: item.id, from });
     return;
   }
-  navigate("providerPlaylist", { id: item.id, provider: item.provider || "", from });
+  // No provider here on purpose: a search hit's id is the library's own row for
+  // the playlist, and naming a provider alongside it tells the server to read
+  // it as the platform's id instead - which sent ytmusicapi a UUID, and got a
+  // KeyError back. The provider names the platform's id, and that is what a
+  // pasted link carries.
+  navigate("providerPlaylist", { id: item.id, from });
 }
 
 function collectionMenu(kind, item) {
