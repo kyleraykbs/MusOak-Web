@@ -742,6 +742,7 @@ test("a track the device does not hold is fetched and then played", async () => 
   const played = [];
   let waited = 0;
   let waitedFor = "";
+  let prefetched = 0;
   const audio = {
     src: "",
     currentTime: 0,
@@ -774,7 +775,9 @@ test("a track the device does not hold is fetched and then played", async () => 
       return true;
     };
     player._startDownload = () => {};
-    player._prefetch = () => {};
+    player._prefetch = () => {
+      prefetched += 1;
+    };
     player._wantResume = () => {};
     player._client = () => ({
       mediaUrl: (variantId) => `/media/${variantId}`,
@@ -808,6 +811,7 @@ test("a track the device does not hold is fetched and then played", async () => 
     // The wait is asynchronous: the file has to be held before the element sees it.
     await new Promise((resolve) => setTimeout(resolve, 30));
     assert.equal(waitedFor, "v-a", "the load waited for the backend to hold the file");
+    assert.ok(prefetched >= 1, "and the songs after it were asked for while it downloads");
     assert.ok(waited >= 1, "and asked for it");
     assert.equal(audio.src, "/media/v-a", "then the file was given to the element");
     assert.deepEqual(played, ["/media/v-a"], "and it starts");

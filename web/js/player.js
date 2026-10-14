@@ -1230,6 +1230,11 @@ class Player {
       // downloading in the bar, played when it is whole - and the server serves
       // a whole file with byte ranges, so every seek after that is instant.
       this._startDownload(resolved.variantId);
+      // The songs after this one are asked for now, while this one downloads:
+      // the page holds them by the time they are reached, and outside a room
+      // it keeps its own copies of the window ahead as it always did. This is
+      // the line the early return below used to skip.
+      this._prefetch();
       this._waitForFile({ variantId: resolved.variantId, token, autoplay: Boolean(autoplay) });
       return;
     }
