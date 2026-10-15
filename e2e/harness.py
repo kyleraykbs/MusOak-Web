@@ -105,29 +105,26 @@ class Ui:
     # --- console ------------------------------------------------------------
 
     def _install_console_capture(self):
-        """Collect console errors through BiDi and JS errors from Firefox's log.
+        """Use Firefox's own driver log for console and JS errors.
 
-        Selenium 4.40's typed `add_javascript_error_handler` raises
-        `KeyError('stackTrace')` on Firefox events that legitimately omit that
-        field, inside its websocket callback thread. That is both noisy and a
-        way to lose an error. The console handler is safe for console entries;
-        JavaScript errors are read from Firefox's own driver log in
-        `_read_log`, which is why the two collectors are deliberately split.
+        Selenium 4.40's typed BiDi parser raises `KeyError('stackTrace')` on
+        Firefox events that omit that optional field, inside its websocket
+        callback thread. That is noisy and can lose the error. Firefox's own
+        console is redirected into the geckodriver log, and `_read_log` parses
+        that source instead. `console_available()` reports the real collector.
         """
-        try:
-            self.driver.script.add_console_message_handler(self._on_console)
-            self._console_available = True
-        except Exception:  # noqa: BLE001 - a session without BiDi still logs
-            self._console_available = False
+        self._console_available = False
 
     def _on_console(self, entry):
+        # Kept as a seam for a future raw BiDi collector; do not subscribe to
+        # Selenium's typed handler until it tolerates Firefox's missing field.
         level = getattr(entry, "level", "") or ""
         text = getattr(entry, "text", "") or str(entry)
         if str(level).lower() in {"error", "severe"}:
             self._errors.append({"kind": "console", "level": str(level), "text": text, "source": "bidi"})
 
     def console_available(self):
-        return self._console_available or bool(self._log_path)
+        return bool(self._log_path)
 
     def _read_log(self):
         """Errors Firefox's own console wrote to the driver log.
@@ -186,13 +183,14 @@ class Ui:
         self._read_log()
 
     def assert_no_errors(self, context="the page"):
-        if self._errors:
-            lines = "\n".join(f"  [{entry['kind']}] {entry['text']}" for entry in self._errors)
+        errors = self.errors()
+        if errors:
+            lines = "\n".join(f"  [{entry['kind']}] {entry['text']}" for entry in errors)
             raise AssertionError(f"{context} reported errors:\n{lines}")
-        if not self._console_available:
+        if not self.console_available():
             raise AssertionError(
                 "console capture is not available in this session, so 'no errors' cannot be "
-                "asserted. Run tests/test_browser_selfcheck.py to see which mechanism is missing."
+                "asserted. The Firefox driver log was not available."
             )
 
     # --- navigation and waits ----------------------------------------------
