@@ -7,6 +7,8 @@
 package web
 
 import (
+	"compress/gzip"
+	"path"
 	"context"
 	"encoding/json"
 	"errors"
@@ -194,6 +196,51 @@ func (s *Server) handleSessionDelete(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// compressedExtensions is what gets gzipped on the way out. The frontend is
+// nearly a megabyte of JavaScript in a hundred files, plus its styles; over a
+// phone connection that is the difference between a page that opens and a page
+// that arrives. Fonts and images are already compressed - running them through
+// gzip again costs CPU and saves nothing.
+var compressedExtensions = map[string]bool{
+	".js": true, ".css": true, ".html": true, ".svg": true, ".json": true, ".txt": true, ".map": true,
+}
+
+// gzipWriter compresses whatever a handler writes, to a client that asked.
+// Content-Length goes: the compressed size is not known until the end, and a
+// wrong one truncates the body.
+type gzipWriter struct {
+	http.ResponseWriter
+	writer *gzip.Writer
+	wrote  bool
+}
+
+func (g *gzipWriter) WriteHeader(status int) {
+	if g.wrote {
+		return
+	}
+	g.wrote = true
+	g.Header().Del("Content-Length")
+	g.Header().Set("Content-Encoding", "gzip")
+	g.ResponseWriter.WriteHeader(status)
+}
+
+func (g *gzipWriter) Write(p []byte) (int, error) {
+	if !g.wrote {
+		g.WriteHeader(http.StatusOK)
+	}
+	return g.writer.Write(p)
+}
+
+// compressible reports whether this request is one to compress: a client that
+// said it takes gzip, asking for a file that is text. Anything else is served
+// exactly as before.
+func compressible(r *http.Request) bool {
+	if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		return false
+	}
+	return compressedExtensions[strings.ToLower(path.Ext(r.URL.Path))]
+}
+
 // handleSite serves the frontend, falling back to its index for the routes the
 // router owns (so a reload on /rooms still gets the app).
 func (s *Server) handleSite(w http.ResponseWriter, r *http.Request) {
@@ -203,14 +250,23 @@ func (s *Server) handleSite(w http.ResponseWriter, r *http.Request) {
 	// it a browser is free to guess a freshness lifetime, and the page keeps
 	// running yesterday's modules.
 	w.Header().Set("Cache-Control", "no-cache")
-	path := strings.TrimPrefix(r.URL.Path, "/")
-	if path == "" || strings.HasSuffix(path, "/") || path == "index.html" {
+	if compressible(r) {
+		// Said out loud, because what comes back depends on it: a cache that
+		// stores the compressed body without knowing that would hand it to a
+		// client that cannot read it.
+		w.Header().Add("Vary", "Accept-Encoding")
+		packed := gzip.NewWriter(w)
+		defer packed.Close()
+		w = &gzipWriter{ResponseWriter: w, writer: packed}
+	}
+	route := strings.TrimPrefix(r.URL.Path, "/")
+	if route == "" || strings.HasSuffix(route, "/") || route == "index.html" {
 		s.servePage(w, r)
 		return
 	}
-	if path != "" && !strings.HasSuffix(path, "/") {
-		if info, err := fs.Stat(s.siteFS, path); err == nil && !info.IsDir() {
-			s.serveAsset(w, r, path)
+	if route != "" && !strings.HasSuffix(route, "/") {
+		if info, err := fs.Stat(s.siteFS, route); err == nil && !info.IsDir() {
+			s.serveAsset(w, r, route)
 			return
 		}
 	}

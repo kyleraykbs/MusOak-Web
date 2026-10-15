@@ -1,6 +1,8 @@
 package web
 
 import (
+	"bytes"
+	"compress/gzip"
 	"bufio"
 	"encoding/json"
 	"io"
@@ -544,5 +546,44 @@ func TestFrontendRevalidatesByContent(t *testing.T) {
 	after := do(t, server.Handler(), "GET", "/", nil, nil).Body.String()
 	if before == after {
 		t.Error("the stylesheet stamp did not change with the frontend")
+	}
+}
+
+// The frontend is nearly a megabyte of JavaScript in a hundred files. Sent
+// uncompressed it is a page that takes seconds on a phone; compressed it is a
+// fraction. A client that did not ask stays uncompressed, and anything that is
+// not text keeps its own bytes.
+func TestSiteCompressesTextForClientsThatAsk(t *testing.T) {
+	server := newServer(t, &config.Config{Listen: ":0"})
+
+	compressed := do(t, server.Handler(), "GET", "/js/app.js", map[string]string{"Accept-Encoding": "gzip"}, nil)
+	if got := compressed.Header().Get("Content-Encoding"); got != "gzip" {
+		t.Fatalf("Content-Encoding = %q, want gzip", got)
+	}
+	if got := compressed.Header().Get("Vary"); !strings.Contains(got, "Accept-Encoding") {
+		t.Errorf("Vary = %q, want Accept-Encoding", got)
+	}
+	if got := compressed.Header().Get("Content-Length"); got != "" {
+		t.Errorf("Content-Length = %q, want it dropped: the compressed size is not known up front", got)
+	}
+	reader, err := gzip.NewReader(bytes.NewReader(compressed.Body.Bytes()))
+	if err != nil {
+		t.Fatalf("the body is not gzip: %v", err)
+	}
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read the compressed body: %v", err)
+	}
+	plain := do(t, server.Handler(), "GET", "/js/app.js", nil, nil)
+	if string(body) != plain.Body.String() {
+		t.Errorf("the compressed body differs from the plain one (%d vs %d bytes)", len(body), plain.Body.Len())
+	}
+	if plain.Header().Get("Content-Encoding") != "" {
+		t.Errorf("a client that did not ask for gzip got %q", plain.Header().Get("Content-Encoding"))
+	}
+
+	icon := do(t, server.Handler(), "GET", "/icon.png", map[string]string{"Accept-Encoding": "gzip"}, nil)
+	if icon.Header().Get("Content-Encoding") != "" {
+		t.Errorf("an image was compressed: %q", icon.Header().Get("Content-Encoding"))
 	}
 }
