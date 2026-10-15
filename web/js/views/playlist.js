@@ -250,7 +250,12 @@ export async function downloadSongFile(track) {
       toast("There is no file to download for that song.");
       return;
     }
-    if (variant.media?.state !== "ready") {
+    // Whether the server has the file is asked of the status the bar's own
+    // poll reads, not of the listing the variant just came in: a listing is a
+    // snapshot, and "Asking the server for the file…" over a file that landed
+    // a moment ago is the page claiming to have asked when it did not.
+    const status = await client.mediaStatus(variant.id).catch(() => null);
+    if ((status?.state || variant.media?.state) !== "ready") {
       toast("Asking the server for the file…");
       await client.startDownload(variant.id);
     }
@@ -474,6 +479,9 @@ function header(client, playlist, tracks) {
       h("button", {
         class: "btn round",
         title: "Back to playlists",
+        // An icon-only button: the tooltip is the pointer's, and a reader
+        // needs a name of its own.
+        "aria-label": "Back to playlists",
         onclick: () => navigate("playlists"),
       }, icon("prev", 18)),
       artworkTile(client, playlist.artworkUrl, "big"),

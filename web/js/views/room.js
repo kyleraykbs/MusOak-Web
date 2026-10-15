@@ -106,8 +106,17 @@ function paint() {
     return;
   }
 
-  if (room.error) mount(host, h("div", { class: "banner error" }, h("span", { class: "grow", text: room.error })));
-  mount(host, header(room), nowPlaying(room), members(room), queues(room));
+  mount(
+    host,
+    // The room's own error, in the same mount as everything else: mounted on
+    // its own first it was wiped by the mount below it before a frame could
+    // draw it, so a room that lost its channel said nothing at all.
+    room.error ? h("div", { class: "banner error" }, h("span", { class: "grow", text: room.error })) : null,
+    header(room),
+    nowPlaying(room),
+    members(room),
+    queues(room)
+  );
   ensureTicker();
 }
 
@@ -201,6 +210,9 @@ function nowPlaying(room) {
     {
       class: "btn",
       title: current.paused ? "Resume" : "Pause",
+      // The button is an icon and nothing else, so its name has to be spelled
+      // out for a reader: a tooltip is a pointer's, not theirs.
+      "aria-label": current.paused ? "Resume" : "Pause",
       "aria-disabled": drives ? null : "true",
       onclick: () => (drives ? act(() => (current.paused ? resume() : pause())) : hostOnly("pause")),
     },
@@ -211,6 +223,7 @@ function nowPlaying(room) {
     {
       class: "btn",
       title: "Skip to the next track",
+      "aria-label": "Skip to the next track",
       "aria-disabled": drives ? null : "true",
       onclick: () => (drives ? act(() => skip()) : hostOnly("skip")),
     },
@@ -261,8 +274,11 @@ function queues(room) {
   const whole = room.masterQueue || [];
   const section = sectionBlock("Queue", "room-queue");
   // A phone shows the room's order alone, so say where your own songs went.
+  // The queue button is what opens them, and it is the one control that is
+  // always on the screen: this used to name a "popout queue" that no part of
+  // the app has ever had.
   section.appendChild(
-    h("div", { class: "room-queue-hint", text: "Use popout queue to organize your songs" })
+    h("div", { class: "room-queue-hint", text: "Your own songs are in the Queue \u2014 the button at the bottom of the screen." })
   );
   section.appendChild(
     h(
@@ -517,10 +533,12 @@ async function leave() {
   const roomId = room.roomId;
   try {
     await leaveRoom({ client, roomId });
+    toast(`left ${room.name || "the room"}`);
   } catch (error) {
+    // This page has let the room go either way; what failed is telling the
+    // server, and "left the room" over that is the one thing that is not true.
     report(error);
   }
-  toast("left the room");
   navigate("rooms");
 }
 

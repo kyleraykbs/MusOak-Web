@@ -669,9 +669,24 @@ export class Client {
     return this.get(`/api/v1/media/${variantId}/status`).then((value) => value || {});
   }
 
-  /** A URL an audio element or an <img> can use: same origin, routed by query. */
-  mediaUrl(variantId) {
-    return routed(this.server, `/api/v1/media/${encodeURIComponent(variantId)}`);
+  /**
+   * A URL an audio element or an <img> can use: same origin, routed by query.
+   *
+   * `startMs` names a position to begin the bytes at. The backend answers a
+   * variant it does not hold yet with a stream of the source - audio that has
+   * no length, so there is no range to ask for and the position has to be part
+   * of the request; the provider starts there and runs to the end of the song,
+   * which is what lets a listener join a song already playing and hear the rest
+   * of it rather than its head. A file the backend does hold answers the whole
+   * file, which the element seeks within itself, so the call with no position -
+   * every other caller in the app, and the URL a kept song is cached under -
+   * is unchanged.
+   */
+  mediaUrl(variantId, { startMs } = {}) {
+    const path = `/api/v1/media/${encodeURIComponent(variantId)}`;
+    const start = Number(startMs);
+    if (!Number.isFinite(start) || start < 0) return routed(this.server, path);
+    return routed(this.server, `${path}?start=${Math.round(start)}`);
   }
 
   /**

@@ -43,6 +43,9 @@ function showRoom() {
 let host = null;
 let listed = [];
 let loading = false;
+/** Why the last read of the rooms came back empty, when it was a failure:
+ *  an empty list and an unreadable one are not the same thing to show. */
+let loadError = "";
 let unsubscribe = null;
 
 function render(container, params = {}) {
@@ -156,6 +159,18 @@ function followingCard(room) {
 function roomList() {
   if (loading && !listed.length) return h("div", { class: "subtitle", style: { padding: "8px 4px" }, text: "Loading…" });
   if (!listed.length) {
+    // A list nobody could read is not a server with no rooms on it: the one
+    // that failed says so, and offers the ask again.
+    if (loadError) {
+      return h(
+        "div",
+        { class: "empty", style: { padding: "20px" } },
+        h("span", { class: "icon" }, icon("room", 38)),
+        h("span", { class: "title", text: "The rooms could not be listed" }),
+        h("span", { text: loadError }),
+        h("button", { class: "btn suggested", text: "Try again", onclick: () => loadRooms() })
+      );
+    }
     return h(
       "div",
       { class: "empty", style: { padding: "20px" } },
@@ -211,6 +226,7 @@ function describeRoom(room) {
 
 async function loadRooms() {
   const client = currentClient();
+  loadError = "";
   if (!client) {
     listed = [];
     paint();
@@ -221,6 +237,7 @@ async function loadRooms() {
     listed = await client.rooms();
   } catch (error) {
     listed = [];
+    loadError = error?.message || String(error);
     report(error);
   } finally {
     loading = false;
@@ -334,12 +351,16 @@ async function leave(roomId) {
   const client = currentClient();
   if (!client) return;
   const mine = currentRoom();
+  let left = false;
   try {
     await leaveRoom({ client, roomId });
+    left = true;
   } catch (error) {
+    // The same rule as the room page's own Leave: this page is out of the room
+    // either way, and a "left the room" over a call that failed is a lie.
     report(error);
   }
-  if (mine && mine.roomId === roomId) toast("left the room");
+  if (left && mine && mine.roomId === roomId) toast(`left ${mine.name || "the room"}`);
   loadRooms();
 }
 

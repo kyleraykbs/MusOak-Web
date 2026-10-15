@@ -247,6 +247,12 @@ export function pickFiles(accept = "") {
       input.remove();
       resolve(files);
     });
+    // Cancelled: no `change` is coming, and the walk that awaits this would
+    // wait for ever with its own button still saying a copy is under way.
+    input.addEventListener("cancel", () => {
+      input.remove();
+      resolve([]);
+    });
     input.click();
   });
 }
@@ -271,6 +277,12 @@ export function pickFolder() {
       const files = Array.from(input.files || []);
       input.remove();
       resolve(files);
+    });
+    // Cancelled, like the file pickers above: the choice is nothing, and the
+    // promise has to say so rather than stay open for ever.
+    input.addEventListener("cancel", () => {
+      input.remove();
+      resolve([]);
     });
     input.click();
   });
@@ -338,6 +350,9 @@ function showDialog({
     class: editing ? "art" : "btn",
     type: editing ? null : "button",
     title: editing ? "" : "Choose cover art",
+    // A plus glyph and nothing else: the tooltip says what it does to a
+    // pointer, and this says it to a reader.
+    "aria-label": editing ? null : "Choose cover art",
     style: {
       width: "96px",
       height: "96px",

@@ -1047,6 +1047,58 @@ test("a streamed song's length comes from what the app knows", () => {
   }
 });
 
+// Firefox estimates an Ogg stream's length from the bytes that have arrived and
+// grows the figure as they do (6, 12, 19, 30 seconds for a thirty-second song).
+// Taken as the song's length it makes the timeline climb and a seek to the middle
+// land wherever the guess had got to by then - so while the app knows it is
+// playing a stream, the length it was told is the song's, and the element's own
+// figure is only what is left when nobody has said.
+test("a streamed song's length is what the app knows, not the browser's growing guess", () => {
+  const saved = {
+    audio: player.audio,
+    variant: player._variant,
+    stream: player._stream,
+    status: player._status,
+    queue: player.queue,
+    index: player._index,
+  };
+  const src = "/api/v1/media/v-a?start=0&ms=local";
+  const audio = { src, currentTime: 3, duration: 6 };
+  try {
+    player.audio = audio;
+    player._variant = "v-a";
+    player._stream = { variantId: "v-a", startMs: 0, src, failed: false };
+    player._status = new Map([["v-a", { state: "downloading", durationMs: 30000 }]]);
+    player.queue = [{ id: "a", title: "A", durationMs: 30000 }];
+    player._index = 0;
+
+    assert.equal(player.durationMs(), 30000, "the status's length, not the six seconds the browser has guessed");
+    audio.duration = 19;                  // ... which grows as the bytes arrive
+    assert.equal(player.durationMs(), 30000, "and the timeline does not move with it");
+
+    player._status = new Map();
+    assert.equal(player.durationMs(), 30000, "with the track's own length next");
+
+    // Nobody has said: the element's own figure is what is left for a stream.
+    player.queue = [{ id: "a", durationMs: 0 }];
+    assert.equal(player.durationMs(), 19000, "and only then the element's");
+
+    // A whole file is measured rather than reported, and it is exact.
+    player._stream = null;
+    audio.duration = 30;
+    player._status = new Map([["v-a", { state: "ready", durationMs: 29000 }]]);
+    assert.equal(player.measuredDurationMs(), 30000);
+    assert.equal(player.durationMs(), 30000, "so a file's own length wins over what the status says");
+  } finally {
+    player.audio = saved.audio;
+    player._variant = saved.variant;
+    player._stream = saved.stream;
+    player._status = saved.status;
+    player.queue = saved.queue;
+    player._index = saved.index;
+  }
+});
+
 // A seek inside a stream cannot be a range: there is no length to seek within,
 // so the seek is a new request for the song from that position and the sound
 // carries on from there. The gap while it reconnects is the honest cost of

@@ -7,7 +7,7 @@
 import { h, mount } from "../dom.js";
 import { currentClient, on, registerView, requireLogin } from "../app.js";
 import { isSignedIn, state } from "../state.js";
-import { playOne, playTracks, reportError } from "./queue.js";
+import { playOne, reportError } from "./queue.js";
 import { emptyState, playButtons, trackCountLine, trackMenu, trackRow } from "./playlist.js";
 
 registerView({
@@ -34,6 +34,9 @@ on("user-changed", () => {
 
 let sheet = null; // the piece of the page this view owns
 let tracks = [];
+/** Why the last read of them failed, so an empty page is not read as an empty
+ *  account: the server's own sentence, or "". */
+let loadFailed = "";
 
 function onScreen() {
   return Boolean(sheet?.isConnected);
@@ -58,11 +61,15 @@ async function loadFavourites() {
   }
 
   const client = currentClient();
+  // A read that is on its way says so, so a slow server is not a blank page.
+  if (!tracks.length) mount(sheet, emptyState("star", "Loading favourites\u2026", ""));
   try {
     tracks = await client.favorites();
+    loadFailed = "";
   } catch (error) {
     reportError(error);
     tracks = [];
+    loadFailed = error?.message || String(error);
   }
   if (!sheet || !sheet.isConnected) return; // the view was replaced while we fetched
   paint();
@@ -111,6 +118,13 @@ function paint() {
             })
           )
         )
-      : emptyState("star", "No favourites", "Star tracks and they collect here.")
+      : loadFailed
+        ? emptyState(
+            "star",
+            "Your favourites could not be loaded",
+            loadFailed,
+            h("button", { class: "btn suggested", text: "Try again", onclick: () => loadFavourites() })
+          )
+        : emptyState("star", "No favourites", "Star tracks and they collect here.")
   );
 }

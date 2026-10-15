@@ -133,9 +133,15 @@ async function load() {
     if (root) build();
   } catch (error) {
     fail(error);
-    if (!root || error?.status === 401) return; // a 401 is answered by the sign-in dialog
-    // Whatever went wrong, the view must stop saying it is loading.
+    if (!root) return;
+    // Whatever went wrong, the view must stop saying it is loading - the 401
+    // included. That one is answered by the sign-in dialog, and the page used
+    // to sit on "Loading your account…" for the rest of the session behind it.
     clear(root);
+    if (error?.status === 401) {
+      guestCard(root);
+      return;
+    }
     root.appendChild(h("div", { class: "card" },
       h("div", { class: "empty" },
         h("span", { class: "icon", style: { display: "inline-flex", lineHeight: "0" } }, icon("gear", 38)),

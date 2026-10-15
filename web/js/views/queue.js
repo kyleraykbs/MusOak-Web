@@ -4,7 +4,9 @@
 // This is the lowest of the three collection views, so the pieces the other two
 // share (the index math of a reorder, a track's artist line, how a failed call
 // is reported, how a list is handed to the player) live here; playlist.js and
-// favourites.js import them, and this file imports none of its siblings.
+// favourites.js import them. The one exception runs the other way: a queue row's
+// own menu is the playlist view's, imported where it is opened, so the two
+// cannot drift apart.
 //
 // Which queue is shown is decided by room state rather than by the player:
 // while a room session is live (rooms-state holds a current room, which is the
@@ -13,7 +15,7 @@
 // running. The room's state is read from rooms-state, never from a socket of
 // our own.
 
-import { fmtDuration, h, icon, iconButton, iconOr, mount, popover, tapOnly, toast } from "../dom.js";
+import { fmtDuration, h, icon, iconButton, iconOr, mount, popover, scheduleFrame, tapOnly, toast } from "../dom.js";
 import { banner, currentClient, inBrowser, navigate, on, registerView, requireLogin } from "../app.js";
 import { player } from "../player.js";
 import {
@@ -320,18 +322,30 @@ export function renderQueue(container, { compact = false } = {}) {
   sheets.push({ sheet, compact });
   if (!subscribed) {
     subscribed = true;
-    player.on("queue-changed", paint);
-    player.on("track-changed", paint);
-    player.on("offline-changed", paint);
+    // Every one of these is a repaint of every row of every sheet, and they
+    // arrive in bursts: a song arriving is a copy starting, a copy landing, the
+    // queue changing and the track changing, and four rebuilds of a long
+    // queue's rows is three more than the one frame can show. `scheduleFrame`
+    // is the same coalescing the room page has always used.
+    player.on("queue-changed", repaint);
+    player.on("track-changed", repaint);
+    player.on("offline-changed", repaint);
     // Whether the server is there decides what the line above the list says.
-    on("online-changed", paint);
-    subscribe(paint);
+    on("online-changed", repaint);
+    subscribe(repaint);
   }
   paint();
 }
 
+const repaint = scheduleFrame(() => paint());
+
 /** Redraw every sheet still in the page. One that a later render replaced is
- *  dropped, which is what keeps a repaint out of a view that is not this one. */
+ *  dropped, which is what keeps a repaint out of a view that is not this one.
+ *
+ *  A sheet inside something `hidden` - the playbar's drawer, while it is shut -
+ *  is skipped rather than dropped: nothing it holds can be seen, and opening the
+ *  drawer renders it again from scratch. A long queue was rebuilt in full for
+ *  every event of every song, shut or not. */
 function paint() {
   for (let index = sheets.length - 1; index >= 0; index -= 1) {
     if (!sheets[index].sheet.isConnected) sheets.splice(index, 1);
@@ -345,7 +359,16 @@ function paint() {
     playerQueue: player.queue || [],
     currentIndex: player.index() ?? -1,
   });
-  for (const entry of sheets) draw(entry, projection, room);
+  for (const entry of sheets) {
+    if (hiddenSheet(entry.sheet)) continue;
+    draw(entry, projection, room);
+  }
+}
+
+/** Whether a sheet is somewhere nothing is drawn: the drawer holds the queue
+ *  while it is shut, and by the time it is opened it has been rendered again. */
+function hiddenSheet(sheet) {
+  return Boolean(sheet.closest?.("[hidden]"));
 }
 
 /** In a room the Queue page shows two queues, yours and the room's own order.

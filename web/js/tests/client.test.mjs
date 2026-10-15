@@ -41,6 +41,18 @@ test("a backend URL keeps its routing when it is handed to an element", () => {
   const media = client.mediaUrl("variant-1");
   assert.match(media, /^\/api\/v1\/media\/variant-1\?ms=/);
   assert.equal(new URLSearchParams(media.split("?")[1]).get("ms"), BACKEND);
+  // A URL with no position names the whole file, and is the one a kept song is
+  // cached under: it may not gain a parameter.
+  assert.equal(new URLSearchParams(media.split("?")[1]).get("start"), null);
+
+  // A position, for the stream a file that is not here yet is played from: the
+  // backend begins the bytes there and runs to the end of the song.
+  const from = client.mediaUrl("variant-1", { startMs: 45000 });
+  const fromQuery = new URLSearchParams(from.split("?")[1]);
+  assert.equal(fromQuery.get("start"), "45000");
+  assert.equal(fromQuery.get("ms"), BACKEND, "and the backend is still named");
+  // Zero is a position like any other: it is the stream at the beginning.
+  assert.equal(new URLSearchParams(client.mediaUrl("variant-1", { startMs: 0 }).split("?")[1]).get("start"), "0");
 
   const art = client.artworkUrl("/api/v1/artwork/abc");
   assert.equal(new URLSearchParams(art.split("?")[1]).get("ms"), BACKEND);

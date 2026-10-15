@@ -129,6 +129,16 @@ test("a file that is still loading is left to load", () => {
   assert.equal(answer.status, "Loading the track…");
 });
 
+// The room's line and the bar under it are one account of one download: the
+// bar's own words ("downloading 3.1 of 8.4 MB", "converting 45%") are what the
+// room says, and a page too bare to carry a stage keeps the plain sentence.
+test("the room says what the bar says about the download", () => {
+  const answer = decide({ ...base, loading: true, loadLabel: "downloading 3.1 of 8.4 MB" });
+  assert.equal(answer.status, "downloading 3.1 of 8.4 MB");
+  assert.equal(decide({ ...base, loading: true, loadLabel: "" }).status, "Loading the track…");
+  assert.equal(decide({ ...base, loading: true, loadLabel: undefined }).status, "Loading the track…");
+});
+
 test("the room's pause is the member's pause, and its play the member's play", () => {
   assert.equal(decide({ ...base, current: running({ id: "a", paused: true }) }).action, "pause");
   assert.equal(decide({ ...base, playing: false }).action, "resume");

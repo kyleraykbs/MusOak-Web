@@ -417,6 +417,13 @@ export function pickFile(accept = "") {
       input.remove();
       resolve(file);
     });
+    // A picker that was closed without choosing fires nothing else, and a
+    // promise that never settles is a caller stuck waiting for a file that is
+    // never coming. The browser says `cancel` for exactly this.
+    input.addEventListener("cancel", () => {
+      input.remove();
+      resolve(null);
+    });
     input.click();
   });
 }

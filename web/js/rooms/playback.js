@@ -151,7 +151,10 @@ export function decide(input) {
   }
 
   // The file for this item is on its way: nothing to decide until it lands.
-  if (loaded && input.loading) return { action: "hold", status: "Loading the track…" };
+  // The words are the bar's own - "downloading 3.1 of 8.4 MB", "converting 45%"
+  // - so the room's line and the bar under it are not two accounts of one
+  // download; a page too bare to carry a stage keeps the plain sentence.
+  if (loaded && input.loading) return { action: "hold", status: input.loadLabel || "Loading the track…" };
 
   // Not this member's item yet, or not loaded: put them on it, at wherever the
   // room is. A song the room has not started is loaded and held, not played.

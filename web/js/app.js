@@ -1510,13 +1510,74 @@ const NON_TYPING_INPUTS = new Set([
   "color", "file", "image", "hidden",
 ]);
 
+/**
+ * Which transport command a key means, and "" for a key that is not one.
+ *
+ * These are the terminal player's keys (`musoak play`): l/→ next, h/←
+ * previous, k/↑ volume up, j/↓ volume down, space pause/resume. A page is the
+ * same kind of player, so a person who has used the one in the terminal
+ * presses these in both. `m` mutes, which is the one a terminal player has no
+ * need for.
+ *
+ * What decides whether a key is a command is who has the keyboard: a field
+ * being typed into keeps every one of them, and so does a combination with a
+ * modifier - ctrl+L is the browser's address bar, never a skip. Everything
+ * else - a button, the seek, the page itself - belongs to the player, which is
+ * the rule space already ran under.
+ */
+export function transportCommand(event) {
+  if (!event || isTypingTarget(event.target)) return "";
+  if (event.ctrlKey || event.metaKey || event.altKey) return "";
+  switch (event.key) {
+    case " ":
+      return "toggle-play";
+    case "ArrowRight":
+    case "l":
+    case "L":
+      return "next-track";
+    case "ArrowLeft":
+    case "h":
+    case "H":
+      return "previous-track";
+    case "ArrowUp":
+    case "k":
+    case "K":
+      return "volume-up";
+    case "ArrowDown":
+    case "j":
+    case "J":
+      return "volume-down";
+    case "m":
+    case "M":
+      return "toggle-mute";
+    default:
+      return "";
+  }
+}
+
+/**
+ * Whether something modal is on screen and has the keyboard: a dialog, or an
+ * open menu. Transport behind one of those is a song changing under a question
+ * nobody has answered yet, and Escape is what the keys are for there.
+ */
+export function transportBlocked(root = typeof document === "undefined" ? null : document) {
+  return Boolean(root?.querySelector?.(".dialog-backdrop, .popover"));
+}
+
+/** The commands a held key may keep repeating. Volume is a knob, and holding
+ *  it is how a knob is turned; a held skip would run through the queue. */
+const REPEATING_COMMANDS = new Set(["volume-up", "volume-down"]);
+
 if (inBrowser) {
   document.addEventListener("keydown", (event) => {
-    if (isTypingTarget(event.target)) return;
-    if (event.key === " ") {
-      event.preventDefault();
-      emit("toggle-play");
-    }
+    const command = transportCommand(event);
+    if (!command || event.defaultPrevented) return;
+    if (event.repeat && !REPEATING_COMMANDS.has(command)) return;
+    if (transportBlocked()) return;
+    // Every one of these is the player's now: an arrow that skips must not
+    // also scroll the page, and a space that pauses must not also page down.
+    event.preventDefault();
+    emit(command);
   });
   boot();
 }

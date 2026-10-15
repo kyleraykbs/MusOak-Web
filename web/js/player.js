@@ -82,12 +82,6 @@ const OFFLINE_RETRY_MS = 60000;
 /** How often the bar asks the backend whether a download is done. */
 const POLL_MS = 400;
 
-/** How long a preload may run before it is abandoned as hung. Giving up does
- *  not shorten the room's wait - it is waiting for this file either way - and an
- *  abandoned preload throws away the bytes it buffered, so the real player
- *  fetches the whole thing again. Only a connection that hangs without failing
- *  should reach this. */
-const PRELOAD_TIMEOUT_MS = 60000;
 /** How long this client waits for the backend to finish a file before saying it
  *  did not arrive. The server retries its own downloads and reports failure;
  *  this is the backstop for one that is stuck rather than failed, which would
@@ -101,6 +95,10 @@ const REMEMBER_MS = 500;
 const SAVE_PLAYBACK_MS = 5000;
 /** How long a seek waits before it is worth saving. */
 const SAVE_SETTLE_MS = 400;
+/** How much one press of a volume key moves the level: the 5% the terminal
+ *  player's own k/j move (`internal/cli/player.go`), which is also five steps
+ *  of the bar's slider. */
+const VOLUME_STEP = 0.05;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // How long a failed fetch waits before the one retry: long enough for a blip,
@@ -840,23 +838,34 @@ class Player {
     return 0;
   }
 
-  /**
-   * How long the song is, from whatever this page knows.
-   *
-   * A whole file is measured from the element. A stream has no length to
-   * measure - it is a fetch arriving, and the element reads Infinity - so the
-   * length the app already knows is what the timeline and the position
-   * arithmetic run on: the status the backend reports the rendition with (the
-   * same number the stream's `X-Musoak-Duration` carries, which an element's
-   * response headers cannot be read from), and failing that the track's own
-   * length. Without this a streamed song is a bar that cannot say where it is.
-   */
-  durationMs() {
-    const measured = this.measuredDurationMs();
-    if (measured > 0) return measured;
+  /** The length this page was told, or zero where nobody has said: the status
+   *  the backend reports the rendition with (the same number the stream's
+   *  `X-Musoak-Duration` carries, which an element's response headers cannot be
+   *  read from), and failing that the track's own. */
+  _knownDurationMs() {
     const reported = Math.round(Number(this._status.get(this._variant)?.durationMs) || 0);
     if (reported > 0) return reported;
     return Math.round(Number(this.current()?.durationMs) || 0);
+  }
+
+  /**
+   * How long the song is, from whatever this page knows.
+   *
+   * A whole file's own length is exact, and is what it always was. A streamed
+   * answer's is not: it is a guess the browser makes from the bytes that have
+   * arrived so far, and it grows as they do - 6, 12, 19, 30 seconds for a
+   * thirty-second song, measured in Firefox - so where this page knows the
+   * length that is what the timeline and the seek arithmetic run on, and the
+   * element's own figure is only the last resort for a stream nobody has told
+   * us about. Without this a bar drawn from the element's figure climbs, and a
+   * seek to the middle lands wherever the guess happened to be by then.
+   */
+  durationMs() {
+    const known = this._knownDurationMs();
+    const measured = this.measuredDurationMs();
+    if (this._streamingNow()) return known > 0 ? known : measured;
+    if (measured > 0) return measured;
+    return known;
   }
 
   setVolume(value) {
@@ -1181,7 +1190,7 @@ class Player {
       setText(bar.title, track.title || "unknown track");
       let subtitle = artistLine(track) || String(track.album || "");
       if (this._loading) {
-        const label = this._downloadLabel() || "downloading…";
+        const label = this.downloadLabel() || "downloading…";
         subtitle = subtitle ? `${subtitle} · ${label}` : label;
       } else if (this._buffering) {
         // Here, and not making a sound yet: the bar says so rather than showing
@@ -1222,7 +1231,9 @@ class Player {
     if (track) {
       const starred = Boolean(state.favorites?.has(track.id));
       setIcon(bar.star, "star");
-      bar.star.title = starred ? "Unfavourite" : "Favourite";
+      // An icon-only button says what it is to a reader as well as to a
+      // pointer: the star had a tooltip and no name, unlike the rest of the bar.
+      setLabel(bar.star, starred ? "Unfavourite" : "Favourite");
       bar.star.setAttribute("aria-pressed", starred ? "true" : "false");
       // The only state the star has no second icon for: a favourite is filled
       // in the app's own accent colour, an ordinary one stays quiet.
@@ -2717,15 +2728,6 @@ class Player {
   }
 
   /**
-   * Get a track's file ready before it is reached, without saying so.
-   *
-   * The backend does the downloading, so "fetched" means the status says so;
-   * asking now is what makes the advance into the next track cost nothing.
-   *
-   * Public because a room's queue is not the player's own: the follower knows
-   * what the room will play next, and nothing else would fetch it.
-   */
-  /**
    * The variant this player would play a track from, resolved and cached.
    *
    * Public for the same reason `warm` is: a room's queue is not the player's
@@ -2738,78 +2740,28 @@ class Player {
     return this._variantFor(track);
   }
 
-  warm(track, { onReady } = {}) {
+  /**
+   * Get a track's file ready before it is reached, without saying so.
+   *
+   * The backend does the downloading, so "fetched" means the status says so;
+   * asking now is what makes the advance into the next track cost nothing.
+   *
+   * Public because a room's queue is not the player's own: the follower knows
+   * what the room will play next, and nothing else would fetch it.
+   */
+  warm(track) {
     if (!track || !track.id) return;
     this._variantFor(track)
-      .then(async (resolved) => {
+      .then((resolved) => {
         if (!resolved) return;
-        // The callback is for the room: it needs to know a member is ready for
-        // a song it has not started, which is the whole point of fetching it
-        // early. A file that did not arrive says nothing.
-        if (!(await this._warm(resolved.variantId))) return;
-        // The file being on the server is not the same as this browser being
-        // able to play it. Fetching it takes seconds, and a room that starts on
-        // the server's word alone plays those seconds to itself - so the report
-        // waits until the browser has it buffered, and then the song really does
-        // start at its beginning.
-        if (!onReady) return;
-        const durationMs = await this._preload(resolved.variantId);
-        // The length the browser measured, so the room knows how long the song
-        // really is before it starts: a report without one leaves the room on
-        // the song's canonical length until the song is already playing.
-        if (durationMs > 0) onReady(resolved.variantId, durationMs);
+        // Nothing waits on the answer: a song that could not be fetched ahead
+        // of time says so when it is reached, and a room's next song is
+        // downloaded by the ask itself.
+        return this._warm(resolved.variantId);
       })
       .catch(() => {
         /* a track that cannot be fetched will say so when it is reached */
       });
-  }
-
-  /**
-   * Fetch a rendition into the browser's own cache and wait until it can play.
-   *
-   * The element is thrown away afterwards; what matters is that the bytes are
-   * cached under the URL the real player will ask for. That URL is also the
-   * media cache's key, so a song kept for offline play is served out of that
-   * cache here and the real element finds the same bytes again - the preload
-   * adds nothing to the cache and fights nothing in it. Resolves with the
-   * length the browser measured, or zero when the file never became playable -
-   * the room's own reckoning is the backstop. The element is let go of, src and
-   * all, in `done`, which runs once however the wait ends.
-   *
-   * The timeout is generous on purpose. Giving up here does not shorten
-   * anything: the room is waiting for this file either way, and a preload
-   * abandoned half-way throws away the bytes it had buffered, so the real
-   * player fetches the whole thing again. It exists only so a connection that
-   * hangs without failing does not hold the fetch open for the session.
-   */
-  _preload(variantId) {
-    return new Promise((resolve) => {
-      if (!variantId) return resolve(0);
-      let settled = false;
-      const audio = new Audio();
-      const done = (durationMs) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        audio.removeEventListener("canplay", onCanPlay);
-        audio.removeEventListener("error", onError);
-        audio.removeAttribute("src");
-        audio.load();
-        resolve(durationMs);
-      };
-      const onCanPlay = () => {
-        const seconds = Number(audio.duration);
-        done(Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : 0);
-      };
-      const onError = () => done(0);
-      const timer = setTimeout(() => done(0), PRELOAD_TIMEOUT_MS);
-      audio.preload = "auto";
-      audio.muted = true;
-      audio.addEventListener("canplay", onCanPlay, { once: true });
-      audio.addEventListener("error", onError, { once: true });
-      audio.src = this._client().mediaUrl(variantId);
-      audio.load();
-    });
   }
 
   /**
@@ -2882,8 +2834,12 @@ class Player {
   }
 
   /** What the bar's text line says the download is doing, from the last status
-   *  this page got for the rendition it is loading. */
-  _downloadLabel() {
+   *  this page got for the rendition it is loading.
+   *
+   *  Public because the page says it in two places: the room's own status line
+   *  names the same download, and giving it a second vocabulary meant the bar
+   *  said "downloading 3.1 of 8.4 MB" while the room said "Loading the track…". */
+  downloadLabel() {
     return mediaProgressLabel(this._status.get(this._variant));
   }
 
@@ -3286,6 +3242,15 @@ class Player {
     if (this._wired) return;
     this._wired = true;
     on("toggle-play", () => this.toggle());
+    // The page's transport keys, which the shell answers for the whole page
+    // (see app.js): the terminal player's h/j/k/l and the arrows, plus mute.
+    // The bar's own buttons do the same things, so there is one way to play a
+    // song whichever one is used.
+    on("next-track", () => this.next());
+    on("previous-track", () => this.previous());
+    on("volume-up", () => this.setVolume(this._volume + VOLUME_STEP));
+    on("volume-down", () => this.setVolume(this._volume - VOLUME_STEP));
+    on("toggle-mute", () => this.setMuted(!this._muted));
     on("favorites-changed", () => this.renderBar());
     on("session-changed", () => {
       this._restore();

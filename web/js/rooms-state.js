@@ -1141,6 +1141,9 @@ async function followRoom(running) {
     itemId: running.itemId,
     loaded: onTrack && running.loadedItemId === itemId && Boolean(running.variantId),
     loading: onTrack && Boolean(media.loading || media.buffering),
+    // What the bar says the download is doing, so the room's own line says the
+    // same thing rather than a second vocabulary for one download.
+    loadLabel: onTrack ? player.downloadLabel?.() || "" : "",
     // Whether this member's own player is playing - which is what pause and
     // resume act on. Folding the room's own state into this is what made a room
     // pause a no-op on this page: `playing` was already false because the room
