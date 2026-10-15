@@ -999,3 +999,44 @@ test("a pause pressed after a song change reaches this member", async (t) => {
   });
   assert.ok(await waitFor(() => player.paused === false), "and its play starts the member again");
 });
+
+// A transition is a switch, not a search. The source of the next songs is
+// worked out while the current one is playing, so the song change does not sit
+// on a provider round trip - and it starts where the room is *then*, not where
+// it was when the decision was made, or the drift rule would seek it back and
+// be heard as "syncing" a moment after the song started.
+test("the next song's source is resolved ahead of time, and the transition uses it", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const first = item("a1", "first", KYLE);
+  const second = item("b1", "second", SAM);
+  const room = {
+    ...BASE_ROOM,
+    current: { item: first, positionMs: 0, atMs: Date.now(), started: true, paused: false, durationMs: 30000 },
+    queues: { [KYLE]: [first], [SAM]: [second] },
+    masterQueue: [first, second],
+  };
+  const client = fakeClient({ room, memberId: SAM });
+  t.after(followWithPlayer(player));
+
+  const asked = [];
+  const real = player.variantFor.bind(player);
+  player.variantFor = (track) => {
+    asked.push(String(track?.id || ""));
+    return real(track);
+  };
+
+  await enterRoom({ client, roomId: "room-1", rejoin: true });
+  assert.ok(await waitFor(() => player.plays.length === 1), "the room's song is playing");
+  assert.ok(
+    await waitFor(() => asked.includes(second.trackId)),
+    `the next song's source is resolved while this one plays (asked: ${JSON.stringify(asked)})`
+  );
+
+  const before = asked.length;
+  player.ended = true;
+  player.emit("position");
+  assert.ok(await waitFor(() => player.plays.length === 2), "the member moves to the next song");
+  assert.equal(asked.length, before, "and the transition did not have to search for a source");
+  assert.ok(player.plays[1].positionMs < 1000, `it starts at the beginning (${player.plays[1].positionMs}ms)`);
+});

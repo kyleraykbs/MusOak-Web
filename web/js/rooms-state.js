@@ -886,6 +886,12 @@ export function followWithPlayer(playbackPlayer) {
     // lags by up to a second, so a `current` still naming one of these says
     // nothing new and must not drag this member back onto it.
     advancedPast: new Set(),
+    // Sources resolved ahead of the song that needs them: a transition is meant
+    // to be a switch, not a search (see prefetchResolution). `resolvingAhead` is
+    // the ones on their way - not to be confused with `pending`, which is the
+    // tick that landed while another was running.
+    resolved: new Map(),
+    resolvingAhead: new Set(),
     // When the file for the current item was handed to the player, and when a
     // correction last landed: the two readings the drift rule needs.
     loadedAtMs: 0,
@@ -1009,6 +1015,8 @@ async function followRoom(running) {
   if (running.roomId !== room.roomId) {
     running.roomId = room.roomId;
     running.advancedPast.clear();
+    running.resolved.clear();
+    running.resolvingAhead.clear();
   }
 
   const current = room.current || null;
@@ -1033,7 +1041,7 @@ async function followRoom(running) {
 
   // The room's next songs, on this device and in memory: what makes the next
   // transition instant is having been fetched while this one played.
-  warmAhead(player, room, itemId);
+  warmAhead(running, room, itemId);
 
   // With nothing reachable there is nothing to resolve and nothing to measure
   // drift against: the order and the copies this page holds are what is left.
@@ -1119,6 +1127,25 @@ async function followRoom(running) {
   }
 }
 
+/** Work out which rendition of a track this member would play, before anybody
+ *  needs it. The answer is cached; a song already resolved or being resolved is
+ *  left alone, and a failure is not cached - the song it belongs to will ask
+ *  again, and say so, when it is reached. */
+function prefetchResolution(running, trackId) {
+  const id = str(trackId);
+  if (!id || running.resolved.has(id) || running.resolvingAhead.has(id)) return;
+  running.resolvingAhead.add(id);
+  Promise.all([resolveVariant(id, running.player), loadTrack(active, id)])
+    .then(([variantId, track]) => {
+      if (plugin !== running || !str(variantId)) return;
+      running.resolved.set(id, { variantId: str(variantId), track });
+    })
+    .catch(() => {
+      /* the song will say so when it is reached */
+    })
+    .finally(() => running.resolvingAhead.delete(id));
+}
+
 /** Put this member on one of the room's items: find a source for the track,
  *  fetch what the bar needs, and hand the player the rendition and where in it
  *  to start. */
@@ -1142,29 +1169,49 @@ async function loadItem(running, item, { positionMs: at = 0, autoplay = true } =
   running.failedAt = 0;
   sayStep(`song:${itemId}`, `Room: ${item.title || "the next song"}`);
 
-  running.resolving = trackId;
-  setStatus(running, "Finding a source…");
-  let variant = "";
-  let track = null;
-  try {
-    [variant, track] = await Promise.all([resolveVariant(trackId, player), loadTrack(active, trackId)]);
-  } finally {
-    if (plugin === running) running.resolving = "";
+  // The source this member would play, if it was worked out while the song
+  // before this one was playing. It usually was.
+  const known = running.resolved.get(trackId);
+  if (known) {
+    running.track = known.track;
+    running.variantId = known.variantId;
+  } else {
+    running.resolving = trackId;
+    setStatus(running, "Finding a source…");
+    let variant = "";
+    let track = null;
+    try {
+      [variant, track] = await Promise.all([resolveVariant(trackId, player), loadTrack(active, trackId)]);
+    } finally {
+      if (plugin === running) running.resolving = "";
+    }
+    if (plugin !== running || running.itemId !== itemId) return;
+    running.track = track;
+    running.variantId = str(variant);
+    if (!running.variantId) {
+      running.failedItemId = itemId;
+      running.failedAt = Date.now();
+      setStatus(running, "That song could not be found.");
+      return;
+    }
+    running.resolved.set(trackId, { variantId: running.variantId, track });
   }
-  if (plugin !== running || running.itemId !== itemId) return;
-  running.track = track;
-  running.variantId = str(variant);
-  if (!running.variantId) {
-    running.failedItemId = itemId;
-    running.failedAt = Date.now();
-    setStatus(running, "That song could not be found.");
-    return;
-  }
+
+  // Where to start is taken now, not when the decision was made: resolving and
+  // fetching take time, and a position from before them is a position already
+  // behind the room - which the drift rule then corrects with a seek, which is
+  // the "syncing" heard a moment after a song starts. A song the room has
+  // started is joined where the room is; one this member is moving to itself
+  // starts at its beginning, because the room has not started it yet.
+  const live = currentRoom();
+  const onRoom = live && live.current && str(live.current.item?.id) === itemId && live.current.started && !live.current.paused;
+  const startAt = onRoom ? Math.max(0, positionMs(live, Date.now())) : Math.max(0, num(at));
+
   running.loadedItemId = itemId;
   running.loadedAtMs = Date.now();
   setStatus(running, "");
   player.playVariant(running.track || { id: trackId, title: item.title }, running.variantId, {
-    positionMs: Math.max(0, num(at)),
+    positionMs: startAt,
     autoplay,
   });
 }
@@ -1213,14 +1260,20 @@ function followOfflineRoom(running, room, { force = false } = {}) {
   if (!player.isPaused()) player.pause();
 }
 
-/** Have the room's next songs on disk, and in memory for offline play. */
-function warmAhead(player, room, itemId) {
+/** Have the room's next songs on disk, in memory for offline play, and their
+ *  sources resolved. The source is the one part of a transition that is a
+ *  provider round trip, and a round trip in the path of a song change is the
+ *  second of "Finding a source…" before the music - so it is done while the
+ *  song before it is still playing. */
+function warmAhead(running, room, itemId) {
+  const player = running.player;
   const order = list(room.masterQueue);
   const at = order.findIndex((entry) => str(entry.id) === str(itemId));
   const from = at < 0 ? 0 : at;
   const upcoming = order.slice(from).map((entry) => ({ id: str(entry.trackId), title: entry.title }));
   for (const entry of upcoming.slice(0, PREFETCH_AHEAD)) {
     player.warm?.(entry);
+    prefetchResolution(running, entry.id);
   }
   // The order a follower would go through with nothing reachable is the room's,
   // so that is what this page keeps the copies for.
