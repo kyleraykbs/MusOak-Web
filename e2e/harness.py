@@ -149,13 +149,14 @@ class Ui:
         for line in text.splitlines():
             entry = None
             if "console.error:" in line:
-                entry = {
-                    "kind": "console", "level": "error", "source": "log",
-                    "text": line.split("console.error:", 1)[1].strip(),
-                }
+                text_value = line.split("console.error:", 1)[1].strip()
+                # Firefox's NewTabUtils/private browsing machinery can emit a
+                # console.error from resource:// without involving the page at
+                # all. It is driver noise, not a web-app error; JavaScript
+                # errors below already use the same filter.
+                if "resource://" not in text_value and "chrome://" not in text_value:
+                    entry = {"kind": "console", "level": "error", "source": "log", "text": text_value}
             elif "JavaScript error:" in line and "resource://" not in line and "chrome://" not in line:
-                # Firefox's browser internals and extensions log their own
-                # errors here; only the page's are the page's.
                 entry = {
                     "kind": "javascript", "level": "error", "source": "log",
                     "text": line.split("JavaScript error:", 1)[1].strip(),
