@@ -8,7 +8,7 @@
 import { currentClient, on, registerView, requireLogin } from "../app.js";
 import { fmtDuration, h, mount } from "../dom.js";
 import { isSignedIn } from "../state.js";
-import { artistLine, playTracks, queueButton, reportError } from "./queue.js";
+import { artistLine, playOne, playTracks, queueButton, reportError } from "./queue.js";
 import { artworkTile, emptyState } from "./playlist.js";
 
 registerView({
@@ -120,7 +120,7 @@ function section(title, entries, shape) {
       ? h(
           "div",
           { class: "list" },
-          items.map((item, index) => row(item, client, () => playTracks(tracks, index)))
+          items.map((item, index) => row(item, client, () => playOne(tracks, index)))
         )
       : emptyState("retry", title, "Nothing here yet.")
   );

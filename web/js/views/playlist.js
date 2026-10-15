@@ -22,7 +22,7 @@ import {
 import { banner, currentClient, navigate, refreshCurrent, registerView, requireLogin, toggleFavorite, inBrowser } from "../app.js";
 import { isSignedIn, state } from "../state.js";
 import { currentRoom } from "../rooms-state.js";
-import { artistLine, artistLineNode, enqueueTracks, providerErrorLines, queueButton, queueNextTracks, goToArtistItem, playTracks, reportError, shuffleItems } from "./queue.js";
+import { artistLine, artistLineNode, enqueueTracks, goToArtistItem, playOne, playTracks, providerErrorLines, queueButton, queueNextTracks, reportError, shuffleItems } from "./queue.js";
 import { shareTrack } from "./share.js";
 
 registerView({
@@ -440,8 +440,7 @@ async function loadPlaylist() {
               // of everything makes every later choice a place in a long list
               // rather than the song that was picked. "Play all" is the button
               // for all of it.
-              onActivate: () =>
-                playTracks(tracks.slice(0, position + 1), position, { playlistId: activeId }),
+              onActivate: () => playOne(tracks, position, { playlistId: activeId }),
               menu: trackMenu(track, [{ label: "Remove from playlist", onClick: () => removeEntry(position) }], {
                 playlistId: activeId,
               }),

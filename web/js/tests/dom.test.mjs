@@ -165,3 +165,20 @@ test("a menu removed by a second press leaves no listeners behind", async () => 
     globalThis.window.addEventListener = windowAdd;
   }
 });
+
+// A list that scrolls under the finger still fires a click when the finger
+// lifts: on a queue, that is a scroll starting the song under the thumb. The
+// guard lets a still press through and drops anything that moved.
+test("a click that was a scroll does not get through", async () => {
+  const { tapOnly } = await import("../dom.js");
+  const fired = [];
+  const handlers = tapOnly((event) => fired.push(event.clientX));
+
+  handlers.pointerdown({ clientX: 40, clientY: 100 });
+  handlers.click({ clientX: 52, clientY: 104 });
+  assert.deepEqual(fired, [], "twelve pixels is a scroll");
+
+  handlers.pointerdown({ clientX: 40, clientY: 100 });
+  handlers.click({ clientX: 44, clientY: 103 });
+  assert.deepEqual(fired, [44], "a few pixels of tremor is a tap");
+});

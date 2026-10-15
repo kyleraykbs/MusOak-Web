@@ -37,6 +37,33 @@ function append(node, children) {
   }
 }
 
+/**
+ * A pair of handlers that only lets a click through when the press did not move:
+ * `{pointerdown, click}` for h().
+ *
+ * A list that scrolls under the finger still fires a click when the finger
+ * lifts, so a scroll is read as a tap - and on a queue that means the song under
+ * the thumb starts playing. Ten pixels is a thumb's tremor rather than a
+ * gesture; anything past it was a scroll, and the click is dropped.
+ */
+export function tapOnly(handler, { slop = 10 } = {}) {
+  let start = null;
+  return {
+    pointerdown: (event) => {
+      start = { x: Number(event.clientX) || 0, y: Number(event.clientY) || 0 };
+    },
+    click: (event) => {
+      const from = start;
+      start = null;
+      if (from) {
+        const moved = Math.abs((Number(event.clientX) || 0) - from.x) + Math.abs((Number(event.clientY) || 0) - from.y);
+        if (moved > slop) return;
+      }
+      handler(event);
+    },
+  };
+}
+
 /** A text node, for the rare case h() is not the right shape. */
 export function text(value) {
   return document.createTextNode(value === null || value === undefined ? "" : String(value));

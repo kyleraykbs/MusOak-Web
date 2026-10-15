@@ -7,7 +7,7 @@
 import { h, mount } from "../dom.js";
 import { currentClient, on, registerView, requireLogin } from "../app.js";
 import { isSignedIn, state } from "../state.js";
-import { playTracks, reportError } from "./queue.js";
+import { playOne, playTracks, reportError } from "./queue.js";
 import { emptyState, playButtons, trackCountLine, trackMenu, trackRow } from "./playlist.js";
 
 registerView({
@@ -106,7 +106,7 @@ function paint() {
               track,
               position,
               client,
-              onActivate: () => playTracks(list, position),
+              onActivate: () => playOne(list, position),
               menu: trackMenu(track),
             })
           )

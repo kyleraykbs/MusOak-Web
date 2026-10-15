@@ -13,7 +13,7 @@
 // running. The room's state is read from rooms-state, never from a socket of
 // our own.
 
-import { h, mount, fmtDuration, icon, iconButton, iconOr, popover, toast } from "../dom.js";
+import { fmtDuration, h, icon, iconButton, iconOr, mount, popover, tapOnly, toast } from "../dom.js";
 import { banner, currentClient, inBrowser, navigate, on, registerView, requireLogin } from "../app.js";
 import { player } from "../player.js";
 import {
@@ -230,6 +230,19 @@ const DRAG_SLOP = 6;
 export function playTracks(tracks, index = 0, { playlistId = "" } = {}) {
   player.setContext({ playlistId: playlistId || "" });
   player.play(Array.from(tracks || []), index);
+}
+
+/** What clicking a song in a list does: that song, and nothing else.
+ *
+ * A list of songs is a menu of them, not a set to adopt: wanting the rest is
+ * what the queue and shuffle buttons are for, and a click that quietly takes
+ * the whole playlist makes every later choice a position in a list nobody asked
+ * to be in. */
+export function playOne(tracks, position = 0, { playlistId = "" } = {}) {
+  const list = Array.from(tracks || []);
+  const track = list[Math.max(0, Math.min(position, list.length - 1))];
+  if (!track) return;
+  playTracks([track], 0, { playlistId });
 }
 
 /** Add a list to the end of what is already queued. */
@@ -630,15 +643,18 @@ function queueRow(projection, row) {
     {
       class: jumpable ? "row clickable" : "row",
       "data-key": row.key,
-      onclick: jumpable
-        ? (event) => {
+      // A tap jumps inside the queue, a scroll is a scroll: the drawer is a
+      // list you scroll under your thumb, and without the guard every scroll
+      // ends by playing whatever the thumb stopped over.
+      ...(jumpable
+        ? tapOnly((event) => {
             if (event.target.closest?.("button")) return;
             // Jumping inside the queue is not playing a playlist: a restore
             // must not reopen whichever one the queue was filled from.
             player.setContext({ playlistId: "" });
             player.jumpTo(row.index);
-          }
-        : null,
+          })
+        : {}),
     },
     h(
       "span",

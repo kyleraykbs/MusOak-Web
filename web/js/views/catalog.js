@@ -8,7 +8,7 @@
 
 import { h, mount, clear, iconButton, popover, toast } from "../dom.js";
 import { currentClient, navigate, registerView } from "../app.js";
-import { playTracks } from "./queue.js";
+import { playOne, playTracks } from "./queue.js";
 import { emptyState, playButtons, trackCountLine, trackMenu, trackRow } from "./playlist.js";
 
 registerView({ id: "artist", title: "Artist", hidden: true, render: renderArtist });
@@ -327,7 +327,7 @@ async function renderAlbum(container, params = {}) {
             track,
             position,
             client,
-            onActivate: () => playTracks(tracks, position),
+            onActivate: () => playOne(tracks, position),
             menu: trackMenu(track),
           })
         )
