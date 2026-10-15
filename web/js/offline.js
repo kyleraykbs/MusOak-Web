@@ -29,6 +29,14 @@ const READY_TIMEOUT_MS = 60000;
 /** How often the server is asked whether the file has landed. */
 const READY_POLL_MS = 500;
 
+/** How long one song's bytes are given to arrive once the server has them.
+ *  READY_TIMEOUT_MS covers the wait for the server, not the transfer: a
+ *  connection that is accepted and then goes quiet would otherwise hold this
+ *  song's slot in the download queue for the rest of the session, and every
+ *  song behind it waits for a transfer that is never coming. Generous, because
+ *  a song over a slow line is slow, not stuck. */
+const DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
+
 const MUTED_COLOUR = "var(--red)";
 
 // --- pure logic (used by the module and by its tests) ----------------------
@@ -255,16 +263,39 @@ function hasIndexedDb() {
   return typeof indexedDB !== "undefined";
 }
 
+// One connection for the life of the page. A connection per read and write
+// leaked them - the browser keeps every one it hands out - and a later schema
+// upgrade would be blocked by whichever of them was still open.
+let dbPromise = null;
+
 function openDb() {
-  return new Promise((resolve, reject) => {
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: "id" });
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const db = request.result;
+      // A version change elsewhere waits for this connection to close, so it
+      // closes itself; and a connection the browser takes away (storage
+      // cleared, the tab's quota reaped) is forgotten rather than reused.
+      db.onversionchange = () => {
+        db.close();
+        dbPromise = null;
+      };
+      db.onclose = () => {
+        dbPromise = null;
+      };
+      resolve(db);
+    };
+    request.onerror = () => {
+      dbPromise = null;   // this ask failed; the next one may not
+      reject(request.error);
+    };
   });
+  return dbPromise;
 }
 
 async function readAll() {
@@ -382,6 +413,27 @@ async function ensureReady(client, variantId, signal) {
   }
 }
 
+/** One song's bytes, with a deadline beside the caller's own signal.
+ *
+ *  The deadline is this page's, not the caller's: a transfer that stalls is a
+ *  failed download that frees its slot, while the run being cancelled still
+ *  stands it down at once. */
+async function fetchSongBytes(url, signal, ms) {
+  const controller = new AbortController();
+  const stop = () => controller.abort(signal?.reason);
+  if (signal?.aborted) stop();
+  else signal?.addEventListener?.("abort", stop, { once: true });
+  const timer = setTimeout(() => controller.abort(new Error("the transfer stalled")), ms);
+  try {
+    const response = await fetch(url, { signal: controller.signal, credentials: "same-origin" });
+    if (!response.ok) throw new Error(`the server returned ${response.status} for this song`);
+    return await response.blob();
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener?.("abort", stop);
+  }
+}
+
 /**
  * Put one variant's bytes in the cache, once. Returns its size. A song already
  * cached is never fetched again, so two playlists sharing a song share the
@@ -403,13 +455,11 @@ function fetchVariantToCache(client, variantId, signal) {
     await ensureReady(client, variantId, signal);
     // The media bytes have no JSON client method: mediaUrl() is the same-origin
     // routed URL, and the session cookie authenticates it.
-    const response = await fetch(key, { signal, credentials: "same-origin" });
-    if (!response.ok) throw new Error(`the server returned ${response.status} for this song`);
-    const blob = await response.blob();
+    const blob = await fetchSongBytes(key, signal, DOWNLOAD_TIMEOUT_MS);
     if (cache) {
       await cache.put(key, new Response(blob, {
         headers: {
-          "Content-Type": response.headers.get("Content-Type") || "application/octet-stream",
+          "Content-Type": blob.type || "application/octet-stream",
           "Content-Length": String(blob.size),
           "Accept-Ranges": "bytes",
         },
