@@ -301,13 +301,18 @@ test("a server that refuses is a server that answered", async () => {
 // and left "playlist not found" when it then tried to open a library page that
 // did not exist yet.
 test("a platform playlist lists its songs and imports only when asked", async () => {
-  const { playlistTrackRows, importIntoLibrary } = await import("../views/provider-playlist.js");
+  const { playlistTrackRows, playlistRowChunk, importIntoLibrary } = await import("../views/provider-playlist.js");
 
   const tracks = [
     { providerTrackId: "p1", title: "First", artists: ["Someone"], durationMs: 185000 },
     { providerTrackId: "p2", title: "Second", artists: ["Other"], durationMs: 0 },
   ];
   const rows = playlistTrackRows(null, tracks);
+  assert.equal(rows.length, 2, "one row per song");
+  const chunk = playlistRowChunk(null, [...tracks, ...tracks, ...tracks], 2, 2);
+  assert.equal(chunk.length, 2, "a page draws a chunk at a time");
+  const numbers = chunk.map((row) => row.children[0].textContent);
+  assert.deepEqual(numbers, ["3", "4"], "and numbers them from where the list starts, not from one");
   assert.equal(rows.length, 2, "one row per song the provider lists");
   assert.ok(!String(rows[0].className || "").includes("clickable"), "the rows are not rows you can play: nothing is in the library yet");
   const titles = rows.map(

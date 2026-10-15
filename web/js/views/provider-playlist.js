@@ -87,9 +87,41 @@ function paint(container, params, client, answer) {
     sheet.appendChild(emptyState("note", "Nothing listed", "The provider did not list any tracks for this playlist."));
     return;
   }
+  // A playlist can be thousands of songs long, and it arrives in one answer:
+  // what is drawn is a hundred at a time, with a button for the next hundred,
+  // so the page stays a length somebody can scroll.
   const list = h("div", { class: "list" });
-  for (const row of playlistTrackRows(client, tracks)) list.appendChild(row);
+  const more = h("button", { class: "btn", text: "", title: "Draw the next songs" });
+  let shown = 0;
+  const draw = () => {
+    for (const row of playlistRowChunk(client, tracks, shown)) list.appendChild(row);
+    shown += PAGE_ROWS;
+    const left = tracks.length - shown;
+    if (left > 0) {
+      more.textContent = `Load ${left > PAGE_ROWS ? PAGE_ROWS : left} more`;
+      more.style.display = "";
+    } else {
+      more.style.display = "none";
+    }
+  };
+  more.onclick = () => draw();
+  draw();
+
+  // The provider's own ceiling, said plainly. Spotify's public page lists the
+  // first hundred tracks and no more - an account's API answers with all of
+  // them - and a count larger than the list is how that reads from here.
+  const counted = Number(playlist.trackCount) || 0;
+  if (counted > tracks.length) {
+    sheet.appendChild(
+      h("div", {
+        class: "subtitle",
+        style: { padding: "0 4px 6px" },
+        text: `The provider listed ${tracks.length} of ${counted} songs. Importing brings in what it lists.`,
+      })
+    );
+  }
   sheet.appendChild(list);
+  sheet.appendChild(h("div", { class: "row", style: { border: "0", justifyContent: "center" } }, more));
 }
 
 /** The songs as rows: what the platform lists, in its order, with nothing to
@@ -98,9 +130,10 @@ function paint(container, params, client, answer) {
  *
  * Exported because it is the page's whole content and the one part of it a
  * test can look at: the rest is a header and a button. */
-export function playlistTrackRows(client, tracks) {
-  return (tracks || []).map((track, position) =>
-    h(
+export function playlistTrackRows(client, tracks, offset = 0) {
+  return (tracks || []).map((track, index) => {
+    const position = offset + index;
+    return h(
       "div",
       { class: "row" },
       h("span", { class: "time", text: String(position + 1) }),
@@ -112,8 +145,18 @@ export function playlistTrackRows(client, tracks) {
         h("div", { class: "subtitle", text: artistLine(track) })
       ),
       track.durationMs ? h("span", { class: "time", text: fmtDuration(track.durationMs) }) : null
-    )
-  );
+    );
+  });
+}
+
+/** How many songs are drawn at once. See draw() for why a page shows a part of
+ *  a playlist rather than all of it. */
+export const PAGE_ROWS = 100;
+
+/** The chunk of songs from `from` on, numbered from where the list starts: the
+ *  rows a page draws at a time. */
+export function playlistRowChunk(client, tracks, from, size = PAGE_ROWS) {
+  return playlistTrackRows(client, (tracks || []).slice(from, from + size), from);
 }
 
 /** Bring the playlist in: the one act on this page that writes anything. It
