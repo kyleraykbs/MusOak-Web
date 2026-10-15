@@ -10,6 +10,8 @@ const listeners = new Map();
 let saving = false;
 
 export const state = {
+  /** How many songs this device fetches at once. See offline.js. */
+  downloadLimit: 5,
   /** GET /ui/config: what this deployment offers. */
   config: { defaultServer: "", loginPopup: false, servers: [], allowCustomServer: true },
   /** Backends this browser knows: the configured ones plus what users added. */
@@ -235,6 +237,7 @@ function writeLocal() {
     serverNames: state.serverNames || {},
     iconVersions: state.iconVersions || {},
     searchKind: state.searchKind || "tracks",
+    downloadLimit: state.downloadLimit,
     sessions: state.sessions,
     view: state.view,
     room: state.room,

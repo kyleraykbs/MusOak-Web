@@ -10,7 +10,7 @@
 import {
   h, clear, mount, dialog, toast, pickFile, fileToBase64, icon,
 } from "../dom.js";
-import { isSignedIn, bumpIcon, iconVersion, userIdOf } from "../state.js";
+import { state, saveLocal, isSignedIn, bumpIcon, iconVersion, userIdOf } from "../state.js";
 import { rejoinRoom } from "../rooms-state.js";
 import { registerView, banner, requireLogin, refreshMe, currentClient } from "../app.js";
 import { enabledPlatforms } from "../platforms.js";
@@ -151,7 +151,43 @@ function build() {
   root.appendChild(profileCard());
   root.appendChild(actionsRow());
   root.appendChild(saveFooter());
+  root.appendChild(deviceCard());
   root.appendChild(providerCard());
+}
+
+/** What this device does, rather than what the account is.
+ *
+ * It saves itself: there is nothing to review and nothing the server needs to
+ * know, since it is about the browser fetching copies for itself - the queue it
+ * warms and the playlists it keeps. */
+function deviceCard() {
+  const select = h("select", { class: "input", id: "account-download-limit" });
+  for (const count of [1, 2, 3, 5, 8, 12, 20]) {
+    select.appendChild(
+      h("option", { value: String(count), text: count === 1 ? "1 song at a time" : `${count} songs at a time` })
+    );
+  }
+  select.value = String(state.downloadLimit || 5);
+  select.onchange = () => {
+    state.downloadLimit = Number(select.value) || 5;
+    saveLocal();
+    toast(`Fetching ${state.downloadLimit} at a time`);
+  };
+  return h(
+    "div",
+    { class: "card" },
+    h("div", { class: "section-title", text: "This device" }),
+    h(
+      "div",
+      { class: "list" },
+      h("div", { class: "row" }, field("account-download-limit", "Download at a time", select)),
+      h("div", {
+        class: "subtitle",
+        style: { padding: "0 4px 8px" },
+        text: "How many songs this device fetches at once when it warms the queue or keeps a playlist. Five by default.",
+      })
+    )
+  );
 }
 
 // --- the form ---------------------------------------------------------------

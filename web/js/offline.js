@@ -80,6 +80,57 @@ export function plannedFetches(record, tracks) {
   return plan;
 }
 
+/** How many songs are fetched at once, unless the account page says otherwise.
+ *
+ * Every copy that lands in the cache goes through one queue - a playlist being
+ * kept, the window the queue warms ahead, a sync after a load - and asking for
+ * sixty songs is not asking for sixty downloads. The browser would open sixty
+ * connections, the server would run sixty provider fetches at once, and the one
+ * song the room is about to need would be last in line behind all of them. Five
+ * at a time keeps the wire busy and the queue moving.
+ */
+export const DEFAULT_DOWNLOAD_LIMIT = 5;
+
+/** The most that may run at once, straight from the setting: a page that
+ *  changed it does not have to be reloaded for it to apply. */
+function downloadLimit() {
+  const wanted = Number(state.downloadLimit);
+  if (!Number.isFinite(wanted) || wanted <= 0) return DEFAULT_DOWNLOAD_LIMIT;
+  return Math.min(20, Math.floor(wanted));
+}
+
+/** A queue of work with a ceiling on how much of it runs at once: first asked,
+ *  first fetched, and a failure takes its own slot back rather than the queue's.
+ *  Exported because the ceiling is the thing worth testing, and testing it
+ *  through a browser cache is not worth anything. */
+export function createDownloadQueue({ limit = downloadLimit } = {}) {
+  let running = 0;
+  const waiting = [];
+
+  const pump = () => {
+    while (running < Math.max(1, Number(limit()) || 1) && waiting.length) {
+      const next = waiting.shift();
+      running += 1;
+      Promise.resolve()
+        .then(next.task)
+        .then(next.resolve, next.reject)
+        .finally(() => {
+          running -= 1;
+          pump();
+        });
+    }
+  };
+
+  return (task) =>
+    new Promise((resolve, reject) => {
+      waiting.push({ task, resolve, reject });
+      pump();
+    });
+}
+
+/** The queue every cached copy goes through. */
+const downloads = createDownloadQueue();
+
 /**
  * The order a playlist's songs should be fetched in.
  *
@@ -275,7 +326,9 @@ function fetchVariantToCache(client, variantId, signal) {
   const running = pending.get(key);
   if (running) return running;
 
-  const work = (async () => {
+  // Queued, not fired: see createDownloadQueue. The dedupe above still holds -
+  // the same song asked for twice is one entry, and the queue sees one task.
+  const work = downloads(async () => {
     const cache = await openCache();
     if (cache) {
       const existing = await cache.match(key);
