@@ -19,6 +19,22 @@
 
 import { CACHE_NAME, mediaCacheKey } from "./js/offline.js";
 
+// The app is served under a prefix on the deployment this was written for
+// (`/musoak/`), so the paths that matter are relative to the worker's own scope
+// rather than to the origin. Matching the scoped path is what makes this file
+// work at the root and under a sub-path - and it is why nothing matched before:
+// every rule here was anchored to `/`, so under a prefix no request was ever
+// recognised as the shell's.
+const SCOPE_PATH = new URL(self.registration.scope).pathname.replace(/\/$/, "");
+
+/** The path as this worker sees it: what follows the scope, leading slash and
+ *  all. Empty when the request is outside the scope, which the browser does not
+ *  send here anyway. */
+function scoped(pathname) {
+  if (!pathname.startsWith(SCOPE_PATH + "/")) return "";
+  return pathname.slice(SCOPE_PATH.length);
+}
+
 const MEDIA_PATH = /^\/api\/v1\/media\/[^/]+$/;
 // SHELL_CACHE holds the app itself as it last arrived. Nothing else writes to
 // it, and it answers every shell request but a navigation, which asks the
@@ -49,7 +65,10 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  if (MEDIA_PATH.test(url.pathname)) {
+  const path = scoped(url.pathname);
+  if (!path) return;
+
+  if (MEDIA_PATH.test(path)) {
     event.respondWith(keptSong(request));
     return;
   }
@@ -59,7 +78,7 @@ self.addEventListener("fetch", (event) => {
   // file is handed over from the copy it had and refreshed behind the page. An
   // edit lands on the next load, and the wire does not carry the same modules
   // again on the way.
-  if (SHELL_PATH.test(url.pathname)) {
+  if (SHELL_PATH.test(path)) {
     event.respondWith(shell(request, url.pathname));
   }
 });

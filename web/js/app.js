@@ -199,7 +199,34 @@ export async function boot() {
   window.addEventListener("focus", () => checkServer());
   startReachability();
   checkServer();
+  // Last, and never waited on: a worker that cannot register is a slower load,
+  // not a broken one.
+  startServiceWorker();
   watchVisibility();
+}
+
+/** Put the service worker in place.
+ *
+ * It is what makes a reload instant: the app's own files come from the copy the
+ * last load kept, and the network is asked behind them. Which songs it keeps is
+ * the offline module's business, not this one's.
+ *
+ * The path comes from this module's own URL, not from the page: the app is
+ * served under a prefix on the real deployment (`/musoak/`), and a bare
+ * "sw.js" would resolve against whatever route the page happens to be on. The
+ * scope is the directory the app lives in, which is the whole of what the
+ * worker should see - and it is only ever registered once.
+ */
+function startServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  try {
+    const scope = new URL("../", import.meta.url);
+    navigator.serviceWorker.register(new URL("sw.js", scope), { scope }).catch(() => {
+      /* no worker: every load is a full one, exactly as it was before */
+    });
+  } catch {
+    /* a browser without modules, or without a worker: nothing to do */
+  }
 }
 
 /** Ask the deployment what it offers, and take its answer. */
