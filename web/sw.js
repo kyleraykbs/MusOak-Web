@@ -75,7 +75,12 @@ async function keepShell(urls) {
   const kept = [];
   for (const url of urls) {
     try {
-      const response = await fetch(url, { cache: "force-cache" });
+      // Asked for in the ordinary way: a copy the browser already holds and
+      // still trusts costs no request, and one it no longer trusts is
+      // revalidated - a 304, no body. `force-cache` used to be here, and it
+      // takes whatever is stored even when it is stale, which is how the shell
+      // could come to hold a module from an older load beside this load's own.
+      const response = await fetch(url);
       if (response && response.ok) {
         await cache.put(url, response);
         kept.push(url);
@@ -225,15 +230,34 @@ async function keptSong(request) {
   return fromCache(request, cached);
 }
 
-/** A full (or Range) answer out of the cached bytes. */
+/** A full (or Range) answer out of the cached bytes.
+ *
+ *  The copy is read once, and only when something has to be cut out of it: the
+ *  whole-song range a media element opens with, and a window that starts past
+ *  the end, both have their answer without it. The `clone()` that used to be
+ *  here teed the body, which held a second copy of the whole song for as long
+ *  as the answer took to hand over. */
 async function fromCache(request, cached) {
   const range = request.headers.get("range");
   if (!range) return cached;
 
-  const blob = await cached.clone().blob();
-  const size = blob.size;
   const parsed = /^bytes=(\d*)-(\d*)$/.exec(range.trim());
   if (!parsed || (parsed[1] === "" && parsed[2] === "")) return cached;
+
+  // The length the bytes were stored with, so the answers that need a total do
+  // not have to read them to find it.
+  const stated = Number(cached.headers.get("Content-Length"));
+  const total = Number.isFinite(stated) && stated >= 0 ? stated : null;
+
+  // The whole song, head to tail: the cached answer already is exactly that.
+  if (total !== null && parsed[1] === "0" && parsed[2] === "") return cached;
+  // A window that begins at or past the end has nothing to answer with.
+  if (total !== null && parsed[1] !== "" && Number(parsed[1]) >= total) {
+    return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${total}` } });
+  }
+
+  const blob = await cached.blob();
+  const size = total === null ? blob.size : total;
 
   let start;
   let end;
