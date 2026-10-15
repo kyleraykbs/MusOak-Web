@@ -50,9 +50,46 @@ const SHELL_TIMEOUT_MS = 2500;
 // its fonts and its icons. The API is left alone.
 const SHELL_PATH = /^\/(?:$|index\.html$|theme\.css$|icon\.png$|icon-64\.png$|apple-touch-icon\.png$|sw\.js$|js\/|fonts\/)/;
 
+// The shell as the page itself reported it: every file the app loaded on a
+// load that worked. The page posts this once it is up (see app.js), which is
+// how the worker learns the whole module graph without a build step keeping a
+// list in step with it.
+const SHELL_MANIFEST = "musoak-shell-manifest";
+
 self.addEventListener("install", () => {
   self.skipWaiting();
 });
+
+self.addEventListener("message", (event) => {
+  const data = event.data || {};
+  if (data.type !== "shell" || !Array.isArray(data.urls)) return;
+  // Kept, not fetched here: these are files this load already has, and asking
+  // for them again would be the wire doing the same work twice.
+  event.waitUntil(keepShell(data.urls));
+});
+
+/** Remember the files the app says it is made of. */
+async function keepShell(urls) {
+  const cache = await openShellCache();
+  if (!cache) return;
+  const kept = [];
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, { cache: "force-cache" });
+      if (response && response.ok) {
+        await cache.put(url, response);
+        kept.push(url);
+      }
+    } catch {
+      /* one file that will not come is not the rest of them */
+    }
+  }
+  try {
+    await caches.open(SHELL_MANIFEST).then((manifest) => manifest.put("list", new Response(JSON.stringify(kept))));
+  } catch {
+    /* the manifest is a convenience, not a requirement */
+  }
+}
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
@@ -104,9 +141,19 @@ async function shell(request) {
     // The page, or anything there is no copy of: the wire is the answer. The
     // deadline belongs to the copy that exists, never to the request that has
     // to land.
+    // Two tries, because the error that brings a phone here is the network
+    // changing under the request - a new connection usually answers the second
+    // one. The copy, when there is one, is still the last resort.
     const send = () => fetch(request).then((response) => keep(request, cache, response));
+    const attempt = async () => {
+      try {
+        return await send();
+      } catch {
+        return send();
+      }
+    };
     try {
-      return cached ? await within(send(), SHELL_TIMEOUT_MS) : await send();
+      return cached ? await within(attempt(), SHELL_TIMEOUT_MS) : await attempt();
     } catch (error) {
       if (cached) return cached;
       throw error;

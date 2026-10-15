@@ -221,9 +221,24 @@ function startServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   try {
     const scope = new URL("../", import.meta.url);
-    navigator.serviceWorker.register(new URL("sw.js", scope), { scope }).catch(() => {
-      /* no worker: every load is a full one, exactly as it was before */
-    });
+    navigator.serviceWorker.register(new URL("sw.js", scope), { scope }).then(
+      (registration) => {
+        // Tell the worker what this page is made of: every script and style it
+        // loaded, from the browser's own record of the load. Without that the
+        // cache only fills with what a later load happens to ask for, and a
+        // phone whose network flips mid-load has nothing to fall back to.
+        const ready = registration.active || navigator.serviceWorker.controller;
+        if (!ready) return;
+        const files = performance
+          .getEntriesByType("resource")
+          .map((entry) => entry.name)
+          .filter((name) => /\.(?:js|css)$/.test(new URL(name).pathname));
+        ready.postMessage({ type: "shell", urls: [location.href.split("#")[0], ...new Set(files)] });
+      },
+      () => {
+        /* no worker: every load is a full one, exactly as it was before */
+      }
+    );
   } catch {
     /* a browser without modules, or without a worker: nothing to do */
   }
