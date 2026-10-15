@@ -1138,6 +1138,16 @@ class Player {
     // Assigned before it is wired: the handlers ask whether the element they
     // came from is still the one in hand.
     this.audio = audio;
+    // In the document, and named, rather than detached and anonymous: this
+    // element is the answer to "what is playing", and an element nobody can
+    // find is an element nobody can look at - not the devtools, and not the
+    // browser suite that measures a song starting. Hidden, because the bar is
+    // how a person drives it.
+    audio.dataset.e2e = "audio";
+    audio.style.display = "none";
+    if (typeof document !== "undefined" && document.body?.appendChild) {
+      document.body.appendChild(audio);
+    }
     // A media session is what keeps a phone playing with the screen off: it
     // tells the browser this page is a player, which is also what stops a
     // backgrounded tab being frozen and its audio cut off a few songs in.
@@ -1920,6 +1930,14 @@ class Player {
     const audio = new Audio();
     audio.preload = "auto";
     this._wireAudio(audio);
+    // The spare carries the other name: only one element is ever the one in
+    // hand, and a page (or a person in the devtools) asking "what is playing"
+    // must not be handed the element that just faded out.
+    audio.dataset.e2e = "audio-spare";
+    audio.style.display = "none";
+    if (typeof document !== "undefined" && document.body?.appendChild) {
+      document.body.appendChild(audio);
+    }
     this._spare = audio;
     return audio;
   }
@@ -1980,6 +1998,10 @@ class Player {
     const from = this.audio;
     this.audio = next;
     this._spare = from;
+    // The names follow the elements: `data-e2e=audio` is always the one
+    // playing, whichever element that is after a hand-over.
+    if (from && from.dataset) from.dataset.e2e = "audio-spare";
+    if (next && next.dataset) next.dataset.e2e = "audio";
     // The position is already where it should be: nothing is pending.
     this._pendingSeek = null;
     this._loading = false;

@@ -43,6 +43,38 @@
             program = "${musoak-web}/bin/musoak-web";
           };
 
+          # The browser suite: a real Firefox, the real server, the real
+          # frontend. `nix run .#e2e` from this checkout needs no environment at
+          # all - the tools are here, and the server is built from the sibling
+          # ../musoak checkout (or pass --musoakd for another build).
+          apps.e2e = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "e2e";
+              runtimeInputs = [
+                pkgs.firefox
+                pkgs.geckodriver
+                pkgs.ffmpeg # the local tracks the suite makes, and the import path
+                pkgs.go # to build musoakd/musoak-web from the checkouts
+                (pkgs.python3.withPackages (ps: [ ps.selenium ps.pytest ]))
+              ];
+              text = ''
+                if [ ! -d ./e2e ]; then
+                  echo "e2e: run this from the musoak-web checkout (there is no ./e2e here)" >&2
+                  exit 1
+                fi
+                # The sibling checkout's module cache, when it is there, so the
+                # builds the suite makes need no network.
+                if [ -z "''${GOMODCACHE:-}" ] && [ -d ../musoak/.go/pkg/mod ]; then
+                  export GOMODCACHE="$PWD/../musoak/.go/pkg/mod"
+                  export GOPATH="$PWD/../musoak/.go"
+                fi
+                export GOFLAGS="''${GOFLAGS:--mod=mod}"
+                exec python3 -m pytest ./e2e -c ./e2e/pytest.ini "$@"
+              '';
+            }}/bin/e2e";
+          };
+
           devShells.default = pkgs.mkShell {
             packages = with pkgs; [
               go
