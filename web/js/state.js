@@ -165,6 +165,9 @@ export function loadLocal() {
     stored = null;
   }
   if (stored && typeof stored === "object") {
+    // The deployment's own answer, kept so a reload paints without waiting on
+    // the round trip that asks for it again: it changes about never.
+    if (stored.config && typeof stored.config === "object") state.config = stored.config;
     state.servers = Array.isArray(stored.servers) ? stored.servers : [];
     state.hiddenServers = Array.isArray(stored.hiddenServers) ? stored.hiddenServers : [];
     state.serverNames = stored.serverNames && typeof stored.serverNames === "object" ? stored.serverNames : {};
@@ -173,6 +176,10 @@ export function loadLocal() {
     state.sessions = stored.sessions && typeof stored.sessions === "object" ? stored.sessions : {};
     state.server = typeof stored.server === "string" ? stored.server : "";
     state.view = typeof stored.view === "string" ? stored.view : "";
+    // Which half of the Rooms tab was on screen: kept so the tab opens where it
+    // was left rather than deciding again.
+    const showing = stored.roomsShowing;
+    state.roomsShowing = showing === "list" || showing === "room" ? showing : null;
     state.room =
       stored.room && typeof stored.room === "object" && typeof stored.room.roomId === "string" && stored.room.roomId
         ? {

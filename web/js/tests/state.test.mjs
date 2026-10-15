@@ -13,13 +13,14 @@ globalThis.localStorage = {
   removeItem: (key) => store.delete(key),
 };
 
-import { state, knownServers, rememberServer, forgetServer, serverLabel, serverId, sessionFor, setServer, updateSession } from "../state.js";
+import { state, knownServers, rememberServer, forgetServer, serverLabel, serverId, sessionFor, setServer, updateSession, loadLocal } from "../state.js";
 
 const reset = () => {
   state.config = { defaultServer: "", loginPopup: false, servers: [], allowCustomServer: true };
   state.servers = [];
   state.server = "";
   state.sessions = {};
+  state.roomsShowing = null;
 };
 
 test("a deployment with no servers configured offers none, and does not throw", () => {
@@ -123,6 +124,35 @@ test("the removed list survives a reload", async () => {
 
 /** Let a batched write land. */
 const flushLocal = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+test("the deployment's config, and the rooms tab, come back on their own", () => {
+  reset();
+  // What the last visit wrote: boot reads it rather than holding the page empty
+  // until /ui/config answers, and the Rooms tab opens where it was left.
+  globalThis.localStorage.setItem("musoak-web", JSON.stringify({
+    config: {
+      defaultServer: "https://music.example.com",
+      loginPopup: true,
+      servers: [{ name: "Home", url: "https://music.example.com" }],
+      allowCustomServer: false,
+    },
+    roomsShowing: "room",
+  }));
+
+  loadLocal();
+
+  assert.equal(state.config.defaultServer, "https://music.example.com");
+  assert.deepEqual(state.config.servers, [{ name: "Home", url: "https://music.example.com" }]);
+  assert.equal(state.config.allowCustomServer, false);
+  assert.equal(state.roomsShowing, "room");
+
+  // A record that says nothing about either leaves what is in hand alone rather
+  // than inventing an answer for it.
+  globalThis.localStorage.setItem("musoak-web", JSON.stringify({ server: "https://music.example.com" }));
+  loadLocal();
+  assert.equal(state.config.defaultServer, "https://music.example.com");
+  assert.equal(state.roomsShowing, null);
+});
 
 test("a turn's several state changes become one write", async () => {
   reset();

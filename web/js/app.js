@@ -160,18 +160,28 @@ export async function boot() {
   const wanted = state.server || state.config.defaultServer || "";
   if (wanted) setServer(wanted);
 
-  await loadViews();
+  // The shell draws before any view has arrived. The corner, the page and the
+  // tab strip are the app; waiting for thirteen module graphs to land before the
+  // first pixel is most of what a cold boot spends its time on. The view this
+  // load lands on comes in first, so the empty page is short-lived, and
+  // registerView redraws the tabs as the rest arrive behind it.
   buildLayout();
   booted = true;
   buildClient();
+  renderNav();
+  renderContent();
+
+  // Resolves once the landing view is in hand; the rest keep loading behind the
+  // paint.
+  await loadViews();
 
   // A reload should land where the user left off, or on the first view.
   if (!state.view || !views.has(state.view)) {
     const first = [...views.values()].filter((view) => !view.hidden).sort((a, b) => (a.order ?? 50) - (b.order ?? 50))[0];
     if (first) state.view = first.id;
+    renderNav();
   }
   renderContent();
-  renderNav();
 
   if (wanted) {
     await refreshMe();
@@ -189,6 +199,7 @@ export async function boot() {
   window.addEventListener("focus", () => checkServer());
   startReachability();
   checkServer();
+  watchVisibility();
 }
 
 /** Ask the deployment what it offers, and take its answer. */
@@ -323,13 +334,37 @@ async function announceInvites(payload) {
 }
 
 async function loadViews() {
-  const results = await Promise.allSettled(VIEW_MODULES.map((path) => import(path)));
-  results.forEach((result, index) => {
-    if (result.status === "rejected") {
-      const reason = result.reason;
-      console.warn(`view ${VIEW_MODULES[index]} failed to load: ${reason?.message || reason}`);
-    }
-  });
+  // The view this load lands on, and only that one, is waited for: a paint with
+  // something in it beats a paint with the whole registry in it. The rest of the
+  // tabs are asked for behind that paint, and registerView redraws the nav as
+  // each of them arrives.
+  const landing = landingView();
+  await importView(landing);
+  const rest = VIEW_MODULES.filter((path) => path !== landing);
+  void Promise.allSettled(rest.map((path) => importView(path)));
+}
+
+/** The module for the view a reload lands on: its own module when it has one,
+ *  the module that registers it when it lives with another, and the first there
+ *  is when the view it was left on is gone. Everything else arrives behind it. */
+function landingView() {
+  const own = `./views/${state.view}.js`;
+  if (VIEW_MODULES.includes(own)) return own;
+  // A view whose module does not carry its name: the room is registered by the
+  // Rooms module, and an artist or an album page by the catalog. A reload on
+  // one of those has to ask for that module first, or it lands on nothing.
+  const owner = { room: "./views/rooms.js", artist: "./views/catalog.js", album: "./views/catalog.js" };
+  return owner[state.view] || VIEW_MODULES[0];
+}
+
+/** One view module. A module that will not load is a tab that will not open, so
+ *  its failure is said out loud and the others carry on without it. */
+async function importView(path) {
+  try {
+    await import(path);
+  } catch (error) {
+    console.warn(`view ${path} failed to load: ${error?.message || error}`);
+  }
 }
 
 function buildLayout() {
@@ -648,10 +683,11 @@ export async function restorePlayback() {
 function renderBrand() {
   // The same icon the desktop client shows, then the name: one element for the
   // word, because as siblings the brand's flex gap sat between its halves and
-  // read as a space.
+  // read as a space. The picture is the 64px file, which is what a 26px corner
+  // asks for: the 1080px one is a third of a megabyte behind a favicon.
   mount(
     layout.brand,
-    h("img", { src: "icon.png", alt: "", width: 26, height: 26 }),
+    h("img", { src: "icon-64.png", alt: "", width: 26, height: 26 }),
     h(
       "span",
       { class: "wordmark" },
@@ -779,6 +815,24 @@ async function retryServer() {
 function startReachability(intervalMs = 20000) {
   clearInterval(reachabilityTimer);
   reachabilityTimer = setInterval(() => checkServer(), intervalMs);
+}
+
+/**
+ * A hidden tab has nothing to redraw, so the two polls that keep it current -
+ * the bell every thirty seconds and the server light every twenty - stop while
+ * it is hidden and start again when it is looked at. A page nobody is watching
+ * is a page that has no business asking the server anything.
+ */
+function watchVisibility() {
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      clearInterval(notifyTimer);
+      clearInterval(reachabilityTimer);
+      return;
+    }
+    startNotifications();
+    startReachability();
+  });
 }
 
 // Views name their sidebar icon; a few were asked for as glyphs, which some
@@ -1290,6 +1344,10 @@ function signOut() {
   updateSession({ token: "" });
   state.user = null;
   state.favorites = new Set();
+  // Signed out is signed out: the bell's poll has nothing left to ask this
+  // account for, and a tab that keeps asking every thirty seconds as a guest is
+  // a request nobody is waiting on.
+  clearInterval(notifyTimer);
   buildClient();
   emit("user-changed", null);
   renderCorner();
