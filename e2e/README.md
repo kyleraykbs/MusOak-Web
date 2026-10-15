@@ -93,6 +93,37 @@ Rules the suite keeps, and a new test should keep:
   The two servers are shared for the whole run, so a test that needs a different
   server (an offline one, a different config) must build its own fixture.
 
+## Facts that cost this suite an afternoon
+
+Each of these makes a test pass for the wrong reason, which is worse than a
+failing test. They are measured, not guessed.
+
+- **Do not `import()` the app's modules from a test page.** With the service
+  worker controlling the page, `import('/js/player.js')` re-instantiates the
+  app's module graph and boots a *second* app: empty `state`, its own rooms, its
+  own `<audio>` element (so `ui.player()` then measures the wrong one). Drive
+  the app with clicks; if you need something only the modules can answer, read
+  it from the DOM or from the API instead.
+- **Reload with `ui.reload()`, never `driver.refresh()`.** geckodriver's refresh
+  is a hard reload: the service worker is not controlling the new document and
+  every byte comes off the wire again (298 KB against a warm reload's 1.8 KB). A
+  cache test written against `refresh()` reports a defect that does not exist.
+- **Give every tone its own length.** Two 12-second sine tones are
+  indistinguishable in the DOM and on the wire, so a test that waits for "the
+  song to be playing" cannot say *which* song; `test_library.wait_sounding`
+  compares the element's duration for exactly this reason.
+- **`ui.mark()` is document-scoped.** A mark taken before a navigation is an
+  index into a table that no longer exists; `resources(since=...)` raises rather
+  than answering "no requests", because a silent empty answer is how a reload
+  test ends up asserting nothing.
+- **Firefox reports no 304 in Resource Timing.** A revalidated file shows up as
+  the final `200` with `transferSize` 0 (or as a service-worker answer with
+  `encodedBodySize` 0). Assert "no bytes came off the wire", not "status is 304".
+- **A revalidation may still be a request.** The shell asks for `/ui/config`
+  again on a reload, deliberately and behind the paint - the fix was to stop
+  *waiting* for it, not to stop asking. Assert what changed rather than a round
+  trip count that was never the contract.
+
 ## Fixtures
 
 | fixture | what it is |

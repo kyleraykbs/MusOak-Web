@@ -1,0 +1,5 @@
+# Python's bytecode, and the artifacts a failing run leaves behind: neither is
+# something to commit.
+__pycache__/
+.pytest_cache/
+artifacts/

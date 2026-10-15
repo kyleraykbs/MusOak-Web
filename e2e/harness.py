@@ -90,12 +90,15 @@ class WaitTimeout(AssertionError):
 class Ui:
     """One browser session, which the suite treats as one person."""
 
-    def __init__(self, driver, base_url, artifacts_dir, name="ui"):
+    def __init__(self, driver, base_url, artifacts_dir, name="ui", driver_log=None):
         self.driver = driver
         self.base = base_url.rstrip("/")
         self.artifacts = artifacts_dir
         self.name = name
         self._errors = []
+        self._log_entries = []
+        self._log_path = driver_log
+        self._log_read = 0
         self._console_available = False
         self._install_console_capture()
 
@@ -119,20 +122,70 @@ class Ui:
         level = getattr(entry, "level", "") or ""
         text = getattr(entry, "text", "") or str(entry)
         if str(level).lower() in {"error", "severe"}:
-            self._errors.append({"kind": "console", "level": str(level), "text": text})
+            self._errors.append({"kind": "console", "level": str(level), "text": text, "source": "bidi"})
 
     def _on_javascript_error(self, entry):
         text = getattr(entry, "text", "") or str(entry)
-        self._errors.append({"kind": "javascript", "level": "error", "text": text})
+        self._errors.append({"kind": "javascript", "level": "error", "text": text, "source": "bidi"})
 
     def console_available(self):
-        return self._console_available
+        return self._console_available or bool(self._log_path)
+
+    def _read_log(self):
+        """Errors Firefox's own console wrote to the driver log.
+
+        A second collector on purpose. Selenium's typed parse of BiDi's
+        `log.entryAdded` raises on an event that carries no stack trace
+        (`JavaScriptLogEntry.from_json` wants `stackTrace`), and that raise
+        happens in the socket callback thread where nothing can catch it - so an
+        entry can be dropped while `errors()` stays empty and a test passes. The
+        log is written by Firefox itself, and `devtools.console.stdout.content`
+        is on so its console output lands there.
+        """
+        if not self._log_path or not os.path.exists(self._log_path):
+            return
+        try:
+            with open(self._log_path, errors="replace") as handle:
+                handle.seek(self._log_read)
+                text = handle.read()
+                self._log_read = handle.tell()
+        except OSError:
+            return
+        for line in text.splitlines():
+            entry = None
+            if "console.error:" in line:
+                entry = {
+                    "kind": "console", "level": "error", "source": "log",
+                    "text": line.split("console.error:", 1)[1].strip(),
+                }
+            elif "JavaScript error:" in line and "resource://" not in line and "chrome://" not in line:
+                # Firefox's browser internals and extensions log their own
+                # errors here; only the page's are the page's.
+                entry = {
+                    "kind": "javascript", "level": "error", "source": "log",
+                    "text": line.split("JavaScript error:", 1)[1].strip(),
+                }
+            if entry and entry not in self._log_entries:
+                self._log_entries.append(entry)
+
+    def has_from(self, source):
+        """Whether a given collector has seen anything: "bidi" or "log"."""
+        self._read_log()
+        return any(entry.get("source") == source for entry in [*self._errors, *self._log_entries])
 
     def errors(self):
-        return list(self._errors)
+        """Every error seen, from either collector, without duplicates."""
+        self._read_log()
+        seen = []
+        for entry in [*self._errors, *self._log_entries]:
+            if entry not in seen:
+                seen.append(entry)
+        return seen
 
     def clear_errors(self):
         self._errors.clear()
+        self._log_entries.clear()
+        self._read_log()
 
     def assert_no_errors(self, context="the page"):
         if self._errors:
@@ -175,6 +228,19 @@ class Ui:
         while the condition was true.
         """
         return self.wait(lambda: self.js("return !!(" + script + ");"), message, timeout)
+
+    def reload(self, timeout=20.0):
+        """Reload the page the way a person does: `location.reload()`.
+
+        Not `driver.refresh()`: measured, geckodriver's refresh is a *hard*
+        reload - the service worker is not controlling the new document and
+        every byte comes off the wire again (298 KB against a warm reload's
+        1.8 KB). A caching test written against `refresh()` reports a cache
+        defect that does not exist.
+        """
+        self.driver.execute_script("location.reload();")
+        time.sleep(0.15)  # let the navigation start before the next command
+        return self.wait_shell(timeout)
 
     def wait_shell(self, timeout=20.0):
         """The app is up: the tab strip is drawn and the player bar exists."""
@@ -434,7 +500,13 @@ class Ui:
         return self.text(".player-bar .title")
 
     def play_button_says(self):
-        return self.attr(".player-bar button[title]", "title")
+        """The transport button's own label: "Play" or "Pause".
+
+        Named by its class, not by `button[title]`: the bar's first titled
+        button is the source pill, and reading that would answer "Choose where
+        this song comes from" to a question about playback.
+        """
+        return self.attr(".player-bar button.play", "title")
 
     def transport(self):
         """The bar's transport state as the buttons describe it."""
@@ -449,19 +521,32 @@ class Ui:
     # --- the network --------------------------------------------------------
 
     def mark(self):
-        """A point in the resource timeline to measure from."""
+        """A point in the resource timeline to measure from.
+
+        **A mark is an index into the current document's timeline and does not
+        survive a navigation.** After a reload the new document's table starts
+        at 0, so a mark taken before it means "past the end"; `resources()`
+        refuses that rather than answering "no requests", which is how a test
+        about a reload ends up asserting nothing at all.
+        """
         return self.js("return performance.getEntriesByType('resource').length;")
 
     def resources(self, since=0):
         """Resource Timing entries, as a list of dicts, from `since` on."""
-        return self.js(
-            "return performance.getEntriesByType('resource').slice(arguments[0]).map((e) => ({"
+        entries = self.js(
+            "return performance.getEntriesByType('resource').map((e) => ({"
             "  name: e.name, type: e.initiatorType, start: e.startTime, duration: e.duration,"
             "  transfer: e.transferSize, encoded: e.encodedBodySize, decoded: e.decodedBodySize,"
             "  status: e.responseStatus || 0"
-            "}));",
-            since,
+            "}));"
         )
+        if since > len(entries):
+            raise AssertionError(
+                f"resources(since={since}) but this document has only {len(entries)} entries: a mark "
+                "does not survive a navigation, and slicing past the end would look like 'no requests'. "
+                "Count the new document from 0."
+            )
+        return entries[since:]
 
     def requests_matching(self, pattern, since=0):
         import re
@@ -549,7 +634,8 @@ def open_ui(base_url, artifacts, name="ui", headless=True, downloads=None):
     options.set_capability("webSocketUrl", True)
 
     os.makedirs(artifacts, exist_ok=True)
-    service = Service(log_output=os.path.join(artifacts, f"{name}-geckodriver.log"), service_args=["--log", "debug"])
+    driver_log = os.path.join(artifacts, f"{name}-geckodriver.log")
+    service = Service(log_output=driver_log, service_args=["--log", "debug"])
     driver = webdriver.Firefox(service=service, options=options)
     driver.set_window_size(1440, 1000)
-    return Ui(driver, base_url, artifacts, name=name)
+    return Ui(driver, base_url, artifacts, name=name, driver_log=driver_log)

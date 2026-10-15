@@ -350,7 +350,10 @@ class Backend:
 
     def register(self, username, password="correct horse battery"):
         status, payload = self.post("/api/v1/auth/register", {"username": username, "password": password})
-        if status != 200 or not payload or not payload.get("token"):
+        # 201 is the server's answer for a created account; 200 is what it says
+        # when registration is open and the account already existed. A suite
+        # that insists on one of them is a suite that fails on the other.
+        if status not in (200, 201) or not payload or not payload.get("token"):
             raise StartupError(f"register {username} -> {status} {payload}")
         return payload["token"]
 
