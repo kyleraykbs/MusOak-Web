@@ -251,16 +251,30 @@ function startServiceWorker() {
   }
 }
 
+/** How long the deployment is given to say what it offers.
+ *
+ *  The page cannot be laid out without this answer on a first visit, and the
+ *  page itself has already arrived from this same origin - so an answer that
+ *  takes longer than this is a request that is hanging, not a slow one. Without
+ *  a deadline a proxy that accepts the request and never answers left the first
+ *  visit on a blank page for as long as the browser was willing to wait. */
+const CONFIG_TIMEOUT_MS = 5000;
+
 /** Ask the deployment what it offers, and take its answer. */
 async function loadConfig() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CONFIG_TIMEOUT_MS);
   try {
-    const response = await fetch("/ui/config");
+    const response = await fetch("/ui/config", { signal: controller.signal });
+    if (!response.ok) throw new Error(`the config request answered ${response.status}`);
     state.config = await response.json();
     for (const entry of state.config.servers || []) rememberServer(entry);
     saveLocal();
   } catch {
     if (state.config?.servers?.length) return; // the stored answer stands
     state.config = { defaultServer: "", loginPopup: false, servers: [], allowCustomServer: true };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
