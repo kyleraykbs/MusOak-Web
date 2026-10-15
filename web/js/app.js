@@ -147,14 +147,16 @@ export { on, emit, toast };
 
 export async function boot() {
   loadLocal();
-  try {
-    const response = await fetch("/ui/config");
-    state.config = await response.json();
-  } catch {
-    state.config = { defaultServer: "", loginPopup: false, servers: [], allowCustomServer: true };
-  }
+  // The deployment's config, from the last run when there is one. Waiting on
+  // this round trip before painting is a page that sits empty for as long as
+  // the network takes to say something it already said last time - so when the
+  // copy in hand will do, the fetch happens behind the page instead of in front
+  // of it. A first visit has nothing stored and still waits, which is right:
+  // there is nothing to paint without it.
+  const known = Array.isArray(state.config?.servers) && state.config.servers.length > 0;
+  if (known) void loadConfig();
+  else await loadConfig();
 
-  for (const entry of state.config.servers || []) rememberServer(entry);
   const wanted = state.server || state.config.defaultServer || "";
   if (wanted) setServer(wanted);
 
@@ -187,6 +189,19 @@ export async function boot() {
   window.addEventListener("focus", () => checkServer());
   startReachability();
   checkServer();
+}
+
+/** Ask the deployment what it offers, and take its answer. */
+async function loadConfig() {
+  try {
+    const response = await fetch("/ui/config");
+    state.config = await response.json();
+    for (const entry of state.config.servers || []) rememberServer(entry);
+    saveLocal();
+  } catch {
+    if (state.config?.servers?.length) return; // the stored answer stands
+    state.config = { defaultServer: "", loginPopup: false, servers: [], allowCustomServer: true };
+  }
 }
 
 /** Ask before putting the listener back in the room they were in.

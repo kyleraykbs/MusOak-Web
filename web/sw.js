@@ -1,15 +1,28 @@
-// The service worker behind "kept" playlists.
+// The service worker behind "kept" playlists and a page that opens on a bad
+// line.
 //
-// It answers one thing and nothing else: a GET for a song the offline module
-// has already put in Cache Storage. So a kept playlist plays with no server at
-// all, while every other request goes straight to the network untouched.
+// Two things it answers. A GET for a song the offline module has already put in
+// Cache Storage - so a kept playlist plays with no server at all. And the app's
+// own shell - the page, its modules, its styles, its fonts - which it fetches
+// from the network first, for as long as a person will wait for a page, and
+// then serves from the last load that worked. It used to send every one of
+// those straight to the network with the browser's cache ignored, which is the
+// long refresh on a poor connection: forty-odd module requests over again, with
+// nothing allowed to answer them but the wire.
 //
-// It never writes to the cache. Only js/offline.js decides what is kept, which
-// is what keeps a song from being cached twice under two names.
+// The song cache it never writes to: only js/offline.js decides what is kept,
+// which is what keeps a song from being cached twice under two names.
 
 import { CACHE_NAME, mediaCacheKey } from "./js/offline.js";
 
 const MEDIA_PATH = /^\/api\/v1\/media\/[^/]+$/;
+// SHELL_CACHE holds the app itself as it last arrived. Nothing else writes to
+// it, and it is only ever read when the network does not answer in time.
+const SHELL_CACHE = "musoak-shell";
+// SHELL_TIMEOUT_MS is how long a person waits for a page before the copy from
+// the last load is served instead. Half a second longer than a slow-but-working
+// response, short enough that a dead link is not a dead page.
+const SHELL_TIMEOUT_MS = 2500;
 // Everything that makes up the app itself: the page, its modules, its styles and
 // its fonts. The API is left alone.
 const SHELL_PATH = /^\/(?:$|index\.html$|theme\.css$|icon\.png$|sw\.js$|js\/|fonts\/)/;
@@ -37,11 +50,60 @@ self.addEventListener("fetch", (event) => {
   // The frontend is edited while it is being served, and a browser will reuse a
   // copy it cached back when the server had no say about caching at all. Asking
   // for it with `cache: "reload"` ignores that copy, so an edit appears on the
-  // next reload with nothing for anybody to clear.
+  // next reload with nothing for anybody to clear - and what arrives is kept,
+  // so the next load that cannot reach the network has something to show.
   if (SHELL_PATH.test(url.pathname)) {
-    event.respondWith(fetch(request, { cache: "reload" }));
+    event.respondWith(shell(request));
   }
 });
+
+/** The app's own files: the network first, then the last load that worked.
+ *
+ * A page that cannot reach the server used to be a page that did not open. Now
+ * it is the app as it was, which is the difference between a slow start and no
+ * start on a connection that is having a bad minute. Freshness is kept where it
+ * is wanted: whatever the network answers with replaces the copy, so an edit
+ * shows up on the load after next, exactly as it did before.
+ */
+async function shell(request) {
+  let cache = null;
+  try {
+    cache = await caches.open(SHELL_CACHE);
+  } catch {
+    /* no Cache Storage: straight to the network, as it always was */
+  }
+
+  try {
+    const response = await within(fetch(request, { cache: "reload" }), SHELL_TIMEOUT_MS);
+    if (response && response.ok && cache) {
+      // A copy at a time, not on every request: the page and its modules are
+      // the same few hundred kilobytes over and over.
+      cache.put(request, response.clone()).catch(() => {});
+    }
+    return response;
+  } catch (error) {
+    const cached = cache ? await cache.match(request).catch(() => null) : null;
+    if (cached) return cached;
+    throw error;
+  }
+}
+
+/** A promise that gives up after ms, so a stalled request cannot hold a page. */
+function within(promise, ms) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("service worker: the network did not answer in time")), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
 
 /** From the cache when the song was kept; otherwise straight to the network. */
 async function keptSong(request) {

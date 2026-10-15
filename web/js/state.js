@@ -218,6 +218,10 @@ export function saveLocal() {
 
 function writeLocal() {
   const payload = {
+    // What the deployment offers, not just what this browser added: a reload
+    // should not have to ask for it before it can paint, and the answer changes
+    // about never.
+    config: state.config,
     server: state.server,
     servers: state.servers,
     hiddenServers: state.hiddenServers || [],
