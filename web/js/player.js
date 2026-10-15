@@ -16,7 +16,7 @@ import {
   banner, currentClient, emit, navigate, on, requireLogin, toggleFavorite,
 } from "./app.js";
 import { ServerError } from "./client.js";
-import { h, mount, dialog, icon, iconButton } from "./dom.js";
+import { h, mount, dialog, icon, iconButton, fmtBytes } from "./dom.js";
 import { lyricsPanel } from "./views/lyrics.js";
 import { session, state, updateSession } from "./state.js";
 import { openSourcePicker, pickSource, sourceLabel, findSourceDialog } from "./views/sources.js";
@@ -159,6 +159,41 @@ export function mediaStateLabel(state) {
     default:
       // "none" and anything unexpected: nothing worth saying.
       return "";
+  }
+}
+
+/**
+ * What the bar's text line says the download is doing: the stage under way and
+ * that stage's own numbers, from one `GET /media/{id}/status` answer. The
+ * state's own vocabulary — "downloading…" and friends — is what a status too
+ * bare to carry a stage falls back to, so those strings do not churn. The
+ * numbers are the stage's: bytes while it is fetched, and a share of the work
+ * while the fetched source is written, where there is no byte count to give.
+ */
+export function mediaProgressLabel(status) {
+  const stage = String(status?.stage || "").toLowerCase();
+  const progress = Number(status?.progress);
+  const counted = Number.isFinite(progress) && progress >= 0;
+  switch (stage) {
+    case "download": {
+      const total = Number(status?.totalBytes);
+      // A length nobody knows yet: the state's own name, and a sweeping bar.
+      if (!(total > 0)) return mediaStateLabel("downloading");
+      const whole = fmtBytes(total);
+      const done = fmtBytes(status?.bytes);
+      // The unit is the whole's, said once: "3.1 of 8.4 MB", not "3.1 MB of
+      // 8.4 MB" - and said twice only when the two figures land on different
+      // units, where dropping one would read as a lie.
+      const unit = whole.slice(whole.lastIndexOf(" ") + 1);
+      const shown = done.endsWith(` ${unit}`) ? done.slice(0, -(unit.length + 1)) : done;
+      return `downloading ${shown} of ${whole}`;
+    }
+    case "convert":
+      return counted ? `converting ${Math.round(progress * 100)}%` : "converting…";
+    case "store":
+      return "storing the file";
+    default:
+      return mediaStateLabel(status?.state);
   }
 }
 
@@ -376,7 +411,8 @@ class Player {
     this._loading = false;
     this._loadFor = "";           // the "track|variant" the load under way is for
     this._buffering = false;      // the file is here, the sound is not yet
-    this._progress = 0;
+    this._progress = -1;          // this stage's share, or -1 while nothing is countable
+    this._stage = "";             // which stage that share belongs to
     this._error = "";
     this._blocked = false;
     // null is "nothing to seek"; a number is where to put the file, and zero
@@ -512,7 +548,8 @@ class Player {
     this._source = null;
     this._sources = { sources: [], preferredVariantId: "" };
     this._loading = false;
-    this._progress = 0;
+    this._progress = -1;
+    this._stage = "";
     this._error = "";
     this._pendingSeek = null;
     this._stopAudio();
@@ -998,7 +1035,7 @@ class Player {
       setText(bar.title, track.title || "unknown track");
       let subtitle = artistLine(track) || String(track.album || "");
       if (this._loading) {
-        const label = mediaStateLabel(this._mediaState()) || "downloading…";
+        const label = this._downloadLabel() || "downloading…";
         subtitle = subtitle ? `${subtitle} · ${label}` : label;
       } else if (this._buffering) {
         // Here, and not making a sound yet: the bar says so rather than showing
@@ -1093,17 +1130,23 @@ class Player {
     }
 
     // --- how the download is going --------------------------------------
-    if (this._loading && !this._error) {
+    // A count is only honest while the file is on its way: once it is ready the
+    // element hides and the timeline is the position again.
+    const arriving = this._loading && !this._error && this._mediaState() !== "ready";
+    if (arriving && this._progress >= 0) {
       bar.progress.style.display = "";
       bar.progress.classList.remove("indeterminate");
       bar.progressFill.style.width = `${Math.round(clamp01(this._progress) * 100)}%`;
-    } else if (this._buffering && !this._error) {
-      // Nothing to count: the file is whole, the browser is just not playing it
-      // yet. The bar sweeps rather than filling.
+    } else if (arriving || (this._buffering && !this._error)) {
+      // Nothing to count: a provider still starting, a length nobody knows, or
+      // a file that is whole and not yet making a sound. The bar sweeps rather
+      // than claiming a share it does not have.
       bar.progress.style.display = "";
+      bar.progressFill.style.width = "";
       bar.progress.classList.add("indeterminate");
     } else {
       bar.progress.style.display = "none";
+      bar.progressFill.style.width = "";
       bar.progress.classList.remove("indeterminate");
     }
 
@@ -1215,7 +1258,8 @@ class Player {
     this._error = "";
     this._loading = Boolean(track);
     this._loadFor = target;
-    this._progress = 0;
+    this._progress = -1;
+    this._stage = "";
     this._variant = "";
     this._source = null;
     this._sources = { sources: [], preferredVariantId: "" };
@@ -1572,7 +1616,7 @@ class Player {
       this._boundCache(this._status);
       if (token !== this._token) return null;
       if (variantId === this._variant) {
-        this._progress = Number(status.progress) || (status.state === "ready" ? 1 : 0);
+        this._setProgress(status);
         this.renderBar();
       }
       if (status.state === "ready" || status.state === "failed") return status;
@@ -2423,6 +2467,41 @@ class Player {
     const status = this._status.get(this._variant);
     if (status?.state) return status.state;
     return this._loading ? "downloading" : "";
+  }
+
+  /** What the bar's text line says the download is doing, from the last status
+   *  this page got for the rendition it is loading. */
+  _downloadLabel() {
+    return mediaProgressLabel(this._status.get(this._variant));
+  }
+
+  /** Take the download's own progress from a status, for the bar. The server
+   *  sends the fraction of the stage under way, or -1 when the stage has
+   *  nothing to count. A new stage (the fetch handing over to the conversion,
+   *  the conversion to the store) starts its own count, which may well begin
+   *  lower than the one before it; within a stage the bar only ever moves
+   *  forward, since a poll that lands behind the last is not the download
+   *  going backwards. A -1 is not a fraction at all: it puts the bar back to
+   *  sweeping, the honest answer to "how far along is a thing nobody counts". */
+  _setProgress(status) {
+    const stage = String(status?.stage || "").toLowerCase();
+    const value = Number(status?.progress);
+    // Only a download has a fraction to give. Every other state - "none", the
+    // answer for a rendition nothing is known about yet, and "ready"/"failed"
+    // alike - carries Go's zero progress, which is not a count at all: reading
+    // it as one is what would pin the bar at 0% before the first real report.
+    const downloading = String(status?.state || "").toLowerCase() === "downloading";
+    const progress = downloading && Number.isFinite(value) ? value : -1;
+    if (stage !== this._stage) {
+      this._stage = stage;
+      this._progress = progress;
+      return;
+    }
+    if (progress < 0) {
+      this._progress = -1;
+      return;
+    }
+    if (progress >= this._progress) this._progress = progress;
   }
 
   _stopAudio() {

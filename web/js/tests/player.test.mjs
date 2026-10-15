@@ -1,12 +1,13 @@
 // The pure part of the player and the source picker: what the bar says, which
 // files stay fetched, what plays next, and how the picker orders and marks its
-// rows. Everything here is a function of its arguments — no DOM, no server.
+// rows. Everything here is a function of its arguments — no server; the few
+// tests that draw the download bar stand up the little DOM those need.
 
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  albumLine, artistLine, documentKey, EAGER_AHEAD, mediaStateLabel, nextIndex, OFFLINE_AHEAD, OFFLINE_MAX_BYTES,
+  albumLine, artistLine, documentKey, EAGER_AHEAD, mediaProgressLabel, mediaStateLabel, nextIndex, OFFLINE_AHEAD, OFFLINE_MAX_BYTES,
   OFFLINE_TAIL_GAP_MS, playbackDocument,
   memorySource, playbackStateFrom, prefetchWindow, queueFromDocument, shouldSavePlayback, shuffleTail, player,
 } from "../player.js";
@@ -2398,4 +2399,205 @@ test("the same rendition is warmed once while its fetch is running", async () =>
     player._status = saved.status;
     player._warming = saved.warming;
   }
+});
+
+// --- how the download is drawn ---------------------------------------------
+//
+// The rest of this file is a function of its arguments, but the bar is DOM. So
+// these few tests stand a document up that is only as much as building and
+// drawing the bar touches, and take it away again. What they hold to: the fill
+// is the server's own fraction, -1 is a sweep rather than a made-up number, the
+// text names the stage, and a stage change starts its count over.
+
+function fakeStyle() {
+  const style = {};
+  style.setProperty = (name, value) => { style[name] = value; };
+  return style;
+}
+
+function fakeNode(tag) {
+  const classes = new Set();
+  const node = {
+    tag,
+    children: [],
+    style: fakeStyle(),
+    dataset: {},
+    className: "",
+    textContent: "",
+    isConnected: true,
+    classList: {
+      add: (...names) => names.forEach((name) => classes.add(name)),
+      remove: (...names) => names.forEach((name) => classes.delete(name)),
+      contains: (name) => classes.has(name),
+      toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)),
+    },
+    appendChild(child) { this.children.push(child); return child; },
+    removeChild(child) { this.children = this.children.filter((entry) => entry !== child); return child; },
+    remove() { this.isConnected = false; },
+    get firstChild() { return this.children[0] || null; },
+    getBoundingClientRect: () => ({ top: 0, bottom: 0, left: 0, width: 0, height: 0 }),
+    contains: () => false,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    matches: () => false,
+    focus() {},
+    select() {},
+    addEventListener() {},
+    removeEventListener() {},
+    setAttribute(name, value) { this[name] = value; },
+    getAttribute(name) { return this[name] ?? null; },
+    removeAttribute(name) { delete this[name]; },
+  };
+  return node;
+}
+
+/** Run `draw` with a document under it, then put the globals back. */
+function withDom(draw) {
+  const had = {
+    Node: "Node" in globalThis,
+    document: "document" in globalThis,
+    window: "window" in globalThis,
+  };
+  const before = { Node: globalThis.Node, document: globalThis.document, window: globalThis.window };
+  globalThis.Node = Object;
+  globalThis.document = {
+    createElement: fakeNode,
+    createElementNS: (namespace, tag) => fakeNode(tag),
+    createTextNode: (value) => ({ textContent: String(value) }),
+    body: fakeNode("body"),
+    addEventListener() {},
+    removeEventListener() {},
+    querySelector: () => null,
+    querySelectorAll: () => [],
+  };
+  globalThis.window = {
+    addEventListener() {},
+    removeEventListener() {},
+    dispatchEvent() {},
+    innerWidth: 1200,
+    innerHeight: 800,
+  };
+  try {
+    return draw();
+  } finally {
+    if (had.Node) globalThis.Node = before.Node; else delete globalThis.Node;
+    if (had.document) globalThis.document = before.document; else delete globalThis.document;
+    if (had.window) globalThis.window = before.window; else delete globalThis.window;
+  }
+}
+
+/** Point the player at one rendition and its status, and build the bar. */
+function barShowing(status) {
+  player._buildBar();
+  player.queue = [track("t1")];
+  player._index = 0;
+  player._variant = "v-a";
+  player._error = "";
+  player._buffering = false;
+  player._progress = -1;
+  player._stage = "";
+  player._status = status ? new Map([["v-a", status]]) : new Map();
+  player._setProgress(player._status.get("v-a"));
+  return player._bar;
+}
+
+test("a sized download fills the bar to the fraction the server reports", () => {
+  withDom(() => {
+    const bar = barShowing({ state: "downloading", stage: "download", progress: 0.42, bytes: 3_250_000, totalBytes: 8_800_000 });
+    player._loading = true;
+    player.renderBar();
+    assert.equal(bar.progress.style.display, "", "the bar is shown while the file is on its way");
+    assert.equal(bar.progress.classList.contains("indeterminate"), false, "and it fills rather than sweeps");
+    assert.equal(bar.progressFill.style.width, "42%");
+    assert.match(bar.subtitle.textContent, /downloading 3\.1 of 8\.4 MB/, "with the numbers the server sent");
+  });
+});
+
+test("a download with nothing to count sweeps instead of filling", () => {
+  withDom(() => {
+    // A first, countable poll, so there is a fill for the sweep to replace.
+    const bar = barShowing({ state: "downloading", stage: "download", progress: 0.42, bytes: 3_250_000, totalBytes: 8_800_000 });
+    player._loading = true;
+    player.renderBar();
+    assert.equal(bar.progressFill.style.width, "42%");
+
+    // The provider has told nobody a length: -1 means sweep, and no width at
+    // all, rather than the fraction the last poll happened to leave behind.
+    const unknown = { state: "downloading", stage: "download", progress: -1, bytes: 12_000, totalBytes: 0 };
+    player._status = new Map([["v-a", unknown]]);
+    player._setProgress(unknown);
+    player.renderBar();
+    assert.equal(bar.progressFill.style.width, "", "no fill");
+    assert.equal(bar.progress.classList.contains("indeterminate"), true, "the sweep instead");
+    assert.equal(bar.progress.style.display, "");
+    assert.match(bar.subtitle.textContent, /downloading…/);
+  });
+});
+
+test("a status that names no stage is not read as zero progress", () => {
+  withDom(() => {
+    // The first answer for a rendition nothing is known about yet: state
+    // "none", no stage, and Go's zero progress. Reading that zero as a count is
+    // what would pin the bar at 0% before the first real report; sweeping until
+    // one names a stage is the honest drawing.
+    const bar = barShowing({ state: "none", stage: "", progress: 0 });
+    player._loading = true;
+    player.renderBar();
+    assert.equal(bar.progressFill.style.width, "", "no fill");
+    assert.equal(bar.progress.classList.contains("indeterminate"), true, "a sweep instead");
+    assert.match(bar.subtitle.textContent, /downloading…/);
+  });
+});
+
+test("the label names the stage and that stage's own numbers", () => {
+  assert.equal(mediaProgressLabel({ state: "downloading", stage: "download", progress: 0.31, bytes: 3_100_000, totalBytes: 8_400_000 }), "downloading 3.0 of 8.0 MB");
+  // No length yet: the state's own name, which is what the server means by -1.
+  assert.equal(mediaProgressLabel({ state: "downloading", stage: "download", progress: -1, bytes: 12_000, totalBytes: 0 }), "downloading…");
+  assert.equal(mediaProgressLabel({ state: "downloading", stage: "convert", progress: 0.45 }), "converting 45%");
+  assert.equal(mediaProgressLabel({ state: "downloading", stage: "convert", progress: -1 }), "converting…");
+  assert.equal(mediaProgressLabel({ state: "downloading", stage: "store", progress: -1 }), "storing the file");
+  // A status too bare to carry a stage keeps the state's own vocabulary.
+  assert.equal(mediaProgressLabel({ state: "ready" }), "ready");
+  assert.equal(mediaProgressLabel({ state: "failed" }), "download failed");
+  assert.equal(mediaProgressLabel(undefined), "");
+});
+
+test("a stage change starts its own count instead of keeping the old fraction", () => {
+  withDom(() => {
+    const download = { state: "downloading", stage: "download", progress: 0.9, bytes: 9_000_000, totalBytes: 10_000_000 };
+    const bar = barShowing(download);
+    player._loading = true;
+    player.renderBar();
+    assert.equal(bar.progressFill.style.width, "90%");
+
+    // The same stage never goes backwards, whatever order two polls land in.
+    player._setProgress({ ...download, progress: 0.4 });
+    player.renderBar();
+    assert.equal(bar.progressFill.style.width, "90%");
+
+    // The fetch hands over to the conversion: its own count, from zero, and
+    // not left sitting at the fraction the fetch finished on.
+    const convert = { state: "downloading", stage: "convert", progress: 0.05 };
+    player._status = new Map([["v-a", convert]]);
+    player._setProgress(convert);
+    player.renderBar();
+    assert.equal(bar.progressFill.style.width, "5%");
+    assert.match(bar.subtitle.textContent, /converting 5%/);
+  });
+});
+
+test("a download that is ready shows no fill, and the timeline again", () => {
+  withDom(() => {
+    const bar = barShowing({ state: "ready", stage: "store", progress: -1 });
+    // Even on the poll that reports ready while the load is still unwinding,
+    // the bar must not flash a fill: ready means the count is over.
+    player._loading = true;
+    player.renderBar();
+    assert.equal(bar.progress.style.display, "none");
+    assert.equal(bar.progress.classList.contains("indeterminate"), false);
+
+    player._loading = false;
+    player.renderBar();
+    assert.equal(bar.progress.style.display, "none", "hidden, as a finished download always was");
+  });
 });

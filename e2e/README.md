@@ -93,6 +93,15 @@ Rules the suite keeps, and a new test should keep:
   The two servers are shared for the whole run, so a test that needs a different
   server (an offline one, a different config) must build its own fixture.
 
+## The `e2e` build tag
+
+The suite builds `musoakd` with `-tags e2e`. The only difference is
+`internal/provider/extras_e2e.go`: a fake provider whose download fetches nothing,
+takes a few seconds and reports its own bytes, so a test can watch a loading bar
+move rather than assert that a fake status struct holds the right number. The
+released binary has none of it (`provider.Extras()` is empty without the tag),
+and the run prints the tag it built with.
+
 ## Facts that cost this suite an afternoon
 
 Each of these makes a test pass for the wrong reason, which is worse than a

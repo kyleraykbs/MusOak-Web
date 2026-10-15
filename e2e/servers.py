@@ -28,6 +28,13 @@ import urllib.request
 
 SIBLING = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+#: The suite builds the server with the `e2e` tag. Its only difference is the
+#: fake provider in `internal/provider/extras_e2e.go` - a download that takes
+#: seconds and reports its own progress - which is what lets a test watch a
+#: loading bar move instead of asserting a fake status struct. Nothing else in
+#: the binary changes, and the released build has none of it.
+SERVER_TAGS = "e2e"
+
 
 class StartupError(RuntimeError):
     """A process that a test needs did not come up."""
@@ -42,7 +49,7 @@ def _first_existing(candidates):
     return None, None
 
 
-def _go_build(module_dir, package, out_path):
+def _go_build(module_dir, package, out_path, tags=None):
     """Build a binary from a sibling checkout, when a Go toolchain is here.
 
     The last resort that still tests the code on this disk rather than a
@@ -51,14 +58,12 @@ def _go_build(module_dir, package, out_path):
     """
     if not os.path.isdir(module_dir) or shutil.which("go") is None:
         return None
+    argv = ["go", "build"]
+    if tags:
+        argv += ["-tags", tags]
+    argv += ["-o", out_path, package]
     try:
-        subprocess.run(
-            ["go", "build", "-o", out_path, package],
-            cwd=module_dir,
-            check=True,
-            capture_output=True,
-            timeout=600,
-        )
+        subprocess.run(argv, cwd=module_dir, check=True, capture_output=True, timeout=600)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return None
     return out_path if os.path.isfile(out_path) else None
@@ -73,18 +78,18 @@ def resolve_musoakd(explicit, work_dir):
     # The sibling checkout is built before any `result` symlink is trusted: a
     # result directory is a build from whenever somebody last ran nix build, and
     # a suite that quietly tests a week-old binary is worse than one that fails.
-    built = _go_build(root, "./cmd/musoakd", os.path.join(work_dir, "musoakd"))
+    built = _go_build(root, "./cmd/musoakd", os.path.join(work_dir, "musoakd"), tags=SERVER_TAGS)
     if built:
-        return built, "go build ./cmd/musoakd in ../musoak"
-    found, why = _first_existing([
-        (os.path.join(root, "result", "bin", "musoakd"), "musoak/result/bin/musoakd (a cached build)"),
-    ])
-    if found:
-        return found, why
+        return built, f"go build -tags {SERVER_TAGS} ./cmd/musoakd in ../musoak"
+    # No falling back to a cached build here. The suite's server has to carry
+    # the `e2e` tag (see SERVER_TAGS), a `nix build` result does not, and a run
+    # that quietly used one would fail later with a missing provider instead of
+    # now with the reason.
     raise StartupError(
-        "no musoakd to test against. Pass --musoakd PATH, set $MUSOAKD, build "
-        "../musoak (nix build or go build ./cmd/musoakd), or put a Go toolchain "
-        "on PATH so it can be built from the sibling checkout."
+        f"could not build ../musoak with -tags {SERVER_TAGS}. The suite needs that build "
+        "(it carries the fake provider the progress test watches). Pass --musoakd PATH for a "
+        "binary you built yourself, set $MUSOAKD, or check the build error above by running "
+        f"`cd ../musoak && go build -tags {SERVER_TAGS} ./cmd/musoakd`."
     )
 
 
