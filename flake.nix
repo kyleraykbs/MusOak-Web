@@ -70,7 +70,20 @@
                   export GOPATH="$PWD/../musoak/.go"
                 fi
                 export GOFLAGS="''${GOFLAGS:--mod=mod}"
-                exec python3 -m pytest ./e2e -c ./e2e/pytest.ini "$@"
+                # A file - or a `file::test` - names what to collect, and the
+                # whole suite is the default. `./e2e` is added only when nothing
+                # was named: passed beside a file it would collect the whole
+                # suite anyway, which is not what naming a file means.
+                named=""
+                for arg in "$@"; do
+                  case "$arg" in
+                    *.py|*::*) named=1 ;;
+                  esac
+                done
+                if [ -z "$named" ]; then
+                  set -- ./e2e "$@"
+                fi
+                exec python3 -m pytest -c ./e2e/pytest.ini "$@"
               '';
             }}/bin/e2e";
           };
@@ -80,10 +93,10 @@
               go
               gopls
               gotools
-              nodejs # for the frontend's unit tests: node --test
+              nodejs # for the frontend's unit tests: node --test web/js/tests/*.test.mjs
             ];
             shellHook = ''
-              echo "musoak-web: go build ./... && go test ./..., and node --test web/js/tests"
+              echo "musoak-web: go build ./... && go test ./..., and node --test web/js/tests/*.test.mjs"
             '';
           };
 
