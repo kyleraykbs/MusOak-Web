@@ -78,8 +78,12 @@ self.addEventListener("fetch", (event) => {
   // file is handed over from the copy it had and refreshed behind the page. An
   // edit lands on the next load, and the wire does not carry the same modules
   // again on the way.
-  if (SHELL_PATH.test(path)) {
-    event.respondWith(shell(request, url.pathname));
+  // A navigation is the page, whichever route it names: the app owns its
+  // routes, so a reload on `/musoak/rooms` is the same page as `/musoak/`.
+  // Asking the request itself is what makes that work under a prefix - a rule
+  // matching the path would have to know every route there is.
+  if (request.mode === "navigate" || SHELL_PATH.test(path)) {
+    event.respondWith(shell(request));
   }
 });
 
@@ -92,11 +96,11 @@ self.addEventListener("fetch", (event) => {
  * - and it is asked with a deadline only when the last load left a copy to fall
  * back to: a first load has nothing else to show, so nothing may time it out.
  */
-async function shell(request, pathname) {
+async function shell(request) {
   const cache = await openShellCache();
   const cached = cache ? await cache.match(request).catch(() => null) : null;
 
-  if (!cached || isNavigation(pathname)) {
+  if (!cached || request.mode === "navigate") {
     // The page, or anything there is no copy of: the wire is the answer. The
     // deadline belongs to the copy that exists, never to the request that has
     // to land.
@@ -123,11 +127,6 @@ async function openShellCache() {
   } catch {
     return null;
   }
-}
-
-/** Whether the request is for the page itself, rather than a file it asks for. */
-function isNavigation(pathname) {
-  return pathname === "/" || pathname === "/index.html";
 }
 
 /** Keep what the network answered on the way past, so the next load that cannot
