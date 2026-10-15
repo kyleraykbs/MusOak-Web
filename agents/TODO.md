@@ -1,0 +1,39 @@
+# TODO
+
+## The reliability audit's findings (2026-10-15)
+
+Sniffed for slow or unstable loading. Frontend and this repo's server; the
+backend's own three are in the other repo's TODO.
+
+- [x] `web/js/offline.js`: one IndexedDB connection for the page, not one per
+      read and write, closed on `versionchange`.
+- [x] `web/js/offline.js`: a song's transfer carries its own deadline, so a
+      connection that goes quiet frees its slot in the download queue.
+- [x] `web/js/app.js`: `/ui/config` is fetched with a deadline, so a proxy that
+      never answers cannot leave the first visit blank.
+- [x] `web/sw.js`: a range answer reads the copy only when there is something to
+      cut out of it - the whole-song range and a window past the end cost
+      nothing - and the `clone()` that teed a second copy of the song is gone.
+- [x] `web/sw.js`: `keepShell` asks for the shell the ordinary way, so what it
+      keeps is what the load ran and never a stale HTTP-cache entry.
+- [x] `internal/web/server.go`: the shared dialer has a timeout and the
+      transport has `ResponseHeaderTimeout`, so a black-holed backend becomes a
+      failure instead of a spin.
+- [x] `internal/web/server.go`: a compressible asset is packed once per
+      revision and served with its length.
+
+## Medium and low findings, not yet done
+
+- [ ] `web/js/app.js`: the current view is refetched every 30 s whether the
+      notifications payload changed or not.
+- [ ] `web/js/views/friend.js`: the listen-along poll is a fixed 2 s with no
+      backoff and no stop after repeated failures.
+- [ ] `web/js/offline.js`: `syncOne` replaces a variant id without deleting the
+      superseded media-cache key.
+- [ ] `web/js/app.js`: the `visualViewport` handlers write `style.height` on
+      every event rather than once a frame.
+- [ ] `web/js/state.js`: the localStorage server/icon maps are never pruned and
+      a quota failure is swallowed.
+- [ ] `web/sw.js`: the shell cache is keyed by full URL and never pruned.
+- [ ] `internal/web/server.go`: one strong ETag is sent for the gzip and the
+      identity representation of the same asset.

@@ -1,0 +1,70 @@
+# Decisions
+
+## 2026-10-15 The hand-over reads play intent, not the element's paused flag
+- Decision: `player._wantsSound()` (`_playingWanted || audio.paused === false`)
+  is what `_handOverTo`'s callers pass as "was paused", and the paused branch
+  stops the element it leaves.
+- Why: `audio.paused` alone is still true between a play press and the element
+  actually starting, so a hand-over landing in that window adopted a paused
+  element and left the sounding one behind - the bar naming silence.
+- Reversible: yes.
+
+## 2026-10-15 The e2e runner adds `./e2e` only when no file is named
+- Decision: the flake app passes `./e2e` when no `*.py`/`*::*` argument is
+  present, instead of always passing it beside whatever was named.
+- Why: `pytest ./e2e e2e/test_rooms.py` collects the whole suite, so the
+  README's "one file" invocation ran everything.
+- Reversible: yes.
+
+## 2026-10-15 One IndexedDB connection, closed on a version change
+- Decision: `offline.js` memoises the `indexedDB.open` promise and clears it on
+  `versionchange`/`close`/error.
+- Why: a connection per read and write leaked them, and a later schema upgrade
+  would have been blocked by whichever was still open.
+- Reversible: yes.
+
+## 2026-10-15 A song's transfer has its own deadline (5 minutes)
+- Decision: `fetchSongBytes` aborts a kept-song download after
+  `DOWNLOAD_TIMEOUT_MS`, alongside the caller's own signal.
+- Why: `READY_TIMEOUT_MS` only covered the wait for the server, so a transfer
+  that stalled held its slot in the download queue for the session. Five
+  minutes, because a song over a slow line is slow rather than stuck.
+- Reversible: yes (the constant is one line).
+
+## 2026-10-15 `/ui/config` is fetched with a 5 s deadline
+- Decision: `loadConfig` aborts the request after `CONFIG_TIMEOUT_MS` and falls
+  back to the stored answer or the defaults.
+- Why: the page cannot be laid out without this answer on a first visit, and
+  the page itself had already arrived from the same origin, so an answer slower
+  than this is a request that is hanging.
+- Reversible: yes.
+
+## 2026-10-15 `keepShell` stopped forcing the HTTP cache
+- Decision: the shell files are fetched with no `cache` option, so an entry the
+  browser still trusts costs nothing and a stale one is revalidated.
+- Why: `force-cache` takes a stored entry even when it is stale, which is how
+  the shell could hold a module from an older load beside this load's own. It
+  had been chosen to stop a second download, and it did - by accepting bytes
+  that might not be the ones running.
+- Reversible: yes (the e2e `test_caching.py` covers what a reload costs).
+
+## 2026-10-15 A range answer reads the copy only when it has to slice
+- Decision: `fromCache` takes the size from the stored `Content-Length`, hands
+  the cached response back untouched for a `bytes=0-` request, answers `416`
+  without reading, and drops the `clone()` before `blob()`.
+- Why: the clone teed the body, holding a second copy of the whole song while
+  the answer was handed over. The remaining read for a real seek is linear but
+  bounded to one song, which the player's own offline budget already allows.
+- Reversible: yes.
+
+## 2026-10-15 A compressible asset is packed once, and carries `Content-Length`
+- Decision: `assetEntry` holds the gzipped bytes, packed on the first request
+  that takes gzip; `serveAsset` writes them with `Vary: Accept-Encoding` and the
+  length. The page keeps its per-request `gzipWriter`.
+- Why: the frontend is nearly a megabyte of JavaScript and every request
+  compressed the same bytes again. The length is known once the bytes are
+  packed, so the response is not left chunked.
+- Reversible: yes.
+- Note: one strong ETag still covers both representations (`agents/TODO.md`
+  keeps that finding open). Changing it costs a re-download for any client whose
+  `Accept-Encoding` changes, which is a worse trade than the theoretical risk.
