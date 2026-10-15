@@ -300,6 +300,19 @@ def test_a_kept_playlist_still_plays_without_the_server(binaries, backend, signe
         from conftest import sign_in_ui
 
         sign_in_ui(ui, signed_in)
+
+        # The worker that will serve a fresh page has to be the one behind this
+        # page first, and its shell only lands in Cache Storage once a load has
+        # gone through it. Both are the person's own history - the tab was open
+        # for a while before it was closed - and both have to happen while the
+        # frontend is still answering: a reload with nothing to serve it is the
+        # browser's error page, not the app.
+        ui.wait_quiet()
+        ui.wait_js("!!navigator.serviceWorker.controller", "the service worker never took the page")
+        _reload(ui)
+        held_shell = _shell_cache(ui)
+        assert "/" in held_shell, f"the worker never kept the page itself to serve a fresh load: {held_shell}"
+
         ui.click_tab("Playlists")
         ui.wait_css(KEEP, "the playlist row drew no keep control")
 
@@ -370,6 +383,31 @@ def test_a_kept_playlist_still_plays_without_the_server(binaries, backend, signe
             f"what played ({source}) is neither the kept copy ({served['url']}) nor a blob the page"
             " built from it"
         )
+        # A *fresh* page is the case a person actually hits: the tab was closed
+        # and the bookmark opened again somewhere with no signal. The document is
+        # new (the service worker serves the shell, out of the cache filled
+        # above), the playlist is still kept here, and Play must come out of this
+        # machine - the backend is gone, and a fresh page has no player state
+        # that remembers the song.
+        front.stop()
+
+        _reload(ui)
+        assert not _error_page(ui), (
+            f"a fresh load with {front.url} stopped showed the browser's error page instead of the"
+            f" app's own copy\n{_table(ui.resources())}"
+        )
+        ui.click_tab("Playlists")
+        ui.wait_css(KEPT, "a fresh page with no server did not draw the kept playlist")
+        ui.click_xpath(_playlist_row(name), f"the row for {name!r} on a fresh page")
+        ui.click_text("Play")
+        replayed = ui.wait_player(
+            lambda state: state if state and state["src"] and state["currentTime"] > 0.5 else None,
+            "a kept playlist did not play on a fresh page with its server stopped - the app asked the"
+            " backend for something it already had on this machine",
+            timeout=30,
+        )
+        print(f"  a fresh page, server still stopped, played {replayed['src']}")
+
         ui.assert_no_errors("playing a kept playlist with its server stopped")
     except Exception:
         ui.dump("FAILED")

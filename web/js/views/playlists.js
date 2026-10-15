@@ -8,7 +8,7 @@ import {
   toast, status, fmtDuration, icon, iconOr, iconButton,
 } from "../dom.js";
 import {
-  registerView, navigate, banner, requireLogin, currentClient,
+  registerView, navigate, banner, requireLogin, currentClient, serverAnswered,
 } from "../app.js";
 import { isSignedIn } from "../state.js";
 import * as offline from "../offline.js";
@@ -129,13 +129,30 @@ function handle(error) {
 
 // --- playback --------------------------------------------------------------
 
+/**
+ * Play a playlist: from the server when it answers, and from this browser's own
+ * cache when it cannot.
+ *
+ * The rule, when the server cannot answer: a page that already knows it has no
+ * server (`player.online()` false) plays the copy kept here straight away,
+ * rather than spending the wait on a request whose answer it knows - a press
+ * that does nothing until a timeout has run out is a press that did nothing. A
+ * page that still believes the server is there asks it first, exactly as it
+ * always did, and falls back to the kept copy when the ask fails.
+ */
 async function play(playlist, shuffle = false) {
   const client = currentClient();
   if (!client) return;
+  if (!player.online() && (await playKept(playlist, shuffle))) return;
+
   let tracks = [];
   try {
     tracks = (await client.playlist(playlist.id)).tracks || [];
   } catch (error) {
+    // A server that answered is not one that cannot answer: "sign in" is the
+    // server's own word on the song, and playing a local copy over it would
+    // leave somebody with an expired session and no idea why.
+    if (!serverAnswered(error) && (await playKept(playlist, shuffle))) return;
     handle(error);
     return;
   }
@@ -145,6 +162,32 @@ async function play(playlist, shuffle = false) {
   }
   if (shuffle) tracks = [...tracks].sort(() => Math.random() - 0.5);
   player.play(tracks, 0);
+}
+
+/**
+ * Play a kept playlist out of this browser's own cache.
+ *
+ * Says whether it played anything, so a caller that had a failure of its own
+ * knows whether to report it: a playlist that is kept and has nothing left to
+ * play has already said so here, and being told twice is noise.
+ */
+async function playKept(playlist, shuffle = false) {
+  const kept = await offline.playlistEntries(playlist.id);
+  if (!kept) return false;
+  const tracks = offline.keptTracks(kept.entries);
+  if (!tracks.length) {
+    // Kept, and every song of it has been evicted by the browser: saying so is
+    // the difference between a press that did nothing and a press that told you
+    // why. Cache Storage is the browser's room to manage, and it does not ask.
+    banner(offline.keptGoneMessage(playlist.name || kept.name, kept.missing, kept.missing.length), "error");
+    return true;
+  }
+  if (kept.missing.length) {
+    toast(offline.keptGoneMessage(playlist.name || kept.name, kept.missing, tracks.length + kept.missing.length));
+  }
+  player.setContext({ playlistId: playlist.id });
+  player.play(shuffle ? [...tracks].sort(() => Math.random() - 0.5) : tracks, 0);
+  return true;
 }
 
 // --- actions ---------------------------------------------------------------
@@ -335,6 +378,46 @@ function show(playlists) {
   mount(listEl, h("div", { class: "list" }, playlists.map(playlistRow)));
 }
 
+/**
+ * The playlists kept on this machine, as rows of the list. Says whether there
+ * was one to show.
+ *
+ * A server that cannot answer is not music that cannot be played: a kept
+ * playlist plays with nothing from the backend, so its row - and the page
+ * behind it - has to be reachable without one. This is also what a page whose
+ * server is *already* gone opens onto: the Playlists tab is the way to the
+ * kept copies, and a tab that says "could not load" everywhere is a page with
+ * music on it and no way to press Play.
+ */
+async function showKept() {
+  await offline.ensureLoaded();
+  const kept = offline.list();
+  if (!kept.length || !listEl) return false;
+  mount(
+    listEl,
+    h("div", {
+      class: "subtitle",
+      text: "The server is not answering. These are the playlists kept on this machine, which play without it.",
+    }),
+    h(
+      "div",
+      { class: "list" },
+      kept.map((record) =>
+        playlistRow({
+          id: record.id,
+          name: record.name || "",
+          // The rows read as they always do; a kept copy knows how many songs
+          // it holds, and how long they run is the server's to know - it is not
+          // here, and a made-up duration is worse than none.
+          trackCount: (record.trackIds || []).length,
+          artworkUrl: "",
+        })
+      )
+    )
+  );
+  return true;
+}
+
 async function load() {
   if (!current) return;
   // A guest has nothing to load, and nothing they could do with what they
@@ -348,9 +431,20 @@ async function load() {
   if (!client || !listEl) return;
   clear(listEl);
   listEl.appendChild(h("div", { class: "empty" }, h("span", { class: "title", text: "Loading playlists..." })));
+  // The server is asked first, as it always was - except on a page that already
+  // knows it has none (`player.online()` false): there the ask can only fail,
+  // and waiting for it to say so keeps somebody who has music on this machine
+  // staring at "Loading playlists..." for as long as the browser takes to give
+  // up. The kept lists are what that page shows instead.
+  if (!player.online() && (await showKept())) return;
   try {
     show(await client.playlists());
   } catch (error) {
+    // A server that cannot be reached is not music that cannot be played: the
+    // lists kept on this machine are still here. A server that *answered* -
+    // "sign in", "no such account" - has said what it means, and its own words
+    // are what the page shows instead.
+    if (!serverAnswered(error) && (await showKept())) return;
     if (listEl) clear(listEl);
     handle(error);
   }

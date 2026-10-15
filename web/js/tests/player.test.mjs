@@ -433,6 +433,12 @@ test("the queue's next songs are kept in memory, and the window is the limit", a
     player._warm = async () => true;
     player._client = () => ({
       mediaUrl: (variantId) => `/media/${variantId}`,
+      trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/track-stream/${trackId}?start=${Math.round(startMs)}`
+        : `/track-stream/${trackId}`),
+      trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/track-stream/${trackId}?start=${Math.round(startMs)}`
+        : `/track-stream/${trackId}`),
       startDownload: async () => ({}),
       // The fetch path names a rendition, and the retry names the other source,
       // so a failed attempt shows up as the variant it asked for.
@@ -561,6 +567,12 @@ test("a room that reorders its queue reorders what this page fetches", async () 
     player._warm = async () => true;
     player._client = () => ({
       mediaUrl: (variantId) => `/media/${variantId}`,
+      trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/track-stream/${trackId}?start=${Math.round(startMs)}`
+        : `/track-stream/${trackId}`),
+      trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/track-stream/${trackId}?start=${Math.round(startMs)}`
+        : `/track-stream/${trackId}`),
       startDownload: async () => ({}),
       // The fetch path names a rendition, and the retry names the other source,
       // so a failed attempt shows up as the variant it asked for.
@@ -849,13 +861,19 @@ test("a song this device does not hold plays from the stream while it downloads"
       mediaUrl: (variantId, { startMs } = {}) => (Number.isFinite(Number(startMs))
         ? `/media/${variantId}?start=${Math.round(startMs)}`
         : `/media/${variantId}`),
+      trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/track-stream/${trackId}?start=${Math.round(startMs)}`
+        : `/track-stream/${trackId}`),
       startDownload: async () => ({}),
     });
 
     await player._load(0, { autoplay: true });
 
-    assert.equal(audio.src, "/media/v-a?start=0", "the element is given the stream at once");
-    assert.deepEqual(played, ["/media/v-a?start=0"], "and it is playing from there");
+    // Nothing in a queue knows a rendition, so the bytes are asked for by song:
+    // the element holds the URL the backend picks a rendition behind, and the
+    // resolve that names it runs beside that ask rather than in front of it.
+    assert.equal(audio.src, "/track-stream/a?start=0", "the element is given the stream at once, before a rendition is named");
+    assert.deepEqual(played, ["/track-stream/a?start=0"], "and it is playing from there");
     assert.ok(prefetched >= 1, "the songs after it are asked for while this one downloads");
     assert.equal(player._loading, true, "the download behind the stream is still going");
     assert.equal(player.readyState(), "downloading", "which is what the bar keeps showing");
@@ -864,8 +882,9 @@ test("a song this device does not hold plays from the stream while it downloads"
     // The wait for the file is under way beside it; it is not what plays.
     await new Promise((resolve) => setTimeout(resolve, 30));
     assert.ok(waited >= 1, "the file is still being waited for");
-    assert.equal(audio.src, "/media/v-a?start=0", "and the element has not been made to wait");
-    assert.deepEqual(played, ["/media/v-a?start=0"], "nor restarted");
+    assert.equal(player._stream.variantId, "v-a", "the resolve names the rendition the stream is playing");
+    assert.equal(audio.src, "/track-stream/a?start=0", "and the element has not been made to wait");
+    assert.deepEqual(played, ["/track-stream/a?start=0"], "nor restarted by the resolve");
   } finally {
     player.ensureAudio = saved.ensureAudio;
     player.audio = saved.audio;
@@ -886,6 +905,182 @@ test("a song this device does not hold plays from the stream while it downloads"
     player._loading = saved.loading;
     player._stream = saved.stream;
     player.setRoom(saved.room);
+  }
+});
+
+// A queue knows songs, not files: pressing play on one used to spend a round
+// trip naming a rendition before the provider was told to start, so the wait
+// for the sound was that round trip *plus* the provider's start-up. The bytes
+// are asked for by song instead, and the two run side by side.
+test("the bytes are asked for before the rendition is resolved", async () => {
+  const saved = {
+    ensureAudio: player.ensureAudio,
+    audio: player.audio,
+    queue: player.queue,
+    index: player._index,
+    offline: player._offline,
+    status: player._status,
+    variants: player._variants,
+    stream: player._stream,
+    loading: player._loading,
+    variantFor: player._variantFor,
+    client: player._client,
+    startDownload: player._startDownload,
+    prefetch: player._prefetch,
+    ready: player._ready,
+    online: player.online,
+  };
+  const audio = {
+    src: "",
+    currentTime: 0,
+    duration: 0,
+    paused: true,
+    readyState: 0,
+    removeAttribute() {},
+    load() {},
+    pause() {},
+    play() {
+      return { catch() {} };
+    },
+  };
+  let resolved;
+  const resolving = new Promise((resolve) => {
+    resolved = resolve;
+  });
+  try {
+    player.setRoom(null);
+    player.ensureAudio = () => audio;
+    player.audio = audio;
+    player.queue = queue("a");
+    player._index = 0;
+    player._offline = new Map();
+    player._status = new Map();
+    player._variants = new Map();
+    player.online = () => true;
+    player._variantFor = () => resolving;
+    player._startDownload = () => {};
+    player._prefetch = () => {};
+    player._ready = () => new Promise(() => {});
+    player._client = () => ({
+      mediaUrl: (variantId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/media/${variantId}?start=${Math.round(startMs)}`
+        : `/media/${variantId}`),
+      trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/track-stream/${trackId}?start=${Math.round(startMs)}`
+        : `/track-stream/${trackId}`),
+    });
+
+    const loading = player._load(0, { autoplay: true });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    assert.equal(audio.src, "/track-stream/a?start=0", "the provider is asked to start while the rendition is being resolved");
+    assert.equal(player._stream.variantId, "", "and nothing here knows a rendition yet");
+
+    resolved({ variantId: "v-a", sources: [], preferredVariantId: "" });
+    await loading;
+
+    assert.equal(audio.src, "/track-stream/a?start=0", "the resolve does not ask for the bytes again");
+    assert.equal(player._stream.variantId, "v-a", "it names the rendition the stream is playing");
+    assert.equal(player._stream.byTrack, true, "which is the one the backend chose for the ask");
+  } finally {
+    player.ensureAudio = saved.ensureAudio;
+    player.audio = saved.audio;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._offline = saved.offline;
+    player._status = saved.status;
+    player._variants = saved.variants;
+    player._stream = saved.stream;
+    player._loading = saved.loading;
+    player._variantFor = saved.variantFor;
+    player._client = saved.client;
+    player._startDownload = saved.startDownload;
+    player._prefetch = saved.prefetch;
+    player._ready = saved.ready;
+    player.online = saved.online;
+    player.setRoom(null);
+  }
+});
+
+// The other side of it: a song the page has already resolved - the window ahead
+// is resolved before it is fetched, and a song whose file is already here
+// reached that state through a resolve - is asked for by rendition. Asking by
+// song there would be a second request for bytes the backend already holds.
+test("a song whose rendition is already known is asked for by rendition", async () => {
+  const saved = {
+    ensureAudio: player.ensureAudio,
+    audio: player.audio,
+    queue: player.queue,
+    index: player._index,
+    offline: player._offline,
+    status: player._status,
+    variants: player._variants,
+    stream: player._stream,
+    loading: player._loading,
+    client: player._client,
+    startDownload: player._startDownload,
+    prefetch: player._prefetch,
+    ready: player._ready,
+    online: player.online,
+  };
+  const asked = [];
+  const audio = {
+    src: "",
+    currentTime: 0,
+    duration: 0,
+    paused: true,
+    readyState: 0,
+    removeAttribute() {},
+    load() {},
+    pause() {},
+    play() {
+      return { catch() {} };
+    },
+  };
+  try {
+    player.setRoom(null);
+    player.ensureAudio = () => audio;
+    player.audio = audio;
+    player.queue = queue("a");
+    player._index = 0;
+    player._offline = new Map();
+    player._status = new Map();
+    player._variants = new Map([["a", { variantId: "v-a", sources: [], preferredVariantId: "" }]]);
+    player.online = () => true;
+    player._startDownload = () => {};
+    player._prefetch = () => {};
+    player._ready = () => new Promise(() => {});
+    player._client = () => ({
+      mediaUrl: (variantId, { startMs } = {}) => {
+        asked.push(`media:${variantId}`);
+        return Number.isFinite(Number(startMs)) ? `/media/${variantId}?start=${Math.round(startMs)}` : `/media/${variantId}`;
+      },
+      trackStreamUrl: (trackId) => {
+        asked.push(`track:${trackId}`);
+        return `/track-stream/${trackId}`;
+      },
+    });
+
+    await player._load(0, { autoplay: true });
+
+    assert.equal(audio.src, "/media/v-a?start=0", "the rendition it already knows is asked for by name");
+    assert.deepEqual(asked, ["media:v-a"], "and the song is not asked for twice");
+  } finally {
+    player.ensureAudio = saved.ensureAudio;
+    player.audio = saved.audio;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._offline = saved.offline;
+    player._status = saved.status;
+    player._variants = saved.variants;
+    player._stream = saved.stream;
+    player._loading = saved.loading;
+    player._client = saved.client;
+    player._startDownload = saved.startDownload;
+    player._prefetch = saved.prefetch;
+    player._ready = saved.ready;
+    player.online = saved.online;
+    player.setRoom(null);
   }
 });
 
@@ -955,19 +1150,22 @@ test("when the file lands the stream is handed over to it at the position the mu
       mediaUrl: (variantId, { startMs } = {}) => (Number.isFinite(Number(startMs))
         ? `/media/${variantId}?start=${Math.round(startMs)}`
         : `/media/${variantId}`),
+      trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/track-stream/${trackId}?start=${Math.round(startMs)}`
+        : `/track-stream/${trackId}`),
       startDownload: async () => ({}),
     });
     player._ready = async () => ({ state: "ready", durationMs: 200000 });
 
     // A room's song, joined forty-five seconds in: the position is the request's.
     await player._load(0, { autoplay: true, startMs: 45000 });
-    assert.equal(audio.src, "/media/v-a?start=45000", "the stream starts where the listener is");
+    assert.equal(audio.src, "/track-stream/a?start=45000", "the stream starts where the listener is, asked for by song");
     audio.currentTime = 7.5;                     // and the music is 52.5s into the song
     await tick(20);
 
     assert.equal(spare.src, "/media/v-a", "the file is loaded on the second element");
     assert.equal(audio.paused, false, "while the stream keeps playing");
-    assert.deepEqual(played, ["/media/v-a?start=45000"], "and the stream is what is heard so far");
+    assert.deepEqual(played, ["/track-stream/a?start=45000"], "and the stream is what is heard so far");
 
     spare.readyState = 4;
     spare.fire("canplay");
@@ -1144,8 +1342,8 @@ test("a seek inside a stream asks the backend for the song from there", () => {
     const media = (variantId, { startMs } = {}) => (Number.isFinite(Number(startMs))
       ? `/media/${variantId}?start=${Math.round(startMs)}`
       : `/media/${variantId}`);
-    player._client = () => ({ mediaUrl: media });
-    player._clientIfAny = () => ({ mediaUrl: media });
+    player._client = () => ({ mediaUrl: media, trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs)) ? `/track-stream/${trackId}?start=${Math.round(startMs)}` : `/track-stream/${trackId}`) });
+    player._clientIfAny = () => ({ mediaUrl: media, trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs)) ? `/track-stream/${trackId}?start=${Math.round(startMs)}` : `/track-stream/${trackId}`) });
 
     assert.equal(player.positionMs(), 12500, "the position is where the request started plus the element's own clock");
 
@@ -1327,8 +1525,8 @@ test("a stream the server queued is asked for again, not skipped", () => {
     const media = (variantId, { startMs } = {}) => (Number.isFinite(Number(startMs))
       ? `/media/${variantId}?start=${Math.round(startMs)}`
       : `/media/${variantId}`);
-    player._client = () => ({ mediaUrl: media });
-    player._clientIfAny = () => ({ mediaUrl: media });
+    player._client = () => ({ mediaUrl: media, trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs)) ? `/track-stream/${trackId}?start=${Math.round(startMs)}` : `/track-stream/${trackId}`) });
+    player._clientIfAny = () => ({ mediaUrl: media, trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs)) ? `/track-stream/${trackId}?start=${Math.round(startMs)}` : `/track-stream/${trackId}`) });
     // The waits are the test's, so they can be spent at once.
     globalThis.setTimeout = (fn, ms) => {
       const entry = { fn, ms };
@@ -1534,6 +1732,9 @@ test("a retry after the download finished plays the file at the position", () =>
       mediaUrl: (variantId, { startMs } = {}) => (Number.isFinite(Number(startMs))
         ? `/media/${variantId}?start=${Math.round(startMs)}`
         : `/media/${variantId}`),
+      trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/track-stream/${trackId}?start=${Math.round(startMs)}`
+        : `/track-stream/${trackId}`),
     });
     globalThis.setTimeout = (fn, ms) => {
       const entry = { fn, ms };
@@ -1632,6 +1833,9 @@ test("a follower joining a room's song asks for it from the room's position", as
       mediaUrl: (variantId, { startMs } = {}) => (Number.isFinite(Number(startMs))
         ? `/media/${variantId}?start=${Math.round(startMs)}`
         : `/media/${variantId}`),
+      trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/track-stream/${trackId}?start=${Math.round(startMs)}`
+        : `/track-stream/${trackId}`),
       startDownload: async () => ({}),
     });
 
@@ -1655,6 +1859,7 @@ test("a follower joining a room's song asks for it from the room's position", as
     player._stream = saved.stream;
     player._pendingSeek = saved.pendingSeek;
     player._loading = saved.loading;
+    player._variants = saved.variants;
     player.setRoom(saved.room);
   }
 });
@@ -1724,6 +1929,9 @@ test("a stream's own end is never read as the song's end", () => {
       mediaUrl: (variantId, { startMs } = {}) => (Number.isFinite(Number(startMs))
         ? `/media/${variantId}?start=${Math.round(startMs)}`
         : `/media/${variantId}`),
+      trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/track-stream/${trackId}?start=${Math.round(startMs)}`
+        : `/track-stream/${trackId}`),
     });
 
     audio.fire("ended");
@@ -1785,6 +1993,7 @@ test("a rendition the backend already holds is played from the file itself", asy
     stream: player._stream,
     pendingSeek: player._pendingSeek,
     loading: player._loading,
+    variants: player._variants,
     room: player._room,
   };
   const played = [];
@@ -1830,10 +2039,17 @@ test("a rendition the backend already holds is played from the file itself", asy
       mediaUrl: (variantId, { startMs } = {}) => (Number.isFinite(Number(startMs))
         ? `/media/${variantId}?start=${Math.round(startMs)}`
         : `/media/${variantId}`),
+      trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/track-stream/${trackId}?start=${Math.round(startMs)}`
+        : `/track-stream/${trackId}`),
       startDownload: async () => ({}),
     });
     // A warm-ahead has already been told the file is here.
     player._status = new Map([["v-a", { state: "ready", durationMs: 200000 }]]);
+    // A rendition the page knows is ready is one the page resolved to fetch it
+    // (the prefetch resolves before it downloads), and a song already resolved
+    // is not asked for by track.
+    player._variants = new Map([["a", { variantId: "v-a", sources: [], preferredVariantId: "" }]]);
     player._ready = async (variantId) => player._status.get(variantId) || { state: "none" };
 
     await player._load(0, { autoplay: true, startMs: 45000 });
@@ -1911,6 +2127,9 @@ test("a stream is recognised by the URL the element actually holds", async () =>
       mediaUrl: (variantId, { startMs } = {}) => (Number.isFinite(Number(startMs))
         ? `/api/v1/media/${variantId}?start=${Math.round(startMs)}&ms=local`
         : `/api/v1/media/${variantId}?ms=local`),
+      trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/track-stream/${trackId}?start=${Math.round(startMs)}`
+        : `/track-stream/${trackId}`),
     });
 
     // A room's song, joined forty-five seconds in.
@@ -1973,6 +2192,161 @@ test("a stream is recognised by the URL the element actually holds", async () =>
     else globalThis.document = saved.document;
     clearInterval(player._resumeTimer);
     player._resumeTimer = 0;
+    player.setRoom(saved.room);
+  }
+});
+
+// --- songs this page already holds -----------------------------------------
+//
+// A kept playlist hands the player tracks that carry the URL their own bytes
+// are at. With the server gone there is nothing to resolve, nothing to poll and
+// nothing to fetch ahead, and any of those would be a request whose only answer
+// is "no" - so what is pinned here is that none of them happens, and that the
+// element is given the copy this machine already has.
+
+/** The player stood up with an element and a client that cannot answer. */
+function standUpLocal({ audio, warmed, fetched, asked }) {
+  player.setRoom(null);
+  player.audio = audio;
+  // There is no server: anything that asks it throws, so a test that passes
+  // with this in place has asked it nothing.
+  player._client = () => {
+    asked.push("server");
+    throw new Error("no server");
+  };
+  player.warm = (track) => warmed.push(track?.id || "");
+  player.keepOffline = (tracks) => fetched.push(...(tracks || []).map((track) => track.id));
+  player._saveSoon = () => {};
+  player._wantResume = () => {};
+}
+
+test("a song that says where its own copy is plays without asking the server", async () => {
+  const saved = {
+    audio: player.audio, queue: player.queue, index: player._index, variant: player._variant,
+    loading: player._loading, client: player._client, warm: player.warm,
+    keepOffline: player.keepOffline, saveSoon: player._saveSoon, wantResume: player._wantResume,
+    playingWanted: player._playingWanted, room: player._room,
+  };
+  const played = [];
+  const warmed = [];
+  const fetched = [];
+  const asked = [];
+  try {
+    standUpLocal({ audio: domAudio(played), warmed, fetched, asked });
+    const tracks = [
+      { id: "t1", title: "One", variantId: "v1", localUrl: "/api/v1/media/v1?ms=local" },
+      { id: "t2", title: "Two", variantId: "v2", localUrl: "/api/v1/media/v2?ms=local" },
+    ];
+
+    player.play(tracks, 0);
+
+    assert.deepEqual(played, ["http://localhost/api/v1/media/v1?ms=local"], "the element was handed the copy that is here");
+    assert.equal(player._variant, "v1", "and the bar names the rendition it is playing");
+    assert.equal(player._loading, false, "nothing is being fetched, so nothing is waited for");
+    assert.equal(player._stream, null, "and nothing is streaming while a file is on the element");
+    assert.equal(player.state().playing, true);
+    assert.deepEqual(warmed, [], "no song of the list was fetched ahead: they are all here");
+    assert.deepEqual(fetched, [], "and none of them was kept in memory again");
+    assert.deepEqual(asked, [], "nothing at all was asked of the server");
+
+    // The song after it arrives the same way, which is what makes a kept
+    // playlist play through rather than stopping at its first song.
+    player.next();
+    assert.deepEqual(played[1], "http://localhost/api/v1/media/v2?ms=local");
+    assert.deepEqual(asked, []);
+  } finally {
+    player.audio = saved.audio;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._variant = saved.variant;
+    player._loading = saved.loading;
+    player._client = saved.client;
+    player.warm = saved.warm;
+    player.keepOffline = saved.keepOffline;
+    player._saveSoon = saved.saveSoon;
+    player._wantResume = saved.wantResume;
+    player._playingWanted = saved.playingWanted;
+    clearInterval(player._resumeTimer);
+    player._resumeTimer = 0;
+    player.setRoom(saved.room);
+  }
+});
+
+test("playLocal plays the URL it was handed, and nothing else", () => {
+  const saved = {
+    audio: player.audio, queue: player.queue, index: player._index, variant: player._variant,
+    loading: player._loading, client: player._client, warm: player.warm,
+    keepOffline: player.keepOffline, saveSoon: player._saveSoon, wantResume: player._wantResume,
+    playingWanted: player._playingWanted, room: player._room,
+  };
+  const played = [];
+  const warmed = [];
+  const fetched = [];
+  const asked = [];
+  const statuses = player._status.size;
+  try {
+    standUpLocal({ audio: domAudio(played), warmed, fetched, asked });
+
+    assert.equal(player.playLocal({ id: "t1", title: "One", variantId: "v1" }, "/api/v1/media/v1?ms=local"), true);
+    assert.deepEqual(played, ["http://localhost/api/v1/media/v1?ms=local"]);
+    assert.deepEqual(player.queue.map((track) => track.id), ["t1"], "the queue is the one song, as playOffline makes it");
+    assert.equal(player.queue[0].localUrl, "/api/v1/media/v1?ms=local", "which carries the URL it plays from");
+    assert.equal(player._index, 0);
+    assert.equal(player._loading, false);
+    assert.deepEqual(warmed, [], "nothing is fetched ahead");
+    assert.deepEqual(asked, [], "and nothing is asked of the server");
+    assert.equal(
+      player._status.size, statuses,
+      "no status is invented for it either: where the file is was never the server's to report here"
+    );
+
+    // What it cannot play it refuses, rather than half-playing it.
+    assert.equal(player.playLocal({ id: "t1" }, ""), false, "a song with no URL");
+    assert.equal(player.playLocal(null, "/api/v1/media/v1?ms=local"), false, "no song");
+    assert.deepEqual(played.length, 1, "and the element is left where it was");
+  } finally {
+    player.audio = saved.audio;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._variant = saved.variant;
+    player._loading = saved.loading;
+    player._client = saved.client;
+    player.warm = saved.warm;
+    player.keepOffline = saved.keepOffline;
+    player._saveSoon = saved.saveSoon;
+    player._wantResume = saved.wantResume;
+    player._playingWanted = saved.playingWanted;
+    clearInterval(player._resumeTimer);
+    player._resumeTimer = 0;
+    player.setRoom(saved.room);
+  }
+});
+
+test("offline, a queue that lost one song carries on to the next it holds", () => {
+  const saved = {
+    queue: player.queue, index: player._index, load: player._load, room: player._room,
+  };
+  const jumped = [];
+  try {
+    player.setRoom(null);
+    // The first song's bytes are gone - evicted between the page being drawn and
+    // the press - and the second one is here.
+    player.queue = [{ id: "t1", title: "One" }, { id: "t2", title: "Two", localUrl: "/api/v1/media/v2?ms=local" }];
+    player._index = 0;
+    player.online = () => false;
+    player._load = (index) => {
+      jumped.push(index);
+      player._index = index;
+    };
+
+    assert.equal(player._skipUnavailable(), true, "the queue moves on rather than sitting on a song it does not have");
+    assert.deepEqual(jumped, [1]);
+    assert.equal(player._index, 1);
+  } finally {
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._load = saved.load;
+    delete player.online;
     player.setRoom(saved.room);
   }
 });
@@ -2092,6 +2466,9 @@ test("two hand-overs for one song do not fight over the element", async () => {
       mediaUrl: (variantId, { startMs } = {}) => (Number.isFinite(Number(startMs))
         ? `/api/v1/media/${variantId}?start=${Math.round(startMs)}&ms=local`
         : `/api/v1/media/${variantId}?ms=local`),
+      trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/track-stream/${trackId}?start=${Math.round(startMs)}`
+        : `/track-stream/${trackId}`),
     });
 
     // The download's file, then the page's own copy of the same rendition - the
@@ -2224,6 +2601,12 @@ test("when its copy lands mid-song the music moves onto it without a gap", async
     player._warm = async () => true;
     player._client = () => ({
       mediaUrl: (variantId) => `/media/${variantId}`,
+      trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/track-stream/${trackId}?start=${Math.round(startMs)}`
+        : `/track-stream/${trackId}`),
+      trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/track-stream/${trackId}?start=${Math.round(startMs)}`
+        : `/track-stream/${trackId}`),
       startDownload: async () => ({}),
       sources: async () => ({ sources: [{ variantId: "v-a", downloadable: true }], preferredVariantId: "" }),
     });
@@ -2339,6 +2722,12 @@ test("a copy that never becomes playable is moved onto the old way", async () =>
     player._warm = async () => true;
     player._client = () => ({
       mediaUrl: (variantId) => `/media/${variantId}`,
+      trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/track-stream/${trackId}?start=${Math.round(startMs)}`
+        : `/track-stream/${trackId}`),
+      trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/track-stream/${trackId}?start=${Math.round(startMs)}`
+        : `/track-stream/${trackId}`),
       startDownload: async () => ({}),
       sources: async () => ({ sources: [{ variantId: "v-a", downloadable: true }], preferredVariantId: "" }),
     });
@@ -2456,6 +2845,12 @@ test("changing track does not abort a fetch in flight, and its bytes are kept", 
     player._warm = async () => true;
     player._client = () => ({
       mediaUrl: (variantId) => `/media/${variantId}`,
+      trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/track-stream/${trackId}?start=${Math.round(startMs)}`
+        : `/track-stream/${trackId}`),
+      trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/track-stream/${trackId}?start=${Math.round(startMs)}`
+        : `/track-stream/${trackId}`),
       startDownload: async () => ({}),
       // The fetch path names a rendition, and the retry names the other source,
       // so a failed attempt shows up as the variant it asked for.
@@ -2627,6 +3022,12 @@ test("a file that will not arrive is tried from another source, then the queue m
     };
     player._client = () => ({
       mediaUrl: (variantId) => `/media/${variantId}`,
+      trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/track-stream/${trackId}?start=${Math.round(startMs)}`
+        : `/track-stream/${trackId}`),
+      trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/track-stream/${trackId}?start=${Math.round(startMs)}`
+        : `/track-stream/${trackId}`),
       startDownload: async () => ({}),
       // The fetch path names a rendition, and the retry names the other source,
       // so a failed attempt shows up as the variant it asked for.
@@ -2740,7 +3141,11 @@ test("a resolution that failed is asked again before anything is skipped", async
       }
       return { variantId: "v-a", sources: [{ variantId: "v-a", downloadable: true }], preferredVariantId: "" };
     };
-    player._client = () => ({ mediaUrl: (variantId) => `/media/${variantId}`, sources: async () => ({ sources: [] }) });
+    player._client = () => ({
+      mediaUrl: (variantId) => `/media/${variantId}`,
+      trackStreamUrl: (trackId) => `/track-stream/${trackId}`,
+      sources: async () => ({ sources: [] }),
+    });
 
     await player._load(0, { autoplay: false });
     await new Promise((resolve) => setTimeout(resolve, 900));
@@ -3276,6 +3681,12 @@ test("a room's song is fetched without waiting for its sources", async () => {
     player._ready = async () => true;
     player._client = () => ({
       mediaUrl: (variantId) => `/media/${variantId}`,
+      trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/track-stream/${trackId}?start=${Math.round(startMs)}`
+        : `/track-stream/${trackId}`),
+      trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/track-stream/${trackId}?start=${Math.round(startMs)}`
+        : `/track-stream/${trackId}`),
       startDownload: async () => ({}),
       // Never answers: the song must not wait for it.
       sources: () => {
@@ -3300,6 +3711,8 @@ test("a room's song is fetched without waiting for its sources", async () => {
     player.setRoom(saved.room);
     player._started = saved.started;
     player._status = saved.status;
+    player._variants = saved.variants;
+    player.online = saved.online;
   }
 });
 
@@ -3323,6 +3736,8 @@ test("the song that was playing is replaced when the track changes", async () =>
     pendingSeek: player._pendingSeek,
     stream: player._stream,
     status: player._status,
+    variants: player._variants,
+    online: player.online,
     playingWanted: player._playingWanted,
     resume: player._resumeWanted,
   };
@@ -3355,20 +3770,27 @@ test("the song that was playing is replaced when the track changes", async () =>
     player._startDownload = () => {};
     player._prefetch = () => {};
     player._status = new Map();
+    // Nothing is known about this song here: that is the state a queue play
+    // begins in, and the one that asks for the bytes by song.
+    player._variants = new Map();
+    player.online = () => true;
     player._variantFor = async () => ({ variantId: "v-a", sources: [], preferredVariantId: "" });
     player._client = () => ({
       mediaUrl: (variantId, { startMs } = {}) => (Number.isFinite(Number(startMs))
         ? `/media/${variantId}?start=${Math.round(startMs)}`
         : `/media/${variantId}`),
+      trackStreamUrl: (trackId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/track-stream/${trackId}?start=${Math.round(startMs)}`
+        : `/track-stream/${trackId}`),
     });
     // The file is not here yet, which is the window this is about.
     player._ready = () => new Promise(() => {});
 
     await player._load(0, { autoplay: true });
 
-    assert.equal(audio.src, "/media/v-a?start=0", "the old song is off the element, replaced by the new one's stream");
+    assert.equal(audio.src, "/track-stream/a?start=0", "the old song is off the element, replaced by the new one's stream");
     assert.equal(played.includes("/media/v-old"), false, "and nothing started it again");
-    assert.deepEqual(played, ["/media/v-a?start=0"], "what plays is the song the bar names");
+    assert.deepEqual(played, ["/track-stream/a?start=0"], "what plays is the song the bar names");
     assert.equal(player._playingWanted, true, "and it is playing, not waiting");
     assert.equal(audio.paused, false, "on the element itself");
   } finally {

@@ -103,7 +103,10 @@ def fake_variant(backend, token, title):
             continue
         for variant in group.get("variants") or []:
             if variant.get("provider") == PROVIDER:
-                return variant
+                # The song, beside the rendition: a queue carries songs, not
+                # files, so the app may ask for these bytes by track and let the
+                # backend pick the rendition (see `streams_the_song`).
+                return {**variant, "trackId": track.get("id") or ""}
     raise AssertionError(
         f"the search answer never named a {PROVIDER!r} rendition of {title!r}: {payload!r}"
     )
@@ -127,6 +130,19 @@ def media_status(backend, token, variant_id):
 
 
 # --- the position in a URL, and what the provider actually got --------------
+
+
+def streams_the_song(src, variant):
+    """Whether a stream URL is for this song - by rendition, or by track.
+
+    A song whose rendition the page already knows is asked for by rendition
+    (`/api/v1/media/{variantId}`). One it does not - every song in a queue - is
+    asked for by track (`/api/v1/tracks/{trackId}/stream`), and the backend
+    picks the rendition and starts it, so the provider's startup does not wait
+    on a resolve. Both URLs are this song, and either may be what the element
+    holds.
+    """
+    return variant["id"] in src or (variant.get("trackId") or "") in src
 
 
 def start_param(url):
@@ -355,9 +371,9 @@ def test_a_streamed_song_starts_before_its_file_is_here(ui, backend):
         f"playing {src!r}; the provider was asked for start={offsets}"
     )
 
-    assert variant_id in src, (
-        f"the element is playing something other than {variant_id}: {src!r} - this test would be "
-        "measuring another song"
+    assert streams_the_song(src, variant), (
+        f"the element is playing something other than {variant_id} or its track: {src!r} - this "
+        "test would be measuring another song"
     )
     assert start_param(src) == 0, (
         f"the element was given {src!r}: no position, so it is not a stream - a whole file is asked "
@@ -515,7 +531,7 @@ def test_a_room_joined_mid_song_starts_near_where_it_is(host, guest, backend):
         f"the guest was handed start={start_ms} while the room was at {room_ms:.0f}ms, more than the "
         f"{ROOM_TOLERANCE_MS}ms a join takes\n  {src}"
     )
-    assert variant_id in src, f"the guest's element is playing another song: {src!r}"
+    assert streams_the_song(src, variant), f"the guest's element is playing another song: {src!r}"
     assert state["currentTime"] > 0.05 and not state["paused"], (
         f"the guest's element is not playing the room's song: {state!r}"
     )
@@ -597,7 +613,7 @@ def test_a_seek_inside_a_stream_asks_for_the_position_and_keeps_playing(ui, back
         f"the provider was asked to start at {reached}ms, not the app's own target {target}ms: the "
         "URL and the fetch disagree about where the song should begin"
     )
-    assert variant_id in src, f"the seek asked for another song: {src!r}"
+    assert streams_the_song(src, variant), f"the seek asked for another song: {src!r}"
     assert not after["paused"] and after["currentTime"] > 0.3, (
         f"the sound stopped when the seek reconnected the stream: {after!r}"
     )

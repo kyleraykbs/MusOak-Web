@@ -52,6 +52,36 @@ export function mediaCacheKey(mediaUrl, base = defaultBase()) {
   return `${parsed.origin}${parsed.pathname}?ms=${encodeURIComponent(server)}`;
 }
 
+/**
+ * The variant a media URL names. The media path is `/api/v1/media/<variant>`;
+ * nothing else in the URL is the song - not the backend in the query, and not
+ * the position a stream was asked to start at.
+ */
+export function mediaVariantId(mediaUrl, base = defaultBase()) {
+  try {
+    const found = /^\/api\/v1\/media\/([^/]+)$/.exec(new URL(mediaUrl, base).pathname);
+    return found ? decodeURIComponent(found[1]) : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * A media URL as this page asks for it again: the path and its query, which is
+ * what the element and the worker both work with, since the origin is the
+ * page's own either way.
+ */
+export function mediaPath(mediaUrl, base = defaultBase()) {
+  const value = String(mediaUrl || "");
+  if (!value) return "";
+  try {
+    const parsed = new URL(value, base);
+    return `${parsed.pathname}${parsed.search}`;
+  } catch {
+    return "";
+  }
+}
+
 /** What a set of downloaded songs adds up to; a missing size counts as zero. */
 export function totalBytes(entries) {
   let total = 0;
@@ -78,6 +108,43 @@ export function plannedFetches(record, tracks) {
     plan.push({ trackId, variantId });
   }
   return plan;
+}
+
+/**
+ * The songs of a kept list as tracks the player can queue.
+ *
+ * Each one carries the URL its own copy is at, so a kept playlist is heard
+ * whole with no server: the song after this one plays from here too, and
+ * nothing has to be resolved to reach it. The title is what the list was kept
+ * with - the index is all this page has to name a song by when the server
+ * cannot be asked.
+ */
+export function keptTracks(entries) {
+  return (entries || []).map((entry) => ({
+    id: String(entry.trackId || ""),
+    title: entry.title || "",
+    variantId: String(entry.variantId || ""),
+    localUrl: String(entry.url || ""),
+  }));
+}
+
+/**
+ * What to say about a kept playlist the browser has let go of.
+ *
+ * Cache Storage is the browser's room to manage, and it evicts without asking:
+ * a playlist can be kept and still have nothing left to play. Saying which
+ * songs are gone is the difference between a Play that does nothing and a Play
+ * that told somebody why.
+ */
+export function keptGoneMessage(name, missing, total) {
+  const who = name ? `\u201c${name}\u201d` : "That playlist";
+  const gone = (missing || []).length;
+  const count = Math.max(gone, Number(total) || 0);
+  if (!gone) return `${who} has nothing kept on this machine.`;
+  if (count <= gone) {
+    return `${who} is kept here, but its songs are no longer in this browser\u2019s cache. Keep it again once the server is back.`;
+  }
+  return `${gone} of ${count} songs in ${who} are no longer in this browser\u2019s cache.`;
 }
 
 /** How many songs are fetched at once, unless the account page says otherwise.
@@ -450,6 +517,55 @@ export function list() {
   return [...mirror.values()].sort((left, right) => (right.savedAt || 0) - (left.savedAt || 0));
 }
 
+// --- playing what is kept --------------------------------------------------
+
+/** One kept variant's URL, or "" when the cache no longer holds it.
+ *
+ *  The key is built when a client can still name the backend, and looked for
+ *  when it cannot: this page may have been opened with no server at all, and
+ *  the cache's own keys are the answer then - they are the strings the download
+ *  wrote, which is the key the worker matches a play against. */
+async function keptUrl(cache, client, variantId) {
+  if (!cache || !variantId) return "";
+  const wanted = client ? mediaCacheKey(client.mediaUrl(variantId)) : "";
+  if (wanted && (await cache.match(wanted).catch(() => null))) return mediaPath(wanted);
+  const keys = await cache.keys().catch(() => []);
+  const found = keys.find((request) => mediaVariantId(request.url) === String(variantId));
+  return found ? mediaPath(found.url) : "";
+}
+
+/**
+ * Which of a kept record's songs this page can still play, and where each one
+ * is. Songs the browser has since let go are listed as missing rather than
+ * dropped: they are what the page says out loud (see `keptGoneMessage`).
+ *
+ * The cache is passed in rather than opened here so the rule can be read - and
+ * tested - without a browser cache to stand up.
+ */
+export async function keptEntries(record, { cache = null, client = null } = {}) {
+  const entries = [];
+  const missing = [];
+  for (const entry of record?.trackIds || []) {
+    const url = await keptUrl(cache, client, entry.variantId);
+    if (url) entries.push({ ...entry, url });
+    else missing.push({ trackId: entry.trackId, variantId: entry.variantId, title: entry.title || "" });
+  }
+  return { id: String(record?.id || ""), name: record?.name || "", entries, missing };
+}
+
+/**
+ * A kept playlist's songs as they can be played right now: for each one the
+ * entry the download wrote and the URL its own copy is at, plus the ones the
+ * browser has let go. Answers null for a playlist this browser does not keep,
+ * which is how a caller tells "kept, and the cache is empty" from "not kept".
+ */
+export async function playlistEntries(playlistId) {
+  await ensureLoaded();
+  const record = mirror.get(String(playlistId));
+  if (!record) return null;
+  return keptEntries(record, { cache: await openCache(), client: activeClient() });
+}
+
 // --- keeping a playlist ----------------------------------------------------
 
 function downloadDialog(name, onCancel) {
@@ -547,7 +663,10 @@ export async function download(playlistId, name, tracks, onProgress) {
       try {
         const variantId = await resolveVariant(client, track.id);
         const size = await fetchVariantToCache(client, variantId, job.abort.signal);
-        entries.push({ trackId: track.id, variantId });
+        // The title comes along: with no server to ask, the index is the only
+        // thing that can name what is playing, and "unknown track" under a song
+        // this machine holds is a page that forgot what it kept.
+        entries.push({ trackId: track.id, variantId, title: track.title || "" });
         bytes += size;
       } catch (error) {
         if (stopped()) return null;
@@ -662,7 +781,7 @@ async function syncOne(playlistId, name, { quiet = true } = {}) {
   try {
     const detail = await client.playlist(playlistId);
     const tracks = await inQueueOrder(detail.tracks || []);
-    const oldByTrack = new Map((record.trackIds || []).map((entry) => [entry.trackId, entry.variantId]));
+    const oldByTrack = new Map((record.trackIds || []).map((entry) => [entry.trackId, entry]));
     const cache = await openCache();
     const entries = [];
     let bytes = 0;
@@ -673,7 +792,7 @@ async function syncOne(playlistId, name, { quiet = true } = {}) {
       try {
         variantId = await resolveVariant(client, track.id);
       } catch {
-        variantId = oldByTrack.get(track.id) || "";
+        variantId = oldByTrack.get(track.id)?.variantId || "";
       }
       if (!variantId) continue;
 
@@ -694,10 +813,14 @@ async function syncOne(playlistId, name, { quiet = true } = {}) {
       }
 
       if (present) {
-        entries.push({ trackId: track.id, variantId });
+        entries.push({ trackId: track.id, variantId, title: track.title || "" });
         bytes += size;
       } else if (oldByTrack.has(track.id)) {
-        entries.push({ trackId: track.id, variantId: oldByTrack.get(track.id) });
+        // The file this copy was made from is gone from the cache and the
+        // server could not fetch it again: the entry stays, with the title it
+        // was kept under, so the playlist keeps naming the song it holds.
+        const old = oldByTrack.get(track.id);
+        entries.push({ trackId: track.id, variantId: old.variantId, title: track.title || old.title || "" });
       }
     }
 
@@ -791,6 +914,9 @@ export const offline = {
   isKept,
   storageBytes,
   list,
+  playlistEntries,
+  keptTracks,
+  keptGoneMessage,
   download,
   remove,
   syncKept,

@@ -19,9 +19,11 @@ import {
   prompt,
   toast,
 } from "../dom.js";
-import { banner, currentClient, navigate, refreshCurrent, registerView, requireLogin, toggleFavorite, inBrowser } from "../app.js";
+import { banner, currentClient, navigate, refreshCurrent, registerView, requireLogin, serverAnswered, toggleFavorite, inBrowser } from "../app.js";
 import { isSignedIn, state } from "../state.js";
 import { currentRoom } from "../rooms-state.js";
+import * as offline from "../offline.js";
+import { player } from "../player.js";
 import { artistLine, artistLineNode, enqueueTracks, goToArtistItem, playOne, playTracks, providerErrorLines, queueButton, queueNextTracks, reportError, shuffleItems } from "./queue.js";
 import { shareTrack } from "./share.js";
 
@@ -414,10 +416,23 @@ async function loadPlaylist() {
 
   if (!target.firstChild) mount(target, emptyState("note", "Loading playlist…", ""));
 
+  // The same rule the play buttons follow: a page that already knows it has no
+  // server goes straight to the copy kept here, rather than spending the wait
+  // on a request whose only possible answer is "no". A page that still believes
+  // the server is there asks it first, as it always did.
+  if (!player.online() && (await drawKept(target))) return;
+
   let detail;
   try {
     detail = await client.playlist(activeId);
   } catch (error) {
+    // The server cannot say what this playlist holds, but this browser can: a
+    // playlist kept here plays with no server at all, so its page is drawn from
+    // the index and the cache instead of being left as a failure. Without this
+    // the one page a kept playlist has was the one page that would not open. A
+    // server that *answered* is not one that cannot answer - a refusal is the
+    // server's own word on it, and that word is what the page shows.
+    if (!serverAnswered(error) && (await drawKept(target))) return;
     reportError(error);
     mount(target, emptyState("note", "Could not load this playlist", error?.message || ""));
     return;
@@ -454,6 +469,73 @@ async function loadPlaylist() {
         )
       : emptyState("note", "Empty playlist", "Add tracks from search.")
   );
+}
+
+/**
+ * Draw this playlist from the copy kept on this machine. Says whether there was
+ * one to draw, so the caller can report the failure it had when there was not.
+ *
+ * What comes back is the page's ordinary shape - the same header, the same
+ * rows, the same Play button - filled from the index and the cache rather than
+ * from the server, because that is all a kept playlist needs: its songs carry
+ * the URL their own bytes are at, and the player plays them without asking
+ * anybody. The header's own actions are the ones the server would have to
+ * perform, so a kept copy shows none of them.
+ */
+async function drawKept(target) {
+  await offline.ensureLoaded();
+  if (!offline.isKept(activeId)) return false;
+  const kept = await offline.playlistEntries(activeId);
+  if (!kept) return false;
+  if (!target.isConnected) return true;
+
+  const tracks = offline.keptTracks(kept.entries);
+  activeName = kept.name || "Playlist";
+  if (!tracks.length) {
+    // Kept, and the browser has since let every song of it go: the page says so
+    // rather than drawing a list of nothing with a Play button over it.
+    mount(
+      target,
+      emptyState("cloud", "Nothing to play", offline.keptGoneMessage(kept.name, kept.missing, kept.missing.length))
+    );
+    return true;
+  }
+  if (kept.missing.length) {
+    // Some songs are gone and the rest are here: the page plays what it has and
+    // says what it does not, rather than refusing the whole list.
+    banner(offline.keptGoneMessage(kept.name, kept.missing, tracks.length + kept.missing.length));
+  }
+
+  mount(
+    target,
+    header(currentClient(), { id: activeId, name: kept.name, mine: false }, tracks),
+    h("div", {
+      class: "subtitle",
+      text: "Kept on this machine \u2014 this page plays without the server.",
+    }),
+    h(
+      "div",
+      { class: "list" },
+      tracks.map((track, position) => keptTrackRow(tracks, track, position))
+    )
+  );
+  return true;
+}
+
+/** One song of a kept copy: the row every list draws, with the menu cut to what
+ *  can be done with no server - play it here, or put it in this page's queue. */
+function keptTrackRow(tracks, track, position) {
+  return trackRow({
+    track,
+    position,
+    client: null,
+    onActivate: () => playOne(tracks, position, { playlistId: activeId }),
+    menu: [
+      { label: "Play", onClick: () => playOne(tracks, position, { playlistId: activeId }) },
+      { label: "Queue next", onClick: () => queueNextTracks([track]) },
+      { label: "Queue", onClick: () => enqueueTracks([track]) },
+    ],
+  });
 }
 
 function header(client, playlist, tracks) {

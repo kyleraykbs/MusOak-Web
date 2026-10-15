@@ -690,6 +690,24 @@ export class Client {
   }
 
   /**
+   * The same bytes as `mediaUrl`, asked for by song instead of by rendition.
+   *
+   * Nothing in a queue knows which variant a song will be played from, so a
+   * play that asked for the variant first paid the resolve round trip before
+   * the provider was even told to start. The server answers this URL with the
+   * variant it would have resolved to, streaming and `?start=` alike, so the
+   * provider's startup runs beside that resolve instead of behind it. The
+   * answer names the rendition it chose in `X-Musoak-Variant` for the callers
+   * that go on to wait for the file (see the SDK's `trackStreamInfo`).
+   */
+  trackStreamUrl(trackId, { startMs } = {}) {
+    const path = `/api/v1/tracks/${encodeURIComponent(trackId)}/stream`;
+    const start = Number(startMs);
+    if (!Number.isFinite(start) || start < 0) return routed(this.server, path);
+    return routed(this.server, `${path}?start=${Math.round(start)}`);
+  }
+
+  /**
    * The URL for a cover. `version` is for pictures that change in place: a
    * user's icon is served from a stable path with a long cache, so a new
    * upload needs a different URL before any browser will fetch it again.

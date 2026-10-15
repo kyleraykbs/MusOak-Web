@@ -642,6 +642,30 @@ class Player {
     return true;
   }
 
+  /**
+   * Play a song from a URL this page already holds, with the server out of the
+   * picture: the one a kept playlist was downloaded under, which the service
+   * worker answers out of Cache Storage.
+   *
+   * Nothing is resolved, nothing is polled, nothing is streamed and nothing is
+   * fetched ahead: the bytes are here, so the wait that all of that exists for
+   * has nothing left to wait for. The queue is this one song, as `playOffline`
+   * makes it; a whole kept playlist is a `play()` of the tracks that
+   * `offline.keptTracks` built, each of which carries the URL its own copy is
+   * at, so the songs after the first are here too.
+   */
+  playLocal(track, url) {
+    const trackId = String(track?.id || "");
+    const source = String(url || track?.localUrl || "");
+    if (!trackId || !source) return false;
+    this.queue = [{ ...track, id: trackId, localUrl: source }];
+    this._index = 0;
+    this._shuffle = false;
+    this._emit("queue-changed", this.queue);
+    this._load(0, { autoplay: true });
+    return true;
+  }
+
   /** Where the current track's file is: "none", "downloading", "ready", "failed". */
   readyState() {
     if (!this._variant) return "none";
@@ -1462,21 +1486,57 @@ class Player {
     // already here, so either way the copy is what plays.
     const kept = this._offline.get(String(track.id || ""));
     const fromMemory = Boolean(kept && kept.state === "ready" && kept.url && (!variantId || kept.variantId === variantId));
+    // A song can also say where its own bytes are: a kept playlist is handed to
+    // the player as tracks that carry the URL the download wrote, which sw.js
+    // answers out of Cache Storage. That is the case this branch exists for -
+    // the server is gone, so there is nothing to resolve and nothing to fetch,
+    // and asking it anything would be a request whose only possible answer is
+    // "no". A room that named a rendition keeps that rendition: a copy is only
+    // this song's when it is the file that was asked for.
+    const asked = String(variantId || "");
+    const carries = String(track.localUrl || "");
+    const local = carries && (!asked || String(track.variantId || "") === asked) ? carries : "";
+    const localUrl = fromMemory ? kept.url : local;
+
+    // The rendition is not known here yet - a queue carries songs, not files -
+    // so the bytes are asked for by track now, before the ask below that names
+    // a rendition: the backend picks the one this member would play and answers
+    // it exactly as it answers a variant, so the provider's own startup runs
+    // beside the resolve instead of queuing behind it. What the resolve is
+    // still for is the rendition's name, which the status and the handover to
+    // the file need, and what the bar says. A caller that named a rendition (a
+    // room item, a search row) or a song this page holds keeps the ordinary
+    // path, where nothing is left for the server to choose.
+    // A song the page has already resolved (the window ahead is both resolved
+    // and fetched) is not asked for by track: the rendition is known here, and
+    // when the backend already holds it the file is one request away, while a
+    // track-level ask would be a second request for bytes that are on disk.
+    const known = this._variants.get(String(track.id || ""));
+    if (!localUrl && !asked && !known && this.online()) {
+      this._playStream({
+        byTrack: true,
+        trackId: String(track.id || ""),
+        variantId: "",
+        token,
+        autoplay: Boolean(autoplay),
+      });
+    }
 
     let resolved;
     try {
-      if (fromMemory) {
+      if (localUrl) {
         // The bytes are local, but the song still came from somewhere and the
         // bar names it: a copy this page holds is *not* a song without a
         // platform.  The resolution that fetched the copy is what this page
         // knows about the track (see `_variantFor`), so the source comes from
         // there rather than being dropped.
         const known = this._variants.get(String(track.id || ""));
+        const playedAs = fromMemory ? kept.variantId : String(track.variantId || "");
         resolved = {
           sources: Array.isArray(known?.sources) ? known.sources : [],
           preferredVariantId: known?.preferredVariantId || "",
-          variantId: kept.variantId,
-          source: memorySource(known, kept.variantId),
+          variantId: playedAs,
+          source: memorySource(known, playedAs),
         };
       } else {
         resolved = variantId
@@ -1510,9 +1570,9 @@ class Player {
     this._variant = resolved.variantId;
     this.renderBar();
 
-    if (fromMemory) {
+    if (localUrl) {
       // The copy is already here: nothing to fetch and nothing to wait for.
-      audio.src = kept.url;
+      audio.src = localUrl;
     } else {
       // A file that is not here yet plays from the provider's own stream, and
       // the file is fetched behind it. Waiting for the whole file first meant
@@ -1532,7 +1592,12 @@ class Player {
       // it keeps its own copies of the window ahead as it always did. This is
       // the line the early return below used to skip.
       this._prefetch();
-      const attempt = { variantId: resolved.variantId, token, autoplay: Boolean(autoplay) };
+      const attempt = {
+        variantId: resolved.variantId,
+        trackId: String(track.id || ""),
+        token,
+        autoplay: Boolean(autoplay),
+      };
       this._playStream(attempt);
       this._waitForFile(attempt);
       return;
@@ -1646,7 +1711,11 @@ class Player {
   _skipUnavailable() {
     for (let index = this._index + 1; index < this.queue.length; index += 1) {
       const entry = this._offline.get(String(this.queue[index]?.id || ""));
-      if (entry?.state === "ready" && entry.url) {
+      // A song whose list came out of the cache it was downloaded into is here
+      // just as much as one held in memory: a kept playlist carries on from the
+      // next song it holds rather than stopping on one the browser let go.
+      const held = (entry?.state === "ready" && entry.url) || this.queue[index]?.localUrl;
+      if (held) {
         this._error = "";
         this.jumpTo(index, { autoplay: true });
         return true;
@@ -1813,6 +1882,17 @@ class Player {
   _playStream(attempt) {
     const audio = this.audio;
     if (!audio) return;
+    // The bytes of this song may already be on their way by track: nothing in
+    // the page knew a rendition when the load began, so the ask went out by
+    // track and the element holds that URL. Resolving the song then only names
+    // the rendition for the status and the handover; asking for the bytes again
+    // here would throw away the stream that is arriving and start a second
+    // fetch of the same song.
+    const started = this._stream;
+    if (started && started.byTrack && started.trackId === String(attempt.trackId || "")) {
+      started.variantId = String(attempt.variantId);
+      return;
+    }
     // A file the backend already holds - a warm-ahead brought it before this
     // song was reached - is not streamed: the whole file goes on at once and
     // can be seeked within immediately, while a stream of it would be a second
@@ -1822,11 +1902,23 @@ class Player {
     if (this._status.get(attempt.variantId)?.state === "ready") return;
     const startMs = Math.max(0, Math.round(Number(this._pendingSeek) || 0));
     this._pendingSeek = null;
-    audio.src = this._client().mediaUrl(attempt.variantId, { startMs });
+    // The bytes are asked for by *track* when nothing here knows a rendition
+    // yet: the backend picks the one this member would play and answers exactly
+    // as it answers a variant, so pressing play costs no round trip of its own
+    // before the provider starts. The provider's own startup is then the only
+    // wait, and it overlapped the resolve that follows rather than queueing
+    // behind it. A rendition already known (a search row carries one, so does a
+    // room item) keeps the variant URL, which is the same answer with nothing
+    // left for the server to choose.
+    audio.src = attempt.byTrack
+      ? this._client().trackStreamUrl(attempt.trackId, { startMs })
+      : this._client().mediaUrl(attempt.variantId, { startMs });
     // Read back off the element: this is the URL the element itself holds, and
     // the one every later comparison and re-request is made against.
     this._stream = {
       variantId: String(attempt.variantId),
+      trackId: String(attempt.trackId || ""),
+      byTrack: Boolean(attempt.byTrack),
       startMs,
       src: this._elementUrl(audio.src),
       failed: false,
@@ -2070,11 +2162,15 @@ class Player {
   /** Keep the current track and the next few fetched. */
   _prefetch() {
     for (const track of prefetchWindow(this.queue, this._index, PREFETCH)) {
+      // A song that says where its own bytes are needs nothing fetched: it is
+      // here, and asking the backend for it would be a request whose answer is
+      // already known - the reason a kept playlist plays with no server at all.
+      if (track?.localUrl) continue;
       this.warm(track);
     }
     // In a room the order offline play follows is the room's, and rooms-state
     // keeps it: this queue holds one song there, and would evict the room's.
-    if (!this._room) this.keepOffline(this.offlineWindow());
+    if (!this._room) this.keepOffline(this.offlineWindow().filter((track) => !track?.localUrl));
   }
 
   // --- songs kept in memory for offline play -------------------------------

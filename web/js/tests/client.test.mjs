@@ -54,6 +54,18 @@ test("a backend URL keeps its routing when it is handed to an element", () => {
   // Zero is a position like any other: it is the stream at the beginning.
   assert.equal(new URLSearchParams(client.mediaUrl("variant-1", { startMs: 0 }).split("?")[1]).get("start"), "0");
 
+  // The same bytes by song: a play that has not resolved a rendition asks for
+  // them this way, and the position has to travel with it exactly as it does
+  // above.
+  const byTrack = client.trackStreamUrl("track-1");
+  assert.match(byTrack, /^\/api\/v1\/tracks\/track-1\/stream\?ms=/);
+  assert.equal(new URLSearchParams(byTrack.split("?")[1]).get("start"), null);
+  const trackFrom = client.trackStreamUrl("track-1", { startMs: 45000 });
+  const trackFromQuery = new URLSearchParams(trackFrom.split("?")[1]);
+  assert.equal(trackFromQuery.get("start"), "45000");
+  assert.equal(trackFromQuery.get("ms"), BACKEND, "and the backend is still named");
+  assert.equal(new URLSearchParams(client.trackStreamUrl("track-1", { startMs: 0 }).split("?")[1]).get("start"), "0");
+
   const art = client.artworkUrl("/api/v1/artwork/abc");
   assert.equal(new URLSearchParams(art.split("?")[1]).get("ms"), BACKEND);
 
