@@ -786,7 +786,7 @@ class Player {
   _seekStream(stream, target) {
     const audio = this.audio;
     if (!audio) return;
-    const wasPlaying = this._playingWanted || audio.paused === false;
+    const wasPlaying = this._wantsSound(audio);
     stream.startMs = target;
     audio.src = this._client().mediaUrl(stream.variantId, { startMs: target });
     stream.src = this._elementUrl(audio.src);
@@ -2129,7 +2129,7 @@ class Player {
     }
     // The stream is playing and the file has landed: move onto it without a
     // gap, at the position the music has actually reached.
-    this._handOverTo({ url }, audio.paused !== false, FILE_READY_TIMEOUT_MS);
+    this._handOverTo({ url }, !this._wantsSound(audio), FILE_READY_TIMEOUT_MS);
   }
 
   /** Ask the backend for a file, once - twice if this is the song being waited
@@ -2418,7 +2418,7 @@ class Player {
     // copy is kept either way, and the next load - or the next time this page
     // is visible - plays it from memory without a swap at all.
     if (this._hidden()) return false;
-    const wasPaused = audio.paused !== false;
+    const wasPaused = !this._wantsSound(audio);
     // A source change is a pipeline reset, and that reset is the outage heard
     // when the page's own copy takes over mid-song. The copy goes onto a second
     // element instead, brought up to the position while the routed URL is still
@@ -2452,6 +2452,17 @@ class Player {
     }
     this._spare = audio;
     return audio;
+  }
+
+  /** Whether the player means to be sounding.
+   *
+   *  The button's intent, or an element that is genuinely playing. `paused`
+   *  alone is not enough: between a play press and the element actually
+   *  starting it is still true, and a hand-over that read it alone would adopt
+   *  a paused element - the bar saying play while the sound stayed on the
+   *  element being left behind. */
+  _wantsSound(audio = this.audio) {
+    return Boolean(this._playingWanted || (audio && audio.paused === false));
   }
 
   /**
@@ -2504,8 +2515,12 @@ class Player {
       /* not seekable yet: it starts at the top */
     }
     if (wasPaused) {
-      // Nothing was playing, so nothing has to be faded: the new element
-      // simply becomes the element, still paused, at the same position.
+      // Nothing is meant to be playing, so nothing has to be faded: the new
+      // element simply becomes the element, still paused, at the same position.
+      // The element being left is stopped even so: the only way it is still
+      // sounding is a state this branch is not about, and leaving it would put
+      // two elements on one song with the bar naming the silent one.
+      if (from.paused === false) from.pause();
       this._adoptCopy(spare, at);
       return;
     }
