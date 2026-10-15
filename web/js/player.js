@@ -1,14 +1,13 @@
 // The playback engine and the now-playing bar.
 //
 // One audio element, one queue: a track is resolved to a source on the backend,
-// and the routed URL is handed to the element at once - the server streams a
-// variant it has not finished downloading, so nothing has to wait. The whole
-// file is downloaded in the background meanwhile, and when the page's own copy
-// of the track that is playing arrives the element is moved onto it, at the
-// same position, so the rest of the song plays out of memory. Waiting for the
-// backend to hold the file is only a fallback, for a variant the server cannot
-// stream. Everything else in the app talks to the `player` singleton and
-// listens on player.on(...).
+// the file is fetched there and waited for, and only a whole file is handed to
+// the element - a whole file is what makes a seek instant instead of a
+// re-buffer. While it downloads the songs after it are asked for, and when the
+// page's own copy of the track that is playing arrives the element is moved
+// onto it, at the same position, so the rest of the song plays out of memory.
+// Everything else in the app talks to the `player` singleton and listens on
+// player.on(...).
 //
 // The file is importable without a DOM: the shell guards its own boot, and
 // nothing here touches the document until mountPlayer() is called.
@@ -30,14 +29,49 @@ export const PREFETCH = 3;
  *
  * A road trip is the reason: with no server reachable the queue still plays,
  * song after song, out of this page's own memory. Memory on purpose - nothing
- * here survives a reload, which is what keeping a playlist is for - and the
- * window is the whole budget.
+ * here survives a reload, which is what keeping a playlist is for - and this
+ * window, with `OFFLINE_MAX_BYTES`, is the whole budget.
  *
- * The window is also the bound on the in-memory map: a copy that arrives stays
+ * The window is also a bound on the in-memory map: a copy that arrives stays
  * after its track leaves the window (see `_trimOffline`), but the map never
- * holds more than this many entries at once.
+ * holds more than this many entries at once, and never more bytes than
+ * `OFFLINE_MAX_BYTES` either.
  */
 export const OFFLINE_AHEAD = 50;
+/**
+ * How many of that window are fetched eagerly.
+ *
+ * These are the songs about to be heard: they are chased, two at a time, so
+ * they are here before they are reached. The rest are still fetched, but
+ * slowly (see `OFFLINE_TAIL_GAP_MS`), because the server's upstream is the
+ * scarce thing and the song somebody is actually waiting for has to win it.
+ */
+export const EAGER_AHEAD = 5;
+/**
+ * How long between the starts of the songs fetched after the eager window.
+ *
+ * The tail is not being waited on by anyone and every byte it takes is a byte
+ * the song someone asked for does not get; the same upstream serves the people
+ * a member is sending songs to. So it is one song at a time with a real pause
+ * between them, which is slow on purpose rather than a queue of downloads
+ * racing the one thing that has to arrive now.
+ */
+export const OFFLINE_TAIL_GAP_MS = 15000;
+/**
+ * How much memory the copies may take together.
+ *
+ * `OFFLINE_AHEAD` as a count bounds nothing a phone actually notices: fifty
+ * whole songs is hundreds of megabytes and the tab is killed for holding them,
+ * which is a session that ends with no error and nothing the listener did. A
+ * phone can afford this much and no more, and the oldest copies outside the
+ * window are let go to stay inside it.
+ */
+export const OFFLINE_MAX_BYTES = 256 * 1024 * 1024;
+/** How many resolved tracks and media statuses this page remembers at once.
+ *  Far more than any window needs, so it only bounds a session left open for
+ *  hours; an entry that is dropped is resolved again when it is next asked
+ *  for, which is a shortcut lost, not a promise broken. */
+const CACHE_ENTRIES = 256;
 /** How many of those are fetched at once: enough to keep ahead, not a flood. */
 const OFFLINE_FETCHES = 2;
 /** How long a song that did not arrive is left before it is tried again. */
@@ -72,6 +106,11 @@ const FETCH_RETRY_PAUSE_MS = 700;
 // How long the copy is given to become playable on the second element before
 // the element in hand is moved onto it the old way.
 const COPY_READY_TIMEOUT_MS = 2000;
+// How long a start waits for the element to learn a file's length before the
+// play it was holding is let go. Nothing this page holds takes that long -
+// metadata follows the src almost at once - so the bound is only so a broken
+// element cannot leave the start behind to fire on whatever loads next.
+const METADATA_TIMEOUT_MS = 10000;
 // The overlap the element being left is faded out over: short enough not to be
 // heard as two of anything, long enough that the pause lands in silence.
 const HANDOVER_FADE_MS = 40;
@@ -318,6 +357,7 @@ class Player {
     this._resolving = new Map();  // track id -> promise of the above
     this._started = new Set();    // variant ids we asked the backend to fetch
     this._status = new Map();     // variant id -> media status
+    this._warming = new Map();    // variant id -> the one warm running for it
 
     // Songs held in this page for offline play, by track id: {state, variantId,
     // url, bytes, at}. "pending" until the bytes are here, then "ready", or
@@ -329,13 +369,12 @@ class Player {
     this._offlineInFlight = new Set();  // fetches under way: never re-queued, never cancelled
     this._offlineActive = 0;      // fetches in flight
     this._offlineBytes = 0;
+    this._tailAt = 0;             // when the last song after the eager window was started
+    this._tailTimer = 0;          // the wake-up that starts the next one
 
     this._token = 0;              // which track the async work is still for
     this._loading = false;
-    // The streaming attempt for the current track: {token, trackId, variantId,
-    // autoplay, fellBack}. Non-null while the element holds the routed URL and
-    // has not yet failed it; `fellBack` stops the fallback repeating.
-    this._streaming = null;
+    this._loadFor = "";           // the "track|variant" the load under way is for
     this._buffering = false;      // the file is here, the sound is not yet
     this._progress = 0;
     this._error = "";
@@ -476,7 +515,6 @@ class Player {
     this._progress = 0;
     this._error = "";
     this._pendingSeek = null;
-    this._streaming = null;
     this._stopAudio();
     this._releaseAllOffline();
     this._emit("queue-changed", this.queue);
@@ -1136,16 +1174,37 @@ class Player {
 
   async _load(index, { startMs = 0, autoplay = true, variantId = "" } = {}) {
     const audio = this.ensureAudio();
+    const track = index >= 0 && index < this.queue.length ? this.queue[index] : null;
+    const target = track && variantId ? `${track.id}|${variantId}` : "";
+    // A room asks for a song again from every tick of its own state, and it
+    // asks while the last request is still fetching: that second load must not
+    // stop the element and clear its src, or the file that is on its way is
+    // thrown away as fast as it arrives and never reaches canplay. The same
+    // rendition, at the same place in the queue, already under way is the same
+    // load, and the position is taken again because the room's clock has moved
+    // under it.
+    if (target && this._loading && this._index === index && target === this._loadFor) {
+      this._pendingSeek = Math.max(0, Math.round(Number(startMs) || 0));
+      return;
+    }
+    // The same rendition already on the element is not loaded again either:
+    // what a repeated ask means there is where the song should be, not a fresh
+    // fetch and a restart from the top.
+    if (target && !this._loading && this._index === index && this._variant === variantId && audio.src) {
+      this.seek(Math.max(0, Math.round(Number(startMs) || 0)));
+      if (autoplay) this.resume();
+      return;
+    }
     const token = ++this._token;
     // Whatever was playing has just stopped being played: that is the moment a
     // listen is over and worth reporting. A track skipped straight away is the
     // server's to ignore, not the client's to judge. Switching to another file
     // of the same song is not a new listen, so the one that follows is named.
-    this._reportListen(index >= 0 && index < this.queue.length ? this.queue[index]?.id : "");
-    const track = index >= 0 && index < this.queue.length ? this.queue[index] : null;
+    this._reportListen(track?.id || "");
     this._index = track ? index : -1;
     this._error = "";
     this._loading = Boolean(track);
+    this._loadFor = target;
     this._progress = 0;
     this._variant = "";
     this._source = null;
@@ -1239,8 +1298,7 @@ class Player {
     this.renderBar();
 
     if (fromMemory) {
-      // The copy is already here: nothing to stream and nothing to wait for.
-      this._streaming = null;
+      // The copy is already here: nothing to fetch and nothing to wait for.
       audio.src = kept.url;
     } else {
       // The file is fetched and then played, rather than streamed as it is
@@ -1389,8 +1447,8 @@ class Player {
     // The room named the rendition, so there is nothing to choose and nothing
     // to wait for: the sources are there to name it in the bar, and asking for
     // them first is a provider search between a listener and the song the room
-    // is already playing. They are fetched behind the stream and the bar
-    // catches up when they land.
+    // is already playing. They are fetched behind the file and the bar catches
+    // up when they land.
     const id = String(track.id || "");
     const known = this._variants.get(id);
     const name = (sources) => {
@@ -1403,6 +1461,7 @@ class Player {
       .sources(track.id)
       .then(({ sources, preferredVariantId }) => {
         this._variants.set(id, { sources, preferredVariantId, variantId, source: name(sources) });
+        this._boundCache(this._variants);
         // Only while this is still the song being played: a late answer must
         // not repaint the bar for whatever came after it.
         if (String(this.current()?.id || "") !== id) return;
@@ -1431,7 +1490,10 @@ class Player {
       this._resolving.set(track.id, pending);
       pending.then(
         (resolved) => {
-          if (resolved) this._variants.set(track.id, resolved);
+          if (resolved) {
+            this._variants.set(track.id, resolved);
+            this._boundCache(this._variants);
+          }
         },
         () => {}
       ).finally(() => {
@@ -1439,6 +1501,18 @@ class Player {
       });
     }
     return pending;
+  }
+
+  /** Keep a resolved track or a media status from being remembered for ever.
+   *
+   *  Both maps are only ever cleared when the server changes, so a session that
+   *  plays through a long queue grows one entry per track it has touched. The
+   *  oldest goes first, and an entry that is dropped costs a resolution when it
+   *  is next asked for - a shortcut lost, which is nothing beside the memory it
+   *  held on to.
+   */
+  _boundCache(store, limit = CACHE_ENTRIES) {
+    while (store.size > limit) store.delete(store.keys().next().value);
   }
 
   async _resolve(track) {
@@ -1485,6 +1559,7 @@ class Player {
         return { state: "failed", error: this._error };
       }
       this._status.set(variantId, status);
+      this._boundCache(this._status);
       if (token !== this._token) return null;
       if (variantId === this._variant) {
         this._progress = Number(status.progress) || (status.state === "ready" ? 1 : 0);
@@ -1501,16 +1576,6 @@ class Player {
     }
   }
 
-  /**
-   * The routed URL would not play: wait for the backend to hold the whole file
-   * and then play that.
-   *
-   * This is the fallback the streaming path promises, and this is its only
-   * caller: the element's error handler, for a variant the server cannot
-   * stream. The poll lives here and nowhere else - playback that already
-   * started never runs one - and it stops as soon as the file is ready or the
-   * track changes.
-   */
   /**
    * Fetch the file the load is for, and play it when the backend holds it.
    *
@@ -1541,7 +1606,6 @@ class Player {
     if (!audio) return;
     audio.src = this._client().mediaUrl(attempt.variantId);
     this._loading = false;
-    this._streaming = null;
     this._stateEvent();
     this.renderBar();
     if (!attempt.autoplay) return;
@@ -1560,6 +1624,7 @@ class Player {
     if (this._started.has(variantId) && !primary) return;
     if (this._status.get(variantId)?.state === "ready") return;
     this._started.add(variantId);
+    this._boundCache(this._started);
     Promise.resolve()
       .then(() => (client || this._client()).startDownload(variantId, false, primary))
       .then((status) => {
@@ -1568,6 +1633,7 @@ class Player {
         // it must not undo what a status check already found out.
         if (this._status.get(variantId)?.state === "ready") return;
         this._status.set(variantId, status);
+        this._boundCache(this._status);
       })
       .catch((error) => {
         this._started.delete(variantId);
@@ -1640,15 +1706,15 @@ class Player {
     for (const queued of [...this._offlineOrder]) {
       if (!ids.has(queued)) this._releaseOffline(queued);
     }
-    // A fetch under way is only worth its slot while its song is still one of
-    // the next few due. After a shuffle the songs in front have changed, and
-    // waiting on a fetch that no longer matters is the queue downloading in an
-    // order it will not hear: the ones now in front go first, and the fetch
-    // that has fallen down the order is let go. The backend is not stopped - it
-    // keeps what it has - the slot is simply given to the song that is due now.
-    const front = new Set(this._offlineWanted.slice(0, OFFLINE_FETCHES));
+    // A fetch under way is given up only when its song has left the window
+    // altogether. Letting go of one that merely fell down the order was a fetch
+    // that never finished: the front of the window moves on every room load, so
+    // the same song was cancelled and restarted over and over, and the pipe it
+    // was meant to conserve was spent on the restarts instead of the songs.
+    // One that is still in the window keeps its slot, and the songs now due
+    // take the slots as they free up.
     for (const trackId of [...this._offlineInFlight]) {
-      if (!front.has(trackId)) this._abortOffline(trackId);
+      if (!ids.has(trackId)) this._abortOffline(trackId);
     }
     this._trimOffline(ids);
     this._pumpOffline();
@@ -1658,20 +1724,25 @@ class Player {
    * Bound the copies in memory without throwing away a finished download.
    *
    * A copy that has arrived outlives the look-ahead window: a song just played
-   * stays here, so stepping back costs nothing. The map is still bounded - to
-   * the window's own size - by dropping the oldest finished copies that are
-   * neither in the window nor the track now playing. A fetch in flight is never
-   * dropped: changing track must not cancel a download already under way.
+   * stays here, so stepping back costs nothing. The map is still bounded, by
+   * the window's size and by the memory the copies take together, dropping the
+   * oldest finished copies that are neither in the window nor the track now
+   * playing. The count alone was not a bound on anything a phone notices -
+   * fifty whole songs is hundreds of megabytes, and the tab is killed for
+   * holding them - so the bytes are the budget that matters. A fetch in flight
+   * is never dropped: changing track must not cancel a download under way.
    */
   _trimOffline(inWindow = new Set()) {
-    const over = this._offline.size - OFFLINE_AHEAD;
-    if (over <= 0) return;
     const playing = String(this.current()?.id || "");
-    const drop = [...this._offline.entries()]
+    const spare = [...this._offline.entries()]
       .filter(([id, entry]) => entry.state !== "pending" && !inWindow.has(id) && id !== playing)
-      .sort((left, right) => Number(left[1].at || 0) - Number(right[1].at || 0))
-      .slice(0, over);
-    for (const [id] of drop) this._releaseOffline(id);
+      .sort((left, right) => Number(left[1].at || 0) - Number(right[1].at || 0));
+    let over = this._offline.size - OFFLINE_AHEAD;
+    for (const [id] of spare) {
+      if (over <= 0 && this._offlineBytes <= OFFLINE_MAX_BYTES) break;
+      this._releaseOffline(id);
+      over -= 1;
+    }
   }
 
   _queueOffline(track) {
@@ -1687,34 +1758,77 @@ class Player {
     this._emit("offline-changed", this.offlineSummary());
   }
 
+  /**
+   * Start what the window can afford to fetch right now.
+   *
+   * The songs within `EAGER_AHEAD` are chased, two at a time: they are the
+   * ones about to be heard, and they have to be here before they are reached.
+   * Past that the page still fetches, but one song at a time and only after
+   * `OFFLINE_TAIL_GAP_MS` since the last one started, and never while a file
+   * is being fetched for someone who is waiting to hear it. The tail yields to
+   * the play path; the play path never yields to the tail.
+   */
   _pumpOffline() {
+    const wanted = this._offlineWanted || [];
+    const eager = new Set(wanted.slice(0, EAGER_AHEAD));
     // The order is the wanted list, re-derived here rather than only when it
     // changes: a fetch that has just been let go is picked up again in its
     // place instead of staying out of the queue because it was in flight when
     // the order was last written down.
-    this._offlineOrder = (this._offlineWanted || []).filter((id) => {
+    const pending = wanted.filter((id) => {
       const entry = this._offline.get(id);
       return Boolean(entry) && entry.state === "pending" && !this._offlineInFlight.has(id);
     });
-    while (this._offlineActive < OFFLINE_FETCHES && this._offlineOrder.length) {
-      const trackId = this._offlineOrder.shift();
-      const entry = this._offline.get(trackId);
-      if (!entry || entry.state !== "pending") continue;
-      // The slot owns the way out of the fetch it started.
-      const controller = new AbortController();
-      this._offlineAbort.set(trackId, controller);
-      this._offlineInFlight.add(trackId);
-      this._offlineActive += 1;
-      this._fetchOffline(trackId, controller.signal).finally(() => {
-        this._offlineAbort.delete(trackId);
-        this._offlineInFlight.delete(trackId);
-        this._offlineActive -= 1;
-        this._pumpOffline();
-      });
+    this._offlineOrder = pending;
+    let next = 0;
+    while (this._offlineActive < OFFLINE_FETCHES && next < pending.length && eager.has(pending[next])) {
+      this._startOffline(pending[next]);
+      next += 1;
     }
+    // Nothing past the eager window until the eager window itself is under way:
+    // those songs come first, and the tail is what has room left over. A tail
+    // fetch already running also holds the one tail slot it is allowed, so the
+    // fetches in hand have to be done with before another tail one starts.
+    if (next >= pending.length || this._offlineInFlight.size > 0) return;
+    const now = Date.now();
+    const wait = Math.max(0, OFFLINE_TAIL_GAP_MS - (now - Number(this._tailAt || 0)));
+    if (this._loading || wait > 0) {
+      // Try again after the gap: the tail is slow on purpose, and a song being
+      // waited on gets the pipe in the meantime.
+      this._scheduleTail(wait > 0 ? wait : OFFLINE_TAIL_GAP_MS);
+      return;
+    }
+    if (this._startOffline(pending[next])) this._tailAt = now;
   }
 
-  /** Let go of a fetch whose song is no longer one of the next few due. */
+  /** Start one song's fetch and hold a slot for it. */
+  _startOffline(trackId) {
+    const entry = this._offline.get(trackId);
+    if (!entry || entry.state !== "pending") return false;
+    // The slot owns the way out of the fetch it started.
+    const controller = new AbortController();
+    this._offlineAbort.set(trackId, controller);
+    this._offlineInFlight.add(trackId);
+    this._offlineActive += 1;
+    this._fetchOffline(trackId, controller.signal).finally(() => {
+      this._offlineAbort.delete(trackId);
+      this._offlineInFlight.delete(trackId);
+      this._offlineActive -= 1;
+      this._pumpOffline();
+    });
+    return true;
+  }
+
+  /** One wake-up pending is enough; a window change pumps on its own. */
+  _scheduleTail(waitMs) {
+    if (this._tailTimer) return;
+    this._tailTimer = setTimeout(() => {
+      this._tailTimer = 0;
+      this._pumpOffline();
+    }, waitMs);
+  }
+
+  /** Let go of a fetch whose song has left the window. */
   _abortOffline(trackId) {
     const controller = this._offlineAbort.get(String(trackId || ""));
     if (controller) controller.abort();
@@ -1866,9 +1980,7 @@ class Player {
     const from = this.audio;
     this.audio = next;
     this._spare = from;
-    // The routed URL is no longer in play, so its fallback no longer applies,
-    // and the position is already where it should be: nothing is pending.
-    this._streaming = null;
+    // The position is already where it should be: nothing is pending.
     this._pendingSeek = null;
     this._loading = false;
     this._buffering = next.readyState < 3;
@@ -1882,7 +1994,6 @@ class Player {
     const audio = this.audio;
     if (!audio) return;
     this._pendingSeek = atMs;
-    this._streaming = null;
     audio.src = entry.url;
     if (wasPaused) return;
     this._wantResume(true);
@@ -2052,18 +2163,6 @@ class Player {
       if (audio !== this.audio) return;
 
       if (!this._variant) return;
-      // The routed URL is given to the element before the backend holds the
-      // file, since the server streams it. If the element refuses it - the one
-      // trigger for the fallback: a variant this server cannot stream - wait
-      // for the backend's own download instead, and then play that.
-      const attempt = this._streaming;
-      if (attempt && !attempt.fellBack && attempt.token === this._token) {
-        // Only a room member that plays what the room assigns reaches here: a
-        // file that would not start is asked for again through the fetch path.
-        attempt.fellBack = true;
-        this._waitForFile(attempt);
-        return;
-      }
       // A load still in flight means this is the error of a file the element
       // has already been moved off: it is not this song's failure to act on.
       const settled = !this._loading;
@@ -2097,10 +2196,14 @@ class Player {
       return;
     }
     const once = () => {
+      clearTimeout(timer);
       audio.removeEventListener("loadedmetadata", once);
       // The element's own handler has applied the pending seek by now.
       this._play();
     };
+    // A file whose length never arrives must not leave this listener on the
+    // element: it would sit there and start whatever is loaded next.
+    const timer = setTimeout(() => audio.removeEventListener("loadedmetadata", once), METADATA_TIMEOUT_MS);
     audio.addEventListener("loadedmetadata", once);
   }
 
@@ -2187,9 +2290,13 @@ class Player {
    * Fetch a rendition into the browser's own cache and wait until it can play.
    *
    * The element is thrown away afterwards; what matters is that the bytes are
-   * cached under the URL the real player will ask for, so the transition costs
-   * nothing. Resolves with the length the browser measured, or zero when the
-   * file never became playable - the room's own reckoning is the backstop.
+   * cached under the URL the real player will ask for. That URL is also the
+   * media cache's key, so a song kept for offline play is served out of that
+   * cache here and the real element finds the same bytes again - the preload
+   * adds nothing to the cache and fights nothing in it. Resolves with the
+   * length the browser measured, or zero when the file never became playable -
+   * the room's own reckoning is the backstop. The element is let go of, src and
+   * all, in `done`, which runs once however the wait ends.
    *
    * The timeout is generous on purpose. Giving up here does not shorten
    * anything: the room is waiting for this file either way, and a preload
@@ -2232,10 +2339,29 @@ class Player {
    *
    * The backend does the downloading, so "fetched" means the status says so;
    * asking now is what makes the advance into the next track cost nothing.
+   *
+   * One warm runs per rendition however many times it is asked for: a room's
+   * tick asks for the songs ahead of it every five hundred milliseconds, and
+   * with a poll as long as this one each ask would start its own - dozens of
+   * status requests a second for the same few files, all waiting on the same
+   * download. Callers share the one attempt, and it is forgotten the moment it
+   * settles, so a failure or a slot given up can be asked for again.
    */
-  async _warm(variantId, signal = null) {
-    if (!variantId) return false;
-    if (this._status.get(variantId)?.state === "ready") return true;
+  _warm(variantId, signal = null) {
+    if (!variantId) return Promise.resolve(false);
+    if (this._status.get(variantId)?.state === "ready") return Promise.resolve(true);
+    const shared = this._warming.get(variantId);
+    if (shared) return shared;
+    const attempt = this._warmOnce(variantId, signal);
+    this._warming.set(variantId, attempt);
+    const forget = () => {
+      if (this._warming.get(variantId) === attempt) this._warming.delete(variantId);
+    };
+    attempt.then(forget, forget);
+    return attempt;
+  }
+
+  async _warmOnce(variantId, signal) {
     try {
       const client = this._client();
       this._startDownload(variantId, client);
@@ -2245,7 +2371,10 @@ class Player {
       for (let attempt = 0; attempt < 150; attempt += 1) {
         if (signal?.aborted) return false;
         const status = await client.mediaStatus(variantId);
-        if (this._status.get(variantId)?.state !== "ready") this._status.set(variantId, status);
+        if (this._status.get(variantId)?.state !== "ready") {
+          this._status.set(variantId, status);
+          this._boundCache(this._status);
+        }
         if (status.state === "ready") return true;
         if (status.state === "failed") {
           // The fetch failed - a provider hiccup, or a play that took the pipe
@@ -2432,7 +2561,12 @@ class Player {
    *  backgrounded session running instead of quietly ending.
    */
   _retryWanted() {
-    if (!this._resumeWanted || this.isPaused()) return;
+    // "Not playing" is the state to recover from, not "paused": a browser that
+    // refuses a backgrounded play() leaves the element paused, which is exactly
+    // what a working pause looks like - so a gate on isPaused() never fires and
+    // the session ends quietly. An ended file is the one bare "not playing"
+    // that must be left alone: play() would start it again from the top.
+    if (!this._resumeWanted || this.isPlaying() || this.hasEnded()) return;
     const playing = this.audio?.play();
     if (playing?.catch) playing.catch(() => { /* still not allowed: it waits */ });
   }

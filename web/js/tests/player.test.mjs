@@ -6,7 +6,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  albumLine, artistLine, documentKey, mediaStateLabel, nextIndex, OFFLINE_AHEAD, playbackDocument,
+  albumLine, artistLine, documentKey, EAGER_AHEAD, mediaStateLabel, nextIndex, OFFLINE_AHEAD, OFFLINE_MAX_BYTES,
+  OFFLINE_TAIL_GAP_MS, playbackDocument,
   memorySource, playbackStateFrom, prefetchWindow, queueFromDocument, shouldSavePlayback, shuffleTail, player,
 } from "../player.js";
 import {
@@ -492,6 +493,23 @@ test("the queue's next songs are kept in memory, and the window is the limit", a
     assert.equal(player.offlineState("playing") === "ready" || player.offlineState("playing") === "pending", true);
     assert.equal(player._offline.has("old-4"), false, "the oldest finished copy went first");
     assert.equal(player._offline.has(`old-${OFFLINE_AHEAD + 4}`), true, "the newest finished copies stayed");
+
+    // The count is not the only bound: the copies together may not take more
+    // than the byte budget, and a phone tab holding fifty whole songs is
+    // exactly what that budget is for. The oldest outside the window go first.
+    player._offline = new Map();
+    player._offlineBytes = 0;
+    const half = Math.floor(OFFLINE_MAX_BYTES / 2);
+    for (let i = 0; i < 4; i += 1) {
+      player._offline.set(`big-${i}`, { state: "ready", variantId: `v-big-${i}`, url: `blob:big-${i}`, bytes: half, at: i });
+      player._offlineBytes += half;
+    }
+    player.queue = queue("playing");
+    player._index = 0;
+    player.keepOffline([track("playing")]);
+    assert.equal(player._offlineBytes <= OFFLINE_MAX_BYTES, true, "the copies stay inside the byte budget");
+    assert.equal(player._offline.has("big-0"), false, "the oldest went first");
+    assert.equal(player._offline.has("big-3"), true, "and the newest stayed");
   } finally {
     player._queue = null;
     player.queue = saved.queue;
@@ -717,6 +735,44 @@ test("the transport still works when the room cannot be reached", () => {
   }
 });
 
+// A browser that refuses a play while the page is in the background leaves the
+// element paused - the same state a listener's own pause leaves - so the retry
+// that keeps a backgrounded session going has to gate on "not playing", not on
+// "not paused". The one bare "not playing" it must not touch is a file that has
+// run out: play() would start it again from the top.
+test("a refused play is asked for again, but an ended file is not", () => {
+  const played = [];
+  const audio = {
+    src: "/media/v-a",
+    paused: true,
+    ended: false,
+    play() {
+      played.push(this.src);
+      return { catch() {} };
+    },
+  };
+  const saved = { audio: player.audio, resume: player._resumeWanted };
+  try {
+    player.audio = audio;
+    player._resumeWanted = true;
+
+    player._retryWanted();
+    assert.deepEqual(played, ["/media/v-a"], "a paused element the browser refused is asked again");
+
+    audio.paused = false;
+    player._retryWanted();
+    assert.deepEqual(played, ["/media/v-a"], "a file that is playing is left alone");
+
+    audio.paused = true;
+    audio.ended = true;
+    player._retryWanted();
+    assert.deepEqual(played, ["/media/v-a"], "an ended file is never started again");
+  } finally {
+    player.audio = saved.audio;
+    player._resumeWanted = saved.resume;
+  }
+});
+
 // --- playing a track the device does not hold yet --------------------------
 
 test("a track the device does not hold is fetched and then played", async () => {
@@ -736,7 +792,6 @@ test("a track the device does not hold is fetched and then played", async () => 
     prefetch: player._prefetch,
     wantResume: player._wantResume,
     ready: player._ready,
-    streaming: player._streaming,
     room: player._room,
   };
   const played = [];
@@ -831,7 +886,6 @@ test("a track the device does not hold is fetched and then played", async () => 
     player._prefetch = saved.prefetch;
     player._wantResume = saved.wantResume;
     player._ready = saved.ready;
-    player._streaming = saved.streaming;
     player.setRoom(saved.room);
   }
 });
@@ -885,7 +939,6 @@ test("when its copy lands mid-song the music moves onto it without a gap", async
     warm: player._warm,
     client: player._client,
     wantResume: player._wantResume,
-    streaming: player._streaming,
     pendingSeek: player._pendingSeek,
     room: player._room,
     fetch: globalThis.fetch,
@@ -931,8 +984,6 @@ test("when its copy lands mid-song the music moves onto it without a gap", async
     player.queue = queue("a");
     player._index = 0;
     player._variant = "v-a";
-    // The routed URL is what plays, and the streaming attempt is the live one.
-    player._streaming = { token: player._token, trackId: "a", variantId: "v-a", autoplay: true, fellBack: false };
     player._offline = new Map([["a", { state: "pending", variantId: "", url: "", bytes: 0, at: Date.now() }]]);
     player._offlineBytes = 0;
     player._variantFor = async () => ({ variantId: "v-a" });
@@ -981,7 +1032,6 @@ test("when its copy lands mid-song the music moves onto it without a gap", async
     player._warm = saved.warm;
     player._client = saved.client;
     player._wantResume = saved.wantResume;
-    player._streaming = saved.streaming;
     player._pendingSeek = saved.pendingSeek;
     player.setRoom(saved.room);
     globalThis.fetch = saved.fetch;
@@ -1004,7 +1054,6 @@ test("a copy that never becomes playable is moved onto the old way", async () =>
     warm: player._warm,
     client: player._client,
     wantResume: player._wantResume,
-    streaming: player._streaming,
     pendingSeek: player._pendingSeek,
     room: player._room,
     fetch: globalThis.fetch,
@@ -1050,7 +1099,6 @@ test("a copy that never becomes playable is moved onto the old way", async () =>
     player.queue = queue("a");
     player._index = 0;
     player._variant = "v-a";
-    player._streaming = { token: player._token, trackId: "a", variantId: "v-a", autoplay: true, fellBack: false };
     player._offline = new Map([["a", { state: "pending", variantId: "", url: "", bytes: 0, at: Date.now() }]]);
     player._offlineBytes = 0;
     player._variantFor = async () => ({ variantId: "v-a" });
@@ -1086,7 +1134,6 @@ test("a copy that never becomes playable is moved onto the old way", async () =>
     player._warm = saved.warm;
     player._client = saved.client;
     player._wantResume = saved.wantResume;
-    player._streaming = saved.streaming;
     player._pendingSeek = saved.pendingSeek;
     player.setRoom(saved.room);
     globalThis.fetch = saved.fetch;
@@ -1479,77 +1526,10 @@ test("a resolution that failed is asked again before anything is skipped", async
 });
 
 // What is still to be downloaded has to follow the queue it is downloaded for:
-// a shuffle makes different songs the next ones due, and a fetch that was
-// queued when its song was nearer must give its turn up.
+// a shuffle makes different songs the next ones due, and the songs still cold
+// are fetched in the new order, not the old one.
 test("what is still to be downloaded follows a shuffle", async () => {
-  const saved = {
-    queue: player.queue,
-    index: player._index,
-    offline: player._offline,
-    bytes: player._offlineBytes,
-    order: player._offlineOrder,
-    wanted: player._offlineWanted,
-    inFlight: player._offlineInFlight,
-    active: player._offlineActive,
-    fetchOffline: player._fetchOffline,
-    warm: player.warm,
-    room: player._room,
-    shuffle: player._shuffle,
-  };
-  const asked = [];
-  try {
-    player.setRoom(null);
-    player._shuffle = true;
-    player.queue = queue("a", "b", "c", "d", "e", "f");
-    player._index = 0;
-    player._offline = new Map();
-    player._offlineBytes = 0;
-    player._offlineOrder = [];
-    player._offlineWanted = [];
-    player._offlineInFlight = new Set();
-    player._offlineActive = 0;
-    player.warm = () => {};
-    player._fetchOffline = async (id) => {
-      asked.push(id);
-      await new Promise((resolve) => setTimeout(resolve, 40));
-      const entry = player._offline.get(id);
-      if (entry) entry.state = "ready";
-    };
-
-    player._prefetch();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    const firstRound = [...asked];
-
-    player.shuffleQueue();
-    const order = player.queue.map((entry) => entry.id);
-    await new Promise((resolve) => setTimeout(resolve, 300));
-
-    const after = asked.slice(firstRound.length);
-    const stillWanted = order.filter((id) => !player._offline.get(id) || player._offline.get(id).state !== "ready");
-    const wantedOrder = stillWanted.filter((id) => after.includes(id));
-    assert.deepEqual(after, wantedOrder, "the songs still to be downloaded are fetched in the queue's order");
-  } finally {
-    player.queue = saved.queue;
-    player._index = saved.index;
-    player._offline = saved.offline;
-    player._offlineBytes = saved.bytes;
-    player._offlineOrder = saved.order;
-    player._offlineWanted = saved.wanted;
-    player._offlineInFlight = saved.inFlight;
-    player._offlineActive = saved.active;
-    player._fetchOffline = saved.fetchOffline;
-    player.warm = saved.warm;
-    player.setRoom(saved.room);
-    player._shuffle = saved.shuffle;
-  }
-});
-
-// A fetch under way is only worth its slot while its song is still one of the
-// next few due. After a shuffle the songs in front have changed, and waiting on
-// a fetch that no longer matters is the queue downloading in an order it will
-// not hear: the fetch that fell down the order is let go and the slot goes to
-// the song that is due now.
-test("a fetch whose song is no longer due gives up its slot", async () => {
+  const tick = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const saved = {
     queue: player.queue,
     index: player._index,
@@ -1561,42 +1541,184 @@ test("a fetch whose song is no longer due gives up its slot", async () => {
     active: player._offlineActive,
     abort: player._offlineAbort,
     fetchOffline: player._fetchOffline,
+    warm: player.warm,
+    room: player._room,
+    shuffle: player._shuffle,
+    tail: player._tailAt,
+    tailTimer: player._tailTimer,
+    loading: player._loading,
+  };
+  const asked = [];
+  const release = new Map();
+  try {
+    player.setRoom(null);
+    player._shuffle = true;
+    player._loading = false;
+    player._tailAt = 0;
+    player._tailTimer = 0;
+    player.queue = queue("a", "b", "c", "d", "e", "f", "g", "h", "i", "j");
+    player._index = 0;
+    player._offline = new Map();
+    player._offlineBytes = 0;
+    player._offlineOrder = [];
+    player._offlineWanted = [];
+    player._offlineInFlight = new Set();
+    player._offlineActive = 0;
+    player._offlineAbort = new Map();
+    player.warm = () => {};
+    player._fetchOffline = (id) =>
+      new Promise((resolve) => {
+        asked.push(id);
+        release.set(id, () => {
+          const entry = player._offline.get(id);
+          if (entry) entry.state = "ready";
+          resolve();
+        });
+      });
+
+    player._prefetch();
+    assert.deepEqual(asked, ["a", "b"], "the eager window is fetched first");
+    release.get("a")();
+    release.get("b")();
+    await tick(0);
+    release.get("c")();
+    release.get("d")();
+    await tick(0);
+    release.get("e")();
+    await tick(0);
+    assert.deepEqual(asked, ["a", "b", "c", "d", "e", "f"], "through the eager five and the first of the tail");
+    release.get("f")();
+    await tick(0);
+
+    // The queue is shuffled: different songs are now the ones still cold.
+    const beforeShuffle = asked.length;
+    player.shuffleQueue();
+    const order = player.queue.map((entry) => entry.id);
+    const cold = (id) => player._offline.get(id)?.state !== "ready";
+    const remaining = order.filter((id) => player._offline.get(id)?.state !== "ready");
+    assert.ok(remaining.length >= 2, "there is still something to download");
+
+    // The tail is paced, so the pump is driven past each gap until the songs
+    // still cold have all been fetched; what it starts has to be the songs in
+    // the queue's order, not the order they were queued in before the shuffle.
+    let guard = 0;
+    while (order.some(cold)) {
+      guard += 1;
+      assert.ok(guard < 20, "the pump keeps starting something while a song is cold");
+      clearTimeout(player._tailTimer);
+      player._tailTimer = 0;
+      player._tailAt = 0;
+      player._pumpOffline();
+      for (const id of [...player._offlineInFlight]) release.get(id)?.();
+      await tick(0);
+    }
+    assert.deepEqual(
+      asked.slice(beforeShuffle),
+      remaining,
+      "the songs still to be downloaded are fetched in the queue's order"
+    );
+  } finally {
+    clearTimeout(player._tailTimer);
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._offline = saved.offline;
+    player._offlineBytes = saved.bytes;
+    player._offlineOrder = saved.order;
+    player._offlineWanted = saved.wanted;
+    player._offlineInFlight = saved.inFlight;
+    player._offlineActive = saved.active;
+    player._offlineAbort = saved.abort;
+    player._fetchOffline = saved.fetchOffline;
+    player.warm = saved.warm;
+    player._tailAt = saved.tail;
+    player._tailTimer = saved.tailTimer;
+    player._loading = saved.loading;
+    player.setRoom(saved.room);
+    player._shuffle = saved.shuffle;
+  }
+});
+
+// A fetch under way is kept when the window merely moves: cancelling and
+// restarting it was a fetch that never finished - the front of the window moves
+// on every room load - and the restarts spent the pipe the slow tail was meant
+// to conserve. A song that has left the window altogether is still let go, and
+// the songs now due take the slots as the ones in hand free up.
+test("a fetch still in the window keeps its slot when the order moves", async () => {
+  const saved = {
+    queue: player.queue,
+    index: player._index,
+    offline: player._offline,
+    bytes: player._offlineBytes,
+    order: player._offlineOrder,
+    wanted: player._offlineWanted,
+    inFlight: player._offlineInFlight,
+    active: player._offlineActive,
+    abort: player._offlineAbort,
+    fetchOffline: player._fetchOffline,
+    tail: player._tailAt,
+    tailTimer: player._tailTimer,
+    loading: player._loading,
     room: player._room,
   };
   const asked = [];
   const aborted = [];
+  const release = new Map();
   try {
     player.setRoom(null);
+    player._loading = false;
+    player._tailAt = 0;
+    player._tailTimer = 0;
     player.queue = queue("a", "b", "c", "d");
     player._index = 0;
-    player._offline = new Map(["a", "b", "c", "d"].map((id) => [id, { state: "pending", variantId: "", url: "", bytes: 0, at: Date.now() }]));
+    player._offline = new Map(["a", "b", "c", "d"].map((id) => [id, { state: "pending", variantId: "", url: "", bytes: 0, at: 0 }]));
     player._offlineBytes = 0;
     player._offlineOrder = [];
     player._offlineWanted = ["a", "b", "c", "d"];
     player._offlineInFlight = new Set();
     player._offlineActive = 0;
     player._offlineAbort = new Map();
-    // Each fetch holds until its slot is let go.
+    // Each fetch holds until it is released; letting it go leaves it pending.
     player._fetchOffline = (id, signal) =>
       new Promise((resolve) => {
         asked.push(id);
+        let done = false;
+        const settle = (ready) => {
+          if (done) return;
+          done = true;
+          if (ready) {
+            const entry = player._offline.get(id);
+            if (entry) entry.state = "ready";
+          }
+          resolve();
+        };
         signal?.addEventListener("abort", () => {
           aborted.push(id);
-          resolve();
+          settle(false);
         });
+        release.set(id, () => settle(true));
       });
 
     player._pumpOffline();
-    assert.deepEqual(asked, ["a", "b"], "the two slots went to the songs at the front");
+    assert.deepEqual(asked, ["a", "b"], "the two eager slots went to the songs at the front");
 
-    // The queue is shuffled so that c and d are the next ones due.
+    // The room's order moves: c and d are the next ones due, and a and b are
+    // still in the window, only further back.
     player.queue = queue("c", "d", "a", "b");
     player.keepOffline([track("c"), track("d"), track("a"), track("b")]);
     await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.deepEqual(aborted, [], "nothing was cancelled, because nothing left the window");
+    assert.deepEqual(asked, ["a", "b"], "and nothing was restarted either");
 
-    assert.deepEqual(aborted, ["a", "b"], "the fetches that fell out of the front were let go");
-    assert.ok(asked.includes("c") && asked.includes("d"), "and the songs now due were started");
-    assert.deepEqual(asked.slice(0, 4), ["a", "b", "c", "d"], "in the queue's order, not the old one");
+    // A slot frees: the song now due gets it.
+    release.get("a")();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.deepEqual(asked, ["a", "b", "c"], "the song now due took the free slot");
+
+    // A song that leaves the window altogether is let go.
+    player.queue = queue("d", "b", "e");
+    player.keepOffline([track("d"), track("b"), track("e")]);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.deepEqual(aborted, ["c"], "the fetch whose song left the window was let go");
   } finally {
     player.queue = saved.queue;
     player._index = saved.index;
@@ -1608,6 +1730,193 @@ test("a fetch whose song is no longer due gives up its slot", async () => {
     player._offlineActive = saved.active;
     player._offlineAbort = saved.abort;
     player._fetchOffline = saved.fetchOffline;
+    player._tailAt = saved.tail;
+    player._tailTimer = saved.tailTimer;
+    player._loading = saved.loading;
+    player.setRoom(saved.room);
+  }
+});
+
+// The songs ahead are chased, two at a time, so they are here before they are
+// reached; the songs past the eager window are fetched too, but slowly - one at
+// a time with a real gap between starts - because the server's upstream is what
+// the song somebody is actually waiting for needs.
+test("the eager window is chased and the rest is fetched slowly", async () => {
+  const saved = {
+    queue: player.queue,
+    index: player._index,
+    offline: player._offline,
+    bytes: player._offlineBytes,
+    order: player._offlineOrder,
+    wanted: player._offlineWanted,
+    inFlight: player._offlineInFlight,
+    active: player._offlineActive,
+    abort: player._offlineAbort,
+    fetchOffline: player._fetchOffline,
+    warm: player.warm,
+    tail: player._tailAt,
+    tailTimer: player._tailTimer,
+    loading: player._loading,
+    room: player._room,
+    now: Date.now,
+    timeout: globalThis.setTimeout,
+  };
+  const asked = [];
+  const release = new Map();
+  const timers = [];
+  const realTimeout = globalThis.setTimeout;
+  const tick = (ms) => new Promise((resolve) => realTimeout(resolve, ms));
+  let now = 1_000_000;
+  try {
+    player.setRoom(null);
+    assert.equal(EAGER_AHEAD, 5, "five songs ahead are chased");
+    player.queue = queue("a", "b", "c", "d", "e", "f", "g", "h");
+    player._index = 0;
+    player._offline = new Map();
+    player._offlineBytes = 0;
+    player._offlineOrder = [];
+    player._offlineWanted = [];
+    player._offlineInFlight = new Set();
+    player._offlineActive = 0;
+    player._offlineAbort = new Map();
+    player._tailAt = 0;
+    player._tailTimer = 0;
+    player._loading = false;
+    player.warm = () => {};
+    // The clock and the wake-up are the test's, so the pacing is asserted
+    // exactly rather than by waiting for it.
+    Date.now = () => now;
+    globalThis.setTimeout = (fn, ms) => {
+      timers.push({ fn, ms });
+      return timers.length;
+    };
+    player._fetchOffline = (id, signal) =>
+      new Promise((resolve) => {
+        asked.push(id);
+        let done = false;
+        const settle = (ready) => {
+          if (done) return;
+          done = true;
+          if (ready) {
+            const entry = player._offline.get(id);
+            if (entry) entry.state = "ready";
+          }
+          resolve();
+        };
+        signal?.addEventListener("abort", () => settle(false));
+        release.set(id, () => settle(true));
+      });
+
+    player._prefetch();
+    assert.deepEqual(asked, ["a", "b"], "the eager window is chased, two at a time");
+
+    release.get("a")();
+    release.get("b")();
+    await tick(0);
+    assert.deepEqual(asked, ["a", "b", "c", "d"], "and the next eager songs take the slots");
+
+    release.get("c")();
+    release.get("d")();
+    await tick(0);
+    assert.deepEqual(asked, ["a", "b", "c", "d", "e"], "and then the last of the five");
+
+    // The eager window is done; the tail starts, but nothing follows it yet.
+    release.get("e")();
+    await tick(0);
+    assert.deepEqual(asked, ["a", "b", "c", "d", "e", "f"], "the tail starts once the eager window is fetched");
+
+    release.get("f")();
+    await tick(0);
+    assert.deepEqual(asked, ["a", "b", "c", "d", "e", "f"], "but the next tail song waits for the gap");
+    assert.equal(timers.length, 1, "a wake-up was left for it");
+    assert.equal(timers[0].ms, OFFLINE_TAIL_GAP_MS, "for the whole gap, nothing having elapsed");
+
+    // Only after the gap does the next one start - one, not two.
+    now += OFFLINE_TAIL_GAP_MS;
+    timers.shift().fn();
+    assert.deepEqual(asked, ["a", "b", "c", "d", "e", "f", "g"], "and then exactly one more");
+  } finally {
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._offline = saved.offline;
+    player._offlineBytes = saved.bytes;
+    player._offlineOrder = saved.order;
+    player._offlineWanted = saved.wanted;
+    player._offlineInFlight = saved.inFlight;
+    player._offlineActive = saved.active;
+    player._offlineAbort = saved.abort;
+    player._fetchOffline = saved.fetchOffline;
+    player.warm = saved.warm;
+    player._tailAt = saved.tail;
+    player._tailTimer = saved.tailTimer;
+    player._loading = saved.loading;
+    player.setRoom(saved.room);
+    Date.now = saved.now;
+    globalThis.setTimeout = saved.timeout;
+  }
+});
+
+// The play path pre-empts the tail: the song somebody is waiting for owns the
+// pipe, so nothing slow starts while it is being fetched. The eager window is
+// not held back - it is what is about to be heard.
+test("the play path pre-empts the tail", () => {
+  const saved = {
+    offline: player._offline,
+    bytes: player._offlineBytes,
+    order: player._offlineOrder,
+    wanted: player._offlineWanted,
+    inFlight: player._offlineInFlight,
+    active: player._offlineActive,
+    abort: player._offlineAbort,
+    fetchOffline: player._fetchOffline,
+    tail: player._tailAt,
+    tailTimer: player._tailTimer,
+    loading: player._loading,
+    room: player._room,
+  };
+  const asked = [];
+  try {
+    player.setRoom(null);
+    player._tailAt = 0;
+    player._tailTimer = 0;
+    player._loading = true;
+    // The first five are already here; only tail songs are still cold.
+    player._offline = new Map(["a", "b", "c", "d", "e"].map((id) => [id, { state: "ready", variantId: id, url: `blob:${id}`, bytes: 1, at: 0 }]));
+    player._offline.set("f", { state: "pending", variantId: "", url: "", bytes: 0, at: 0 });
+    player._offline.set("g", { state: "pending", variantId: "", url: "", bytes: 0, at: 0 });
+    player._offlineBytes = 0;
+    player._offlineInFlight = new Set();
+    player._offlineActive = 0;
+    player._offlineAbort = new Map();
+    player._fetchOffline = (id) => {
+      asked.push(id);
+      return new Promise(() => {});
+    };
+
+    // Only tail songs are due, and a song is being waited on: none start.
+    player._offlineWanted = ["a", "b", "c", "d", "e", "f", "g"];
+    player._pumpOffline();
+    assert.deepEqual(asked, [], "no tail fetch starts while a song is being waited on");
+    assert.notEqual(player._tailTimer, 0, "a wake-up is left so the tail is not forgotten");
+
+    // The eager window is not held back by the play path: what is about to be
+    // heard is still chased.
+    player._offline.set("a", { state: "pending", variantId: "", url: "", bytes: 0, at: 0 });
+    player._pumpOffline();
+    assert.deepEqual(asked, ["a"], "the eager window still chases the song");
+  } finally {
+    clearTimeout(player._tailTimer);
+    player._offline = saved.offline;
+    player._offlineBytes = saved.bytes;
+    player._offlineOrder = saved.order;
+    player._offlineWanted = saved.wanted;
+    player._offlineInFlight = saved.inFlight;
+    player._offlineActive = saved.active;
+    player._offlineAbort = saved.abort;
+    player._fetchOffline = saved.fetchOffline;
+    player._tailAt = saved.tail;
+    player._tailTimer = saved.tailTimer;
+    player._loading = saved.loading;
     player.setRoom(saved.room);
   }
 });
@@ -1694,7 +2003,6 @@ test("a room's song is fetched without waiting for its sources", async () => {
     variant: player._variant,
     client: player._client,
     loading: player._loading,
-    streaming: player._streaming,
     room: player._room,
     started: player._started,
     status: player._status,
@@ -1746,7 +2054,6 @@ test("a room's song is fetched without waiting for its sources", async () => {
     player._variant = saved.variant;
     player._client = saved.client;
     player._loading = saved.loading;
-    player._streaming = saved.streaming;
     player.setRoom(saved.room);
     player._started = saved.started;
     player._status = saved.status;
@@ -1819,6 +2126,140 @@ test("the song that was playing is unloaded when the track changes", async () =>
     player._prefetch = saved.prefetch;
     player.setRoom(saved.room);
     player._pendingSeek = saved.pendingSeek;
+  }
+});
+
+// A room asks for its song again from every tick of its own state, often while
+// the last ask is still fetching. A second load that stopped the element and
+// cleared its src would throw away the file on its way as fast as it arrived,
+// so the song would never reach canplay - and the room, seeing it not play,
+// would keep asking: the overload, and the skip that never came. The same
+// rendition already under way is the same load, and only the position is taken
+// again.
+test("a room that asks for one item again does not restart its load", async () => {
+  const tick = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const saved = {
+    audio: player.audio,
+    ensureAudio: player.ensureAudio,
+    queue: player.queue,
+    index: player._index,
+    variant: player._variant,
+    loading: player._loading,
+    loadFor: player._loadFor,
+    token: player._token,
+    pendingSeek: player._pendingSeek,
+    playingWanted: player._playingWanted,
+    offline: player._offline,
+    resolveFixed: player._resolveFixed,
+    ready: player._ready,
+    startDownload: player._startDownload,
+    prefetch: player._prefetch,
+    resume: player._resumeWanted,
+    resumeTimer: player._resumeTimer,
+    client: player._client,
+    room: player._room,
+  };
+  let clears = 0;
+  let finish = null;
+  const starts = [];
+  const polls = [];
+  const audio = {
+    src: "/media/v-old",
+    currentTime: 0,
+    duration: 200,
+    paused: false,
+    readyState: 4,
+    listeners: {},
+    addEventListener(name, fn) {
+      (this.listeners[name] = this.listeners[name] || []).push(fn);
+    },
+    removeEventListener(name, fn) {
+      this.listeners[name] = (this.listeners[name] || []).filter((each) => each !== fn);
+    },
+    fire(name) {
+      for (const fn of [...(this.listeners[name] || [])]) fn({ type: name });
+    },
+    removeAttribute() {
+      clears += 1;
+      this.src = "";
+    },
+    load() {},
+    pause() {
+      this.paused = true;
+    },
+    play() {
+      this.paused = false;
+      return { catch() {} };
+    },
+  };
+  const item = track("a");
+  try {
+    player.setRoom(null);
+    player.audio = audio;
+    player.ensureAudio = () => audio;
+    player.queue = [item];
+    player._index = 0;
+    player._variant = "";
+    player._loading = false;
+    player._loadFor = "";
+    player._token = 0;
+    player._pendingSeek = null;
+    player._playingWanted = false;
+    player._offline = new Map();
+    player._resolveFixed = () => ({ sources: [], preferredVariantId: "", variantId: "v-a", source: null });
+    player._startDownload = (variantId) => {
+      starts.push(variantId);
+    };
+    player._prefetch = () => {};
+    player._ready = (variantId) => {
+      polls.push(variantId);
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    };
+    player._client = () => ({ mediaUrl: (variantId) => `/media/${variantId}` });
+
+    player.playVariant(item, "v-a", { positionMs: 1000 });
+    await tick(0);
+    assert.equal(player._loading, true, "the first load is under way");
+
+    // The room asks again before the file is here, from its own, newer clock.
+    player.playVariant(item, "v-a", { positionMs: 4000 });
+    await tick(0);
+
+    assert.deepEqual(starts, ["v-a"], "the backend was asked once, not once per ask");
+    assert.deepEqual(polls, ["v-a"], "and the wait for the file was started once");
+    assert.equal(clears, 1, "the element was not stopped and cleared again");
+    assert.equal(player._pendingSeek, 4000, "the position taken is the room's, the later one");
+
+    // The one load carries on: it still reaches a playable element.
+    finish({ state: "ready" });
+    await tick(0);
+    assert.equal(player._loading, false, "the load finishes");
+    assert.equal(audio.src, "/media/v-a", "and the element is given the file");
+    audio.fire("loadedmetadata");
+    assert.equal(audio.paused, false, "and it plays");
+  } finally {
+    player.audio = saved.audio;
+    player.ensureAudio = saved.ensureAudio;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._variant = saved.variant;
+    player._loading = saved.loading;
+    player._loadFor = saved.loadFor;
+    player._token = saved.token;
+    player._pendingSeek = saved.pendingSeek;
+    player._playingWanted = saved.playingWanted;
+    player._offline = saved.offline;
+    player._resolveFixed = saved.resolveFixed;
+    player._ready = saved.ready;
+    player._startDownload = saved.startDownload;
+    player._prefetch = saved.prefetch;
+    player._client = saved.client;
+    player._resumeWanted = saved.resume;
+    clearInterval(player._resumeTimer);
+    player._resumeTimer = saved.resumeTimer;
+    player.setRoom(saved.room);
   }
 });
 
@@ -1902,5 +2343,59 @@ test("a warm that fails is asked for again", async () => {
     player._started = saved.started;
     player._status = saved.status;
     player._variantFor = saved.variantFor;
+  }
+});
+
+// A room's follow tick warms the songs ahead of it every five hundred
+// milliseconds, so the same rendition is asked for again and again while one
+// fetch is still running. Every ask shares the one attempt instead of starting
+// its own sixty-second poll of the same status - dozens of status requests a
+// second for the same few files.
+test("the same rendition is warmed once while its fetch is running", async () => {
+  const tick = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const polled = [];
+  let release = () => {};
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const client = {
+    startDownload: async () => ({}),
+    mediaStatus: async (variantId) => {
+      polled.push(variantId);
+      await gate;
+      return { state: "failed" };
+    },
+  };
+  const saved = {
+    client: player._client,
+    started: player._started,
+    status: player._status,
+    warming: player._warming,
+  };
+  try {
+    player._client = () => client;
+    player._started = new Set();
+    player._status = new Map();
+    player._warming = new Map();
+
+    const first = player._warm("v-a");
+    const second = player._warm("v-a");
+    await tick(0);
+    assert.equal(polled.length, 1, "the two asks share the one status poll");
+    assert.equal(first, second, "and are handed the same attempt");
+
+    release();
+    assert.equal(await first, false, "a warm that failed answers false");
+    assert.equal(await second, false);
+
+    // Settled, so it is forgotten: the next ask makes its own attempt.
+    player._warm("v-a");
+    await tick(0);
+    assert.equal(polled.length, 2, "after it settles the next ask polls again");
+  } finally {
+    player._client = saved.client;
+    player._started = saved.started;
+    player._status = saved.status;
+    player._warming = saved.warming;
   }
 });
