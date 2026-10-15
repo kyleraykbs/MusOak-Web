@@ -23,16 +23,30 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// There is one proxy for the life of this server - it holds nothing that
+	// belongs to a request - so where this one goes is written on the request
+	// itself before it is handed over.
+	r.URL.Scheme = target.Scheme
+	r.URL.Host = target.Host
+	// The backend is addressed by its own name: the Host line it reads is that
+	// one, not the name this server answers to.
+	r.Host = ""
+	s.proxy.ServeHTTP(w, r)
+}
 
-	proxy := &httputil.ReverseProxy{
+// newProxy is the reverse proxy every API request goes through, built once with
+// the transport. The whole of the routing is in the rewrite: which backend a
+// request goes to has been decided - header, then query, then cookie, then the
+// configured default - before it arrives here.
+func (s *Server) newProxy() *httputil.ReverseProxy {
+	return &httputil.ReverseProxy{
 		Transport: s.transport, // the one that refuses private ranges when asked
 		Rewrite: func(out *httputil.ProxyRequest) {
-			out.SetURL(target)
-			// The path is already the backend's own; only the host moves, and
-			// the routing parameter is ours, not the backend's.
+			// The path, the query and the headers are the caller's own, on
+			// their way to the backend the request was pointed at. The routing
+			// parameter is ours, not the backend's.
 			query := out.In.URL.Query()
 			query.Del(routeParam)
-			out.Out.URL.Path = r.URL.Path
 			out.Out.URL.RawQuery = query.Encode()
 			out.Out.Header.Set("User-Agent", "musoak-web/1")
 
@@ -40,7 +54,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			// the session cookie is its stand-in. The backend never sees the
 			// cookie itself.
 			if out.Out.Header.Get("Authorization") == "" {
-				if cookie, err := r.Cookie(tokenCookie); err == nil && cookie.Value != "" {
+				if cookie, err := out.In.Cookie(tokenCookie); err == nil && cookie.Value != "" {
 					out.Out.Header.Set("Authorization", "Bearer "+cookie.Value)
 				}
 			}
@@ -51,7 +65,6 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadGateway, "that server did not answer")
 		},
 	}
-	proxy.ServeHTTP(w, r)
 }
 
 // selected is the backend this request goes through: what the request says,

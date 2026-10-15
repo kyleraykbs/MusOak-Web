@@ -1,9 +1,9 @@
 package web
 
 import (
+	"bufio"
 	"bytes"
 	"compress/gzip"
-	"bufio"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -496,6 +496,12 @@ func TestPageRefusesAHostThatCouldBreakOutOfTheAttribute(t *testing.T) {
 // from that never changes: every browser kept its first copy of the frontend,
 // and a deploy could not reach it however many times it was deployed.
 func TestFrontendRevalidatesByContent(t *testing.T) {
+	// A live frontend is the one whose digest has to follow an edit, and this
+	// test is the edit: the interval it is retaken on exists for a person
+	// reloading a page, not for a test.
+	stampTTL = 0
+	t.Cleanup(func() { stampTTL = defaultStampTTL })
+
 	dir := t.TempDir()
 	write := func(rel, body string) {
 		t.Helper()
@@ -582,8 +588,89 @@ func TestSiteCompressesTextForClientsThatAsk(t *testing.T) {
 		t.Errorf("a client that did not ask for gzip got %q", plain.Header().Get("Content-Encoding"))
 	}
 
-	icon := do(t, server.Handler(), "GET", "/icon.png", map[string]string{"Accept-Encoding": "gzip"}, nil)
-	if icon.Header().Get("Content-Encoding") != "" {
-		t.Errorf("an image was compressed: %q", icon.Header().Get("Content-Encoding"))
+	// The shell is HTML whatever its URL looks like, and a route the router
+	// owns has no extension for the table to find: it has to be compressed on
+	// its own terms or it is never compressed at all.
+	page := do(t, server.Handler(), "GET", "/", map[string]string{"Accept-Encoding": "gzip"}, nil)
+	if got := page.Header().Get("Content-Encoding"); got != "gzip" {
+		t.Errorf("the page went out as %q", got)
+	}
+	reader, err = gzip.NewReader(bytes.NewReader(page.Body.Bytes()))
+	if err != nil {
+		t.Fatalf("the page is not gzip: %v", err)
+	}
+	pageBody, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read the compressed page: %v", err)
+	}
+	if string(pageBody) != do(t, server.Handler(), "GET", "/", nil, nil).Body.String() {
+		t.Error("the compressed page differs from the plain one")
+	}
+
+	// Images are already compressed, and the icons the page and the tab ask for
+	// are served untouched: the head of the document, the app's avatar, and the
+	// home screen's.
+	for _, icon := range []string{"/icon.png", "/icon-64.png", "/apple-touch-icon.png"} {
+		response := do(t, server.Handler(), "GET", icon, map[string]string{"Accept-Encoding": "gzip"}, nil)
+		if response.Code != http.StatusOK || response.Body.Len() == 0 {
+			t.Errorf("%s = %d, %d bytes", icon, response.Code, response.Body.Len())
+		}
+		if got := response.Header().Get("Content-Encoding"); got != "" {
+			t.Errorf("%s was compressed: %q", icon, got)
+		}
+		if got := response.Header().Get("Content-Type"); got != "image/png" {
+			t.Errorf("%s is %q", icon, got)
+		}
+	}
+}
+
+// A response with no body carries no content coding: the 304 a browser gets for
+// a module it already has was going out as gzip with nothing behind it, which
+// is a promise about bytes that were never sent.
+func TestRevalidationIsNotCompressed(t *testing.T) {
+	server := newServer(t, &config.Config{Listen: ":0"})
+	handler := server.Handler()
+
+	first := do(t, handler, "GET", "/js/app.js", map[string]string{"Accept-Encoding": "gzip"}, nil)
+	tag := first.Header().Get("ETag")
+	if tag == "" {
+		t.Fatal("a module is served with no ETag, so nothing can revalidate it")
+	}
+
+	again := do(t, handler, "GET", "/js/app.js",
+		map[string]string{"Accept-Encoding": "gzip", "If-None-Match": tag}, nil)
+	if again.Code != http.StatusNotModified {
+		t.Fatalf("status = %d, want 304", again.Code)
+	}
+	if got := again.Header().Get("Content-Encoding"); got != "" {
+		t.Errorf("a 304 came back as %q", got)
+	}
+	if got := again.Header().Get("Content-Length"); got != "" {
+		t.Errorf("a 304 came back with Content-Length %q", got)
+	}
+	if again.Body.Len() != 0 {
+		t.Errorf("a 304 carried %d bytes", again.Body.Len())
+	}
+}
+
+// The page stamps its stylesheet with the digest of the frontend, so that URL
+// will never mean other bytes: a browser may keep it, and asking again is a
+// trip with nothing to learn. Everything else is the URL a deploy will reuse
+// for new bytes, so those keep revalidating.
+func TestVersionedAssetsAreKeptAndTheRestRevalidate(t *testing.T) {
+	server := newServer(t, &config.Config{Listen: ":0"})
+	handler := server.Handler()
+
+	stamped := do(t, handler, "GET", "/theme.css?v=2f1a0c6d9e04", nil, nil)
+	if got := stamped.Header().Get("Cache-Control"); !strings.Contains(got, "immutable") ||
+		!strings.Contains(got, "max-age=31536000") {
+		t.Errorf("a versioned stylesheet is kept with %q", got)
+	}
+
+	for _, target := range []string{"/", "/js/app.js", "/theme.css"} {
+		response := do(t, handler, "GET", target, nil, nil)
+		if got := response.Header().Get("Cache-Control"); got != "no-cache" {
+			t.Errorf("%s answers %q, want it to keep asking", target, got)
+		}
 	}
 }

@@ -8,7 +8,6 @@ package web
 
 import (
 	"compress/gzip"
-	"path"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,15 +17,18 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
+	"path"
 	"strings"
+	"sync"
 	"time"
 
-	webui "github.com/kyleraykbs/MusOak-Web"
-	"github.com/kyleraykbs/MusOak-Web/internal/config"
 	"crypto/sha256"
 	"encoding/hex"
+	webui "github.com/kyleraykbs/MusOak-Web"
+	"github.com/kyleraykbs/MusOak-Web/internal/config"
 	"mime"
 	"path/filepath"
 )
@@ -49,8 +51,41 @@ type Server struct {
 	mux       *http.ServeMux
 	siteFS    fs.FS
 	transport http.RoundTripper
-	started   time.Time
+	// proxy is the reverse proxy every API request goes through. Nothing about
+	// it changes between requests, so there is one of it, made in New.
+	proxy   *httputil.ReverseProxy
+	started time.Time
+	// mu guards the revision of the frontend this server is holding: the digest
+	// the page is stamped with, and the bytes read under it. Both are the same
+	// until a file changes, and neither should cost a walk over the frontend on
+	// every request that asks for one.
+	mu      sync.Mutex
+	stamp   string
+	stampAt time.Time
+	// live says the frontend is a directory being edited under this server,
+	// whose digest therefore goes stale the moment somebody saves.
+	live  bool
+	files map[string]assetEntry
 }
+
+// assetEntry is one frontend file as it was read: its bytes, and the tag a
+// browser revalidates them by. Every revalidation of a file is a question about
+// the same bytes, so the file is read once per revision of the frontend.
+type assetEntry struct {
+	body []byte
+	tag  string
+}
+
+// defaultStampTTL is how long a live frontend's digest is trusted before it is
+// taken again. A stale digest names the revision before the last edit, and a
+// browser holding that URL has no reason to ask again - so it is short enough
+// that the next reload picks the edit up, and long enough that a page does not
+// walk the whole frontend for a URL that has not changed.
+const defaultStampTTL = 2 * time.Second
+
+// stampTTL is that interval, as a variable so a test can drive a live frontend
+// through an edit without waiting for it.
+var stampTTL = defaultStampTTL
 
 // New builds the server around its configuration. When staticDir is set the
 // frontend is read from that directory instead of the embedded copy, which is
@@ -72,11 +107,28 @@ func New(cfg *config.Config, logger *slog.Logger, staticDir string) (*Server, er
 		mux:     http.NewServeMux(),
 		siteFS:  root,
 		started: time.Now(),
+		live:    staticDir != "",
 	}
 	// The policy that keeps an open router from becoming a tunnel into someone's
 	// network belongs where the connection is made, not where the URL is parsed:
 	// names resolve to whatever they resolve to.
-	s.transport = &http.Transport{DialContext: s.dialGuard}
+	//
+	// The idle pool is sized for one backend that a browser talks to for as long
+	// as it is open. Two connections per host is a fresh handshake behind every
+	// cover and every track, and a zero idle timeout is a socket held open on a
+	// backend that has long stopped answering.
+	s.transport = &http.Transport{
+		DialContext:         s.dialGuard,
+		MaxIdleConnsPerHost: 8,
+		IdleConnTimeout:     90 * time.Second,
+	}
+	s.proxy = s.newProxy()
+	if !s.live {
+		// The embedded frontend is the same bytes for as long as this process
+		// lives, so its digest is taken once, here, rather than by whoever
+		// happens to ask for the first page.
+		s.stamp = digestSite(s.siteFS)
+	}
 	s.routes()
 	return s, nil
 }
@@ -205,38 +257,99 @@ var compressedExtensions = map[string]bool{
 	".js": true, ".css": true, ".html": true, ".svg": true, ".json": true, ".txt": true, ".map": true,
 }
 
-// gzipWriter compresses whatever a handler writes, to a client that asked.
-// Content-Length goes: the compressed size is not known until the end, and a
-// wrong one truncates the body.
+// gzipWriter compresses whatever a handler writes, to a client that asked. It
+// keeps the coding to itself until there is a body to encode: a response with
+// no body - the 304 a revalidation gets - carries no content coding and no
+// length, and claiming one describes bytes that never went out.
 type gzipWriter struct {
 	http.ResponseWriter
+	// writer exists only once there is something to put in it, and Close
+	// finishes it when the handler is done.
 	writer *gzip.Writer
-	wrote  bool
+	// status is what the handler asked for, held back until a body settles it:
+	// the coding and the length have to be on the header the first byte goes
+	// out with.
+	status int
+	// sent says the client has been given its header.
+	sent bool
 }
 
 func (g *gzipWriter) WriteHeader(status int) {
-	if g.wrote {
+	if g.status != 0 {
 		return
 	}
-	g.wrote = true
+	g.status = status
+	if bodyless(status) {
+		// Nothing follows a 304 or a 204, so there is nothing to compress: it
+		// goes out exactly as the handler asked for it.
+		g.sent = true
+		g.ResponseWriter.WriteHeader(status)
+	}
+}
+
+func (g *gzipWriter) Write(p []byte) (int, error) {
+	if !g.sent {
+		g.start()
+	}
+	if g.writer == nil {
+		// A status that forbids a body swallows the bytes, as it would with no
+		// wrapper here at all.
+		return len(p), nil
+	}
+	return g.writer.Write(p)
+}
+
+// start sends the header the first byte has to go out with. Content-Length
+// goes: the compressed size is not known until the end, and a wrong one
+// truncates the body.
+func (g *gzipWriter) start() {
+	g.sent = true
+	status := g.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	g.writer = gzip.NewWriter(g.ResponseWriter)
 	g.Header().Del("Content-Length")
 	g.Header().Set("Content-Encoding", "gzip")
 	g.ResponseWriter.WriteHeader(status)
 }
 
-func (g *gzipWriter) Write(p []byte) (int, error) {
-	if !g.wrote {
-		g.WriteHeader(http.StatusOK)
+// Close finishes the response: the tail of the stream if anything was written
+// into it, and otherwise the status the handler asked for, which nothing else
+// would have sent.
+func (g *gzipWriter) Close() {
+	if g.writer != nil {
+		_ = g.writer.Close()
+		return
 	}
-	return g.writer.Write(p)
+	if g.sent {
+		return
+	}
+	status := g.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	g.sent = true
+	g.ResponseWriter.WriteHeader(status)
+}
+
+// bodyless reports whether a status forbids a body, which is what decides
+// whether there is anything to compress.
+func bodyless(status int) bool {
+	return status < 200 || status == http.StatusNoContent || status == http.StatusNotModified
 }
 
 // compressible reports whether this request is one to compress: a client that
-// said it takes gzip, asking for a file that is text. Anything else is served
-// exactly as before.
-func compressible(r *http.Request) bool {
+// said it takes gzip, asking for something that is text. The page is HTML
+// whatever its URL looks like - a route the router owns has no extension to
+// read a type from - so it says so for itself; a file is text by its extension.
+// Anything else is served exactly as before.
+func compressible(r *http.Request, page bool) bool {
 	if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 		return false
+	}
+	if page {
+		return true
 	}
 	return compressedExtensions[strings.ToLower(path.Ext(r.URL.Path))]
 }
@@ -244,33 +357,37 @@ func compressible(r *http.Request) bool {
 // handleSite serves the frontend, falling back to its index for the routes the
 // router owns (so a reload on /rooms still gets the app).
 func (s *Server) handleSite(w http.ResponseWriter, r *http.Request) {
-	// The frontend is edited while it is being served, so a browser must ask
-	// before reusing its copy: no-cache means "revalidate", and an unchanged
-	// file still answers 304 from the Last-Modified the file server sets. Without
+	// A browser must ask before reusing its copy: no-cache means "revalidate",
+	// and an unchanged file still answers 304 from the tag of its bytes. Without
 	// it a browser is free to guess a freshness lifetime, and the page keeps
 	// running yesterday's modules.
 	w.Header().Set("Cache-Control", "no-cache")
-	if compressible(r) {
+
+	// Asking the frontend for the bytes settles two questions at once: a name
+	// that holds a file is an asset, and anything else is the shell - and only
+	// one of the two is worth compressing on these terms.
+	route := strings.TrimPrefix(r.URL.Path, "/")
+	page := route == "" || strings.HasSuffix(route, "/") || route == "index.html"
+	var entry assetEntry
+	if !page {
+		var err error
+		entry, err = s.asset(route)
+		page = err != nil
+	}
+	if compressible(r, page) {
 		// Said out loud, because what comes back depends on it: a cache that
 		// stores the compressed body without knowing that would hand it to a
 		// client that cannot read it.
 		w.Header().Add("Vary", "Accept-Encoding")
-		packed := gzip.NewWriter(w)
+		packed := &gzipWriter{ResponseWriter: w}
 		defer packed.Close()
-		w = &gzipWriter{ResponseWriter: w, writer: packed}
+		w = packed
 	}
-	route := strings.TrimPrefix(r.URL.Path, "/")
-	if route == "" || strings.HasSuffix(route, "/") || route == "index.html" {
+	if page {
 		s.servePage(w, r)
 		return
 	}
-	if route != "" && !strings.HasSuffix(route, "/") {
-		if info, err := fs.Stat(s.siteFS, route); err == nil && !info.IsDir() {
-			s.serveAsset(w, r, route)
-			return
-		}
-	}
-	s.servePage(w, r)
+	s.serveAsset(w, r, route, entry)
 }
 
 // servePage serves the shell with its stylesheet under a versioned URL. A
@@ -281,8 +398,8 @@ func (s *Server) handleSite(w http.ResponseWriter, r *http.Request) {
 // The entry script is deliberately *not* stamped: the views import it by its
 // bare path (`../app.js`), so a query on the script tag makes the browser load
 // two copies of the whole app - two shells, two dialogs, and a boot that runs
-// twice. Everything is served `no-cache` anyway, which is what keeps the modules
-// fresh.
+// twice. The page and its modules are served `no-cache` anyway, which is what
+// keeps the modules fresh.
 func (s *Server) servePage(w http.ResponseWriter, r *http.Request) {
 	page, err := fs.ReadFile(s.siteFS, "index.html")
 	if err != nil {
@@ -347,19 +464,70 @@ func safeHost(host string) string {
 	return host
 }
 
-// assetStamp is the newest modification time in the frontend, so changing any
-// file changes every URL the page asks for.
+// assetStamp is the version the page's stylesheet URL carries: a digest of the
+// whole frontend, so changing any file changes the URL the page asks for.
+//
+// Taking it reads and hashes every file, and it is the same value on every
+// request until one of them changes. The embedded frontend is the same bytes
+// for as long as this process lives, so its digest is taken once, when the
+// server is built; a directory being edited under a running server is taken
+// again once it has aged, and everything read under the old digest goes with
+// it.
 func (s *Server) assetStamp() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stampLocked()
+}
+
+// stampLocked is assetStamp for a caller already holding the lock, and is the
+// only way the digest is ever taken.
+func (s *Server) stampLocked() string {
+	if s.stamp == "" || (s.live && time.Since(s.stampAt) >= stampTTL) {
+		s.stamp = digestSite(s.siteFS)
+		s.stampAt = time.Now()
+		// What was read under the old digest is another revision of the
+		// frontend: a revalidation must not be answered out of it.
+		s.files = nil
+	}
+	return s.stamp
+}
+
+// asset is one frontend file's bytes and tag, read once per revision of the
+// frontend. A browser revalidating a module it already has asks about bytes
+// that were read a moment ago, and the answer to that should be a lookup rather
+// than a walk to the disk or the embed.
+func (s *Server) asset(name string) (assetEntry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stampLocked()
+	if entry, ok := s.files[name]; ok {
+		return entry, nil
+	}
+	body, err := fs.ReadFile(s.siteFS, name)
+	if err != nil {
+		return assetEntry{}, err
+	}
+	entry := assetEntry{body: body, tag: `"` + assetTag(body) + `"`}
+	if s.files == nil {
+		s.files = make(map[string]assetEntry)
+	}
+	s.files[name] = entry
+	return entry, nil
+}
+
+// digestSite is a digest of the frontend's file names and contents, short
+// enough to carry in a query.
+func digestSite(fsys fs.FS) string {
 	sum := sha256.New()
-	_ = fs.WalkDir(s.siteFS, ".", func(path string, entry fs.DirEntry, err error) error {
+	_ = fs.WalkDir(fsys, ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil || entry.IsDir() {
 			return nil
 		}
-		body, err := fs.ReadFile(s.siteFS, path)
+		body, err := fs.ReadFile(fsys, name)
 		if err != nil {
 			return nil
 		}
-		_, _ = io.WriteString(sum, path)
+		_, _ = io.WriteString(sum, name)
 		_, _ = sum.Write(body)
 		return nil
 	})
@@ -374,20 +542,23 @@ func (s *Server) assetStamp() string {
 // is always told Not Modified - so a deploy could never reach a browser that had
 // already loaded the page once, and the frontend appeared frozen at whatever
 // version it first saw.
-func (s *Server) serveAsset(w http.ResponseWriter, r *http.Request, path string) {
-	body, err := fs.ReadFile(s.siteFS, path)
-	if err != nil {
-		http.NotFound(w, r)
-		return
+//
+// A URL that names its version - the page stamps its stylesheet with the digest
+// of the frontend - will never mean different bytes, so a browser may keep it as
+// long as it likes: immutable says asking again would be a trip with nothing to
+// learn. Every other URL is the one a deploy will reuse for new bytes, and keeps
+// asking; the answer to that costs a comparison of tags, not a read.
+func (s *Server) serveAsset(w http.ResponseWriter, r *http.Request, name string, entry assetEntry) {
+	w.Header().Set("ETag", entry.tag)
+	w.Header().Set("Content-Type", assetType(name))
+	if r.URL.Query().Has("v") {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	}
-	tag := `"` + assetTag(body) + `"`
-	w.Header().Set("ETag", tag)
-	w.Header().Set("Content-Type", assetType(path))
-	if matchesETag(r.Header.Get("If-None-Match"), tag) {
+	if matchesETag(r.Header.Get("If-None-Match"), entry.tag) {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	_, _ = w.Write(body)
+	_, _ = w.Write(entry.body)
 }
 
 // assetTag is a short digest of one file's contents, which is what makes a
