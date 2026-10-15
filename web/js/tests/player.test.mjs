@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import {
   albumLine, artistLine, documentKey, EAGER_AHEAD, mediaProgressLabel, mediaStateLabel, nextIndex, OFFLINE_AHEAD, OFFLINE_MAX_BYTES,
   OFFLINE_TAIL_GAP_MS, playbackDocument,
-  memorySource, playbackStateFrom, prefetchWindow, queueFromDocument, shouldSavePlayback, shuffleTail, player,
+  memorySource, playbackStateFrom, prefetchWindow, queueFromDocument, shouldSavePlayback, shuffleWhole, player,
 } from "../player.js";
 import {
   groupSources, netVotes, pickSource, sourceLabel,
@@ -112,18 +112,20 @@ test("the room host uses the mixed queue locally and keeps duplicate entries dis
   }
 });
 
-test("shuffleTail shuffles what is left and leaves the head alone", () => {
+test("shuffle queue shuffles the whole queue, around the one playing", () => {
   const list = queue("a", "b", "c", "d", "e");
-  const shuffled = shuffleTail(list, 1);
-  assert.deepEqual(ids(shuffled.slice(0, 2)), ["a", "b"]);
-  assert.deepEqual([...ids(shuffled)].sort(), ["a", "b", "c", "d", "e"]);
+  const shuffled = shuffleWhole(list, 1);
+  assert.equal(shuffled[1].id, "b", "the song that is playing keeps its place");
+  assert.deepEqual([...ids(shuffled)].sort(), ["a", "b", "c", "d", "e"], "and nothing is lost or added");
+  assert.notDeepEqual(ids(shuffled), ids(list), "the rest of the queue is in another order");
   // The queue it was given is not touched.
   assert.deepEqual(ids(list), ["a", "b", "c", "d", "e"]);
-  // Fewer than two tracks left: nothing to shuffle, nothing to change.
-  assert.deepEqual(ids(shuffleTail(list, 3)), ["a", "b", "c", "d", "e"]);
-  assert.deepEqual(ids(shuffleTail(list, 4)), ["a", "b", "c", "d", "e"]);
-  // A fixed source of randomness, so the order itself can be checked.
-  assert.deepEqual(ids(shuffleTail(queue("a", "b", "c", "d"), 0, () => 0)), ["a", "c", "d", "b"]);
+
+  // Fewer than two others: nothing to shuffle, nothing to change.
+  const nearly = queue("a", "b");
+  assert.deepEqual(ids(shuffleWhole(nearly, 0)), ["a", "b"]);
+  const single = queue("a");
+  assert.deepEqual(ids(shuffleWhole(single, 0)), ["a"]);
 });
 
 test("the picker lists official sources above the uploaded ones", () => {
@@ -776,7 +778,11 @@ test("a refused play is asked for again, but an ended file is not", () => {
 
 // --- playing a track the device does not hold yet --------------------------
 
-test("a track the device does not hold is fetched and then played", async () => {
+// A song the device does not hold is not silent while it downloads: the
+// element is given the backend's own stream of it at once, at the position the
+// load wants, and it is audible in the provider's startup time. Waiting for the
+// whole file first - fetch, conversion, probe - was silence for all of it.
+test("a song this device does not hold plays from the stream while it downloads", async () => {
   const saved = {
     ensureAudio: player.ensureAudio,
     audio: player.audio,
@@ -793,12 +799,14 @@ test("a track the device does not hold is fetched and then played", async () => 
     prefetch: player._prefetch,
     wantResume: player._wantResume,
     ready: player._ready,
+    status: player._status,
+    loading: player._loading,
+    stream: player._stream,
     room: player._room,
   };
   const played = [];
-  let waited = 0;
-  let waitedFor = "";
   let prefetched = 0;
+  let waited = 0;
   const audio = {
     src: "",
     currentTime: 0,
@@ -807,7 +815,9 @@ test("a track the device does not hold is fetched and then played", async () => 
     readyState: 0,
     removeAttribute() {},
     load() {},
-    pause() {},
+    pause() {
+      this.paused = true;
+    },
     play() {
       this.paused = false;
       played.push(this.src);
@@ -822,13 +832,13 @@ test("a track the device does not hold is fetched and then played", async () => 
     player._index = 0;
     player._offline = new Map();
     player._offlineBytes = 0;
+    player._status = new Map();
     player._variantFor = async (entry) => ({ variantId: `v-${entry.id}`, sources: [], preferredVariantId: "" });
-    // The file is asked for and waited for: what plays is always whole, which is
-    // what makes a seek into it - a room's position, a resumed one - instant.
-    player._ready = async (variantId) => {
+    // Nobody knows when the file will be here, and that is the point: the
+    // element must not be waiting on it.
+    player._ready = () => {
       waited += 1;
-      waitedFor = String(variantId);
-      return true;
+      return new Promise(() => {});
     };
     player._startDownload = () => {};
     player._prefetch = () => {
@@ -836,41 +846,26 @@ test("a track the device does not hold is fetched and then played", async () => 
     };
     player._wantResume = () => {};
     player._client = () => ({
-      mediaUrl: (variantId) => `/media/${variantId}`,
+      mediaUrl: (variantId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/media/${variantId}?start=${Math.round(startMs)}`
+        : `/media/${variantId}`),
       startDownload: async () => ({}),
-      // The fetch path names a rendition, and the retry names the other source,
-      // so a failed attempt shows up as the variant it asked for.
-      rendition: async (trackId) => {
-        asked.push(`rendition:${trackId}`);
-        throw new Error("the provider said no");
-      },
-      rendition_for_variant: async (variantId) => {
-        asked.push(`for_variant:${variantId}`);
-        return { trackId: "a", variantId, path: `/tmp/${variantId}.opus`, durationMs: 1000 };
-      },
-      variants: async () => [
-        { id: "v-a", variantId: "v-a", provider: "one", downloadable: true },
-        { id: "v-a2", variantId: "v-a2", provider: "two", downloadable: true },
-      ],
-      pick_variant: (list) => list[0],
-      sources: async () => ({
-        sources: [
-          { variantId: "v-a", downloadable: true },
-          { variantId: "v-a2", downloadable: true },
-        ],
-        preferredVariantId: "",
-      }),
     });
 
     await player._load(0, { autoplay: true });
 
-    // The wait is asynchronous: the file has to be held before the element sees it.
+    assert.equal(audio.src, "/media/v-a?start=0", "the element is given the stream at once");
+    assert.deepEqual(played, ["/media/v-a?start=0"], "and it is playing from there");
+    assert.ok(prefetched >= 1, "the songs after it are asked for while this one downloads");
+    assert.equal(player._loading, true, "the download behind the stream is still going");
+    assert.equal(player.readyState(), "downloading", "which is what the bar keeps showing");
+    assert.equal(player._playingWanted, true, "nothing is waiting for the file to be audible");
+
+    // The wait for the file is under way beside it; it is not what plays.
     await new Promise((resolve) => setTimeout(resolve, 30));
-    assert.equal(waitedFor, "v-a", "the load waited for the backend to hold the file");
-    assert.ok(prefetched >= 1, "and the songs after it were asked for while it downloads");
-    assert.ok(waited >= 1, "and asked for it");
-    assert.equal(audio.src, "/media/v-a", "then the file was given to the element");
-    assert.deepEqual(played, ["/media/v-a"], "and it starts");
+    assert.ok(waited >= 1, "the file is still being waited for");
+    assert.equal(audio.src, "/media/v-a?start=0", "and the element has not been made to wait");
+    assert.deepEqual(played, ["/media/v-a?start=0"], "nor restarted");
   } finally {
     player.ensureAudio = saved.ensureAudio;
     player.audio = saved.audio;
@@ -887,6 +882,1192 @@ test("a track the device does not hold is fetched and then played", async () => 
     player._prefetch = saved.prefetch;
     player._wantResume = saved.wantResume;
     player._ready = saved.ready;
+    player._status = saved.status;
+    player._loading = saved.loading;
+    player._stream = saved.stream;
+    player.setRoom(saved.room);
+  }
+});
+
+// The hand-over: the file lands, and the song moves onto it at the position the
+// music has reached - the same machinery the page's own copy uses, because a
+// source change is a pipeline reset and that reset is the gap it exists to
+// avoid. After it the song is seekable and a replay is served from disk.
+test("when the file lands the stream is handed over to it at the position the music reached", async () => {
+  const saved = {
+    ensureAudio: player.ensureAudio,
+    audio: player.audio,
+    spare: player._spare,
+    queue: player.queue,
+    index: player._index,
+    offline: player._offline,
+    bytes: player._offlineBytes,
+    variant: player._variant,
+    variantFor: player._variantFor,
+    client: player._client,
+    startDownload: player._startDownload,
+    prefetch: player._prefetch,
+    wantResume: player._wantResume,
+    ready: player._ready,
+    status: player._status,
+    loading: player._loading,
+    stream: player._stream,
+    pendingSeek: player._pendingSeek,
+    room: player._room,
+  };
+  const played = [];
+  const audio = {
+    src: "",
+    currentTime: 0,
+    duration: Infinity,
+    paused: true,
+    readyState: 4,
+    volume: 1,
+    muted: false,
+    removeAttribute() {},
+    load() {},
+    pause() {
+      this.paused = true;
+    },
+    play() {
+      this.paused = false;
+      played.push(this.src);
+      return { catch() {} };
+    },
+  };
+  const spare = spareElement(played);
+  const tick = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  try {
+    player.setRoom(null);
+    player.ensureAudio = () => audio;
+    player.audio = audio;
+    player._spare = spare;
+    player.queue = queue("a");
+    player._index = 0;
+    player._offline = new Map();
+    player._offlineBytes = 0;
+    player._status = new Map();
+    player._variantFor = async (entry) => ({ variantId: `v-${entry.id}`, sources: [], preferredVariantId: "" });
+    player._startDownload = () => {};
+    player._prefetch = () => {};
+    player._wantResume = () => {};
+    player._client = () => ({
+      mediaUrl: (variantId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/media/${variantId}?start=${Math.round(startMs)}`
+        : `/media/${variantId}`),
+      startDownload: async () => ({}),
+    });
+    player._ready = async () => ({ state: "ready", durationMs: 200000 });
+
+    // A room's song, joined forty-five seconds in: the position is the request's.
+    await player._load(0, { autoplay: true, startMs: 45000 });
+    assert.equal(audio.src, "/media/v-a?start=45000", "the stream starts where the listener is");
+    audio.currentTime = 7.5;                     // and the music is 52.5s into the song
+    await tick(20);
+
+    assert.equal(spare.src, "/media/v-a", "the file is loaded on the second element");
+    assert.equal(audio.paused, false, "while the stream keeps playing");
+    assert.deepEqual(played, ["/media/v-a?start=45000"], "and the stream is what is heard so far");
+
+    spare.readyState = 4;
+    spare.fire("canplay");
+    await tick(120);
+
+    assert.equal(player.audio, spare, "the file is the element in hand now");
+    assert.equal(spare.currentTime, 52.5, "at the position the music had actually reached");
+    assert.equal(player.positionMs(), 52500, "which is the song's own position");
+    assert.equal(player._stream, null, "and the stream is behind it");
+    assert.equal(player.durationMs(), 200000, "with a length the element can measure again");
+    assert.deepEqual(played.slice(-1), ["/media/v-a"], "started from the file rather than reloaded");
+    // A second later the streaming element has been let go: its stream, and the
+    // slot it held, are given up.
+    await tick(400);
+    assert.equal(audio.paused, true, "and the stream is left behind");
+  } finally {
+    player.ensureAudio = saved.ensureAudio;
+    player.audio = saved.audio;
+    player._spare = saved.spare;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._offline = saved.offline;
+    player._offlineBytes = saved.bytes;
+    player._variant = saved.variant;
+    player._variantFor = saved.variantFor;
+    player._client = saved.client;
+    player._startDownload = saved.startDownload;
+    player._prefetch = saved.prefetch;
+    player._wantResume = saved.wantResume;
+    player._ready = saved.ready;
+    player._status = saved.status;
+    player._loading = saved.loading;
+    player._stream = saved.stream;
+    player._pendingSeek = saved.pendingSeek;
+    player.setRoom(saved.room);
+  }
+});
+
+// A streamed answer has no length - the element reads Infinity for it - so the
+// timeline runs on the length this app already knows: the status the backend
+// reports the rendition with, and failing that the track's own length.
+test("a streamed song's length comes from what the app knows", () => {
+  const saved = {
+    audio: player.audio,
+    variant: player._variant,
+    status: player._status,
+    queue: player.queue,
+    index: player._index,
+    stream: player._stream,
+  };
+  const audio = { src: "/media/v-a?start=0", currentTime: 3, duration: Infinity };
+  try {
+    player.audio = audio;
+    player._variant = "v-a";
+    player._stream = null;
+    player._status = new Map([["v-a", { state: "downloading", durationMs: 187500 }]]);
+    player.queue = [{ id: "a", title: "A", durationMs: 200000 }];
+    player._index = 0;
+
+    assert.equal(player.measuredDurationMs(), 0, "a stream has no length the element can measure");
+    assert.equal(player.durationMs(), 187500, "so the status's own answer is the timeline");
+
+    player._status = new Map();
+    assert.equal(player.durationMs(), 200000, "and the track's own length is what is left");
+
+    // A whole file is still measured rather than taken on report.
+    audio.duration = 201.5;
+    assert.equal(player.measuredDurationMs(), 201500);
+    assert.equal(player.durationMs(), 201500);
+  } finally {
+    player.audio = saved.audio;
+    player._variant = saved.variant;
+    player._status = saved.status;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._stream = saved.stream;
+  }
+});
+
+// A seek inside a stream cannot be a range: there is no length to seek within,
+// so the seek is a new request for the song from that position and the sound
+// carries on from there. The gap while it reconnects is the honest cost of
+// playing without waiting for the file.
+test("a seek inside a stream asks the backend for the song from there", () => {
+  const saved = {
+    audio: player.audio,
+    stream: player._stream,
+    variant: player._variant,
+    client: player._client,
+    queue: player.queue,
+    index: player._index,
+    status: player._status,
+    playingWanted: player._playingWanted,
+    pendingSeek: player._pendingSeek,
+    saveSoon: player._saveSoon,
+    wantResume: player._wantResume,
+    room: player._room,
+  };
+  const played = [];
+  const audio = {
+    src: "/media/v-a?start=10000",
+    currentTime: 2.5,
+    duration: Infinity,
+    paused: false,
+    play() {
+      this.paused = false;
+      played.push(this.src);
+      return { catch() {} };
+    },
+  };
+  try {
+    player.setRoom(null);
+    player.audio = audio;
+    player._variant = "v-a";
+    player._stream = { variantId: "v-a", startMs: 10000, src: "/media/v-a?start=10000", failed: false };
+    player._status = new Map();
+    player.queue = [{ id: "a" }];
+    player._index = 0;
+    player._playingWanted = true;
+    player._wantResume = () => {};
+    player._saveSoon = () => {};
+    const media = (variantId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+      ? `/media/${variantId}?start=${Math.round(startMs)}`
+      : `/media/${variantId}`);
+    player._client = () => ({ mediaUrl: media });
+    player._clientIfAny = () => ({ mediaUrl: media });
+
+    assert.equal(player.positionMs(), 12500, "the position is where the request started plus the element's own clock");
+
+    player.seek(90000);
+
+    assert.equal(audio.src, "/media/v-a?start=90000", "the seek is a request for the rest of the song from there");
+    assert.equal(player._stream.startMs, 90000, "and that is where the stream now starts");
+    assert.deepEqual(played, ["/media/v-a?start=90000"], "so the sound carries on rather than stopping");
+    assert.equal(player._pendingSeek, null, "with nothing left to land on: the position is in the URL");
+
+    audio.currentTime = 0;                       // the element's own clock starts again
+    assert.equal(player.positionMs(), 90000, "at the position that was asked for");
+  } finally {
+    player.audio = saved.audio;
+    player._stream = saved.stream;
+    player._variant = saved.variant;
+    player._client = saved.client;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._status = saved.status;
+    player._playingWanted = saved.playingWanted;
+    player._pendingSeek = saved.pendingSeek;
+    player._saveSoon = saved.saveSoon;
+    player._wantResume = saved.wantResume;
+    player.setRoom(saved.room);
+  }
+});
+
+// A download that fails while the song is streaming is not the song stopping:
+// what is playing is the provider's own copy of it, and a file that will never
+// land is no reason to cut the sound off - or to start another source over the
+// top of something somebody is listening to.
+test("a download that fails does not stop the stream that is playing", async () => {
+  const saved = {
+    audio: player.audio,
+    ready: player._ready,
+    client: player._client,
+    queue: player.queue,
+    index: player._index,
+    variant: player._variant,
+    stream: player._stream,
+    status: player._status,
+    loading: player._loading,
+    error: player._error,
+    recover: player._recoverFromFailure,
+    skipUnavailable: player._skipUnavailable,
+    failedVariant: player._failedVariant,
+    room: player._room,
+  };
+  const audio = {
+    src: "/media/v-a?start=0",
+    currentTime: 4,
+    duration: Infinity,
+    paused: false,
+    ended: false,
+  };
+  const recovered = [];
+  let skipped = 0;
+  try {
+    player.setRoom(null);
+    player.audio = audio;
+    player.queue = queue("a");
+    player._index = 0;
+    player._variant = "v-a";
+    player._status = new Map();
+    player._error = "";
+    player._loading = true;
+    player._stream = { variantId: "v-a", startMs: 0, src: "/media/v-a?start=0", failed: false };
+    player._ready = async () => ({ state: "failed", error: "that file could not be downloaded" });
+    player._recoverFromFailure = () => {
+      recovered.push("retried");
+      return true;
+    };
+    player._skipUnavailable = () => {
+      skipped += 1;
+      return true;
+    };
+    player._client = () => ({ mediaUrl: (variantId) => `/media/${variantId}` });
+
+    await player._waitForFile({ variantId: "v-a", token: player._token, autoplay: true });
+
+    assert.equal(audio.src, "/media/v-a?start=0", "the stream is left where it is");
+    assert.equal(audio.paused, false, "and it is still playing");
+    assert.deepEqual(recovered, [], "nothing is retried over the top of a song that is being heard");
+    assert.equal(skipped, 0, "and the queue is not moved past it");
+    assert.equal(player._error, "", "with no red line over a song that is playing");
+    assert.equal(player._loading, false, "the download itself is over");
+    assert.equal(player._stream.failed, true, "and the rendition is known not to have landed");
+  } finally {
+    player.audio = saved.audio;
+    player._ready = saved.ready;
+    player._client = saved.client;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._variant = saved.variant;
+    player._stream = saved.stream;
+    player._status = saved.status;
+    player._loading = saved.loading;
+    player._error = saved.error;
+    player._recoverFromFailure = saved.recover;
+    player._skipUnavailable = saved.skipUnavailable;
+    player._failedVariant = saved.failedVariant;
+    player.setRoom(saved.room);
+  }
+});
+
+// The backend serves only a couple of streams of one rendition at a time and
+// answers the rest `503` + `Retry-After: 1`: a room of people pressing play
+// together is that queue, and a member who skipped past a song everybody else is
+// hearing is a "stopped" in everything but name. An error while the download is
+// still going is a wait - the same URL, from where the listener is - and only a
+// spent set of attempts is the song failing.
+test("a stream the server queued is asked for again, not skipped", () => {
+  const saved = {
+    audio: player.audio,
+    variant: player._variant,
+    stream: player._stream,
+    status: player._status,
+    loading: player._loading,
+    error: player._error,
+    playingWanted: player._playingWanted,
+    resume: player._resumeWanted,
+    online: player.online,
+    recover: player._recoverFromFailure,
+    failedVariant: player._failedVariant,
+    client: player._client,
+    clientIfAny: player._clientIfAny,
+    saveSoon: player._saveSoon,
+    wantResume: player._wantResume,
+    timeout: globalThis.setTimeout,
+    clear: globalThis.clearTimeout,
+    room: player._room,
+  };
+  const played = [];
+  const audio = {
+    src: "/media/v-a?start=0",
+    currentTime: 0,
+    duration: Infinity,
+    paused: true,
+    ended: false,
+    volume: 1,
+    muted: false,
+    listeners: {},
+    addEventListener(name, fn) {
+      (this.listeners[name] = this.listeners[name] || []).push(fn);
+    },
+    removeEventListener(name, fn) {
+      this.listeners[name] = (this.listeners[name] || []).filter((each) => each !== fn);
+    },
+    fire(name) {
+      for (const fn of [...(this.listeners[name] || [])]) fn({ type: name });
+    },
+    load() {},
+    play() {
+      this.paused = false;
+      played.push(this.src);
+      return { catch() {} };
+    },
+  };
+  const pending = [];
+  const recovered = [];
+  try {
+    player.setRoom(null);
+    player.audio = audio;
+    player._wireAudio(audio);
+    player._variant = "v-a";
+    player._stream = { variantId: "v-a", startMs: 0, src: "/media/v-a?start=0", failed: false };
+    player._status = new Map([["v-a", { state: "downloading", progress: 0.3 }]]);
+    player._loading = true;
+    player._error = "";
+    player._playingWanted = true;
+    player.online = () => true;
+    player._saveSoon = () => {};
+    player._wantResume = () => {};
+    player._recoverFromFailure = () => {
+      recovered.push("retried");
+      return true;
+    };
+    const media = (variantId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+      ? `/media/${variantId}?start=${Math.round(startMs)}`
+      : `/media/${variantId}`);
+    player._client = () => ({ mediaUrl: media });
+    player._clientIfAny = () => ({ mediaUrl: media });
+    // The waits are the test's, so they can be spent at once.
+    globalThis.setTimeout = (fn, ms) => {
+      const entry = { fn, ms };
+      pending.push(entry);
+      return entry;
+    };
+    globalThis.clearTimeout = (handle) => {
+      const index = pending.indexOf(handle);
+      if (index >= 0) pending.splice(index, 1);
+    };
+
+    audio.fire("error");
+
+    assert.equal(pending.length, 1, "the failure is waited out rather than acted on");
+    assert.equal(pending[0].ms, 1000, "for the second the server's Retry-After names");
+    assert.deepEqual(recovered, [], "nothing is retried over the top of a song the download is still fetching");
+    assert.equal(player._streamingNow(), player._stream, "the stream is not given up");
+    assert.equal(player._loading, true, "and the download's own progress is not reset");
+    assert.equal(player._error, "", "nor is a red line put over a song that is on its way");
+
+    // Four asks, each after twice the wait, all of the same URL from where the
+    // listener had got to - and every one of them failing the same way.
+    for (const wait of [1000, 2000, 4000, 8000]) {
+      const timer = pending.shift();
+      assert.equal(timer.ms, wait, `the wait backs off (${wait}ms)`);
+      played.length = 0;
+      timer.fn();
+
+      assert.equal(audio.src, "/media/v-a?start=0", "the same stream is asked for again");
+      assert.deepEqual(played, ["/media/v-a?start=0"], "and the sound is started again");
+      assert.deepEqual(recovered, [], "still without giving the song up");
+      audio.fire("error");
+    }
+
+    // The attempts are spent: now it is a load the element will not play.
+    assert.equal(pending.length, 0, "no fifth ask");
+    assert.deepEqual(recovered, ["retried"], "and the song is tried from another source");
+    assert.equal(player._stream, null, "with the stream given up first");
+    assert.equal(player._loading, false);
+    assert.equal(player._error, "could not play that file", "said out loud for a song that is not coming");
+  } finally {
+    player.audio = saved.audio;
+    player._variant = saved.variant;
+    player._stream = saved.stream;
+    player._status = saved.status;
+    player._loading = saved.loading;
+    player._error = saved.error;
+    player._playingWanted = saved.playingWanted;
+    player.online = saved.online;
+    player._recoverFromFailure = saved.recover;
+    player._failedVariant = saved.failedVariant;
+    player._client = saved.client;
+    player._clientIfAny = saved.clientIfAny;
+    player._saveSoon = saved.saveSoon;
+    player._wantResume = saved.wantResume;
+    globalThis.setTimeout = saved.timeout;
+    globalThis.clearTimeout = saved.clear;
+    clearInterval(player._resumeTimer);
+    player._resumeTimer = saved.resume;
+    player.setRoom(saved.room);
+  }
+});
+
+// A download the backend has called failed is not a queue for a stream: there is
+// nothing to wait for, so the song is not asked for again and the usual recovery
+// has it.
+test("a stream whose download has failed is not asked for again", () => {
+  const saved = {
+    audio: player.audio,
+    variant: player._variant,
+    stream: player._stream,
+    status: player._status,
+    loading: player._loading,
+    error: player._error,
+    online: player.online,
+    recover: player._recoverFromFailure,
+    failedVariant: player._failedVariant,
+    client: player._client,
+    room: player._room,
+  };
+  const audio = {
+    src: "/media/v-a?start=0",
+    currentTime: 0,
+    duration: Infinity,
+    paused: true,
+    volume: 1,
+    muted: false,
+    listeners: {},
+    addEventListener(name, fn) {
+      (this.listeners[name] = this.listeners[name] || []).push(fn);
+    },
+    removeEventListener(name, fn) {
+      this.listeners[name] = (this.listeners[name] || []).filter((each) => each !== fn);
+    },
+    fire(name) {
+      for (const fn of [...(this.listeners[name] || [])]) fn({ type: name });
+    },
+    play() {
+      return { catch() {} };
+    },
+  };
+  const recovered = [];
+  try {
+    player.setRoom(null);
+    player.audio = audio;
+    player._wireAudio(audio);
+    player._variant = "v-a";
+    player._stream = { variantId: "v-a", startMs: 0, src: "/media/v-a?start=0", failed: false };
+    player._status = new Map([["v-a", { state: "failed", error: "the provider said no" }]]);
+    player._loading = true;
+    player._error = "";
+    player.online = () => true;
+    player._recoverFromFailure = () => {
+      recovered.push("retried");
+      return true;
+    };
+    player._client = () => ({ mediaUrl: (variantId) => `/media/${variantId}` });
+
+    audio.fire("error");
+
+    assert.deepEqual(recovered, ["retried"], "the song is tried from another source at once");
+    assert.equal(player._stream, null, "and the stream that will never play is given up");
+    assert.equal(player._loading, false, "the load is over");
+    assert.equal(player._error, "could not play that file");
+    assert.equal(player._failedVariant, "v-a", "naming the rendition that would not play");
+  } finally {
+    player.audio = saved.audio;
+    player._variant = saved.variant;
+    player._stream = saved.stream;
+    player._status = saved.status;
+    player._loading = saved.loading;
+    player._error = saved.error;
+    player.online = saved.online;
+    player._recoverFromFailure = saved.recover;
+    player._failedVariant = saved.failedVariant;
+    player._client = saved.client;
+    player.setRoom(saved.room);
+  }
+});
+
+// The other side of the race: the download lands while the listener waits for a
+// free stream, and the retried URL then answers the whole file - which is seeked
+// into at the position the listener had reached, rather than asked to start
+// there, since a rendition on disk ignores the position in a URL.
+test("a retry after the download finished plays the file at the position", () => {
+  const saved = {
+    audio: player.audio,
+    variant: player._variant,
+    stream: player._stream,
+    status: player._status,
+    loading: player._loading,
+    playingWanted: player._playingWanted,
+    resume: player._resumeWanted,
+    client: player._client,
+    clientIfAny: player._clientIfAny,
+    saveSoon: player._saveSoon,
+    wantResume: player._wantResume,
+    pendingSeek: player._pendingSeek,
+    timeout: globalThis.setTimeout,
+    clear: globalThis.clearTimeout,
+    room: player._room,
+  };
+  const played = [];
+  const audio = {
+    src: "/media/v-a?start=45000",
+    currentTime: 30,               // 75s into the song when the stream failed
+    duration: Infinity,
+    paused: true,
+    volume: 1,
+    muted: false,
+    listeners: {},
+    addEventListener(name, fn) {
+      (this.listeners[name] = this.listeners[name] || []).push(fn);
+    },
+    removeEventListener(name, fn) {
+      this.listeners[name] = (this.listeners[name] || []).filter((each) => each !== fn);
+    },
+    fire(name) {
+      for (const fn of [...(this.listeners[name] || [])]) fn({ type: name });
+    },
+    load() {
+      this.currentTime = 0;
+    },
+    play() {
+      this.paused = false;
+      played.push(this.src);
+      return { catch() {} };
+    },
+  };
+  const pending = [];
+  try {
+    player.setRoom(null);
+    player.audio = audio;
+    player._wireAudio(audio);
+    player._variant = "v-a";
+    player._stream = { variantId: "v-a", startMs: 45000, src: "/media/v-a?start=45000", failed: false };
+    player._status = new Map([["v-a", { state: "downloading" }]]);
+    player._loading = true;
+    player._playingWanted = true;
+    player._saveSoon = () => {};
+    player._wantResume = () => {};
+    player._client = () => ({
+      mediaUrl: (variantId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/media/${variantId}?start=${Math.round(startMs)}`
+        : `/media/${variantId}`),
+    });
+    globalThis.setTimeout = (fn, ms) => {
+      const entry = { fn, ms };
+      pending.push(entry);
+      return entry;
+    };
+    globalThis.clearTimeout = (handle) => {
+      const index = pending.indexOf(handle);
+      if (index >= 0) pending.splice(index, 1);
+    };
+
+    audio.fire("error");
+    assert.equal(pending[0].ms, 1000);
+    // The download finishes while the listener waits for its turn at a stream.
+    player._status = new Map([["v-a", { state: "ready", durationMs: 200000 }]]);
+    pending.shift().fn();
+
+    assert.equal(audio.src, "/media/v-a", "the whole file, not a position a rendition on disk ignores");
+    assert.equal(player._stream, null, "nothing is streaming any more");
+    assert.equal(player._pendingSeek, 75000, "and the position it had reached is where the file goes");
+    assert.equal(player._loading, false, "there is nothing left to download");
+
+    audio.fire("loadedmetadata");
+    assert.deepEqual(played, ["/media/v-a"], "which plays from there");
+  } finally {
+    player.audio = saved.audio;
+    player._variant = saved.variant;
+    player._stream = saved.stream;
+    player._status = saved.status;
+    player._loading = saved.loading;
+    player._playingWanted = saved.playingWanted;
+    player._pendingSeek = saved.pendingSeek;
+    player._client = saved.client;
+    player._clientIfAny = saved.clientIfAny;
+    player._saveSoon = saved.saveSoon;
+    player._wantResume = saved.wantResume;
+    globalThis.setTimeout = saved.timeout;
+    globalThis.clearTimeout = saved.clear;
+    clearInterval(player._resumeTimer);
+    player._resumeTimer = saved.resume;
+    player.setRoom(saved.room);
+  }
+});
+
+// A follower joins the room's song where the room is: the position the room is
+// at goes into the request, so a member arriving mid-song hears the middle of
+// it rather than the head.
+test("a follower joining a room's song asks for it from the room's position", async () => {
+  const saved = {
+    audio: player.audio,
+    ensureAudio: player.ensureAudio,
+    queue: player.queue,
+    index: player._index,
+    offline: player._offline,
+    resolveFixed: player._resolveFixed,
+    client: player._client,
+    startDownload: player._startDownload,
+    prefetch: player._prefetch,
+    ready: player._ready,
+    status: player._status,
+    stream: player._stream,
+    pendingSeek: player._pendingSeek,
+    loading: player._loading,
+    room: player._room,
+  };
+  const played = [];
+  const audio = {
+    src: "",
+    currentTime: 0,
+    duration: 0,
+    paused: true,
+    removeAttribute() {},
+    load() {},
+    pause() {
+      this.paused = true;
+    },
+    play() {
+      this.paused = false;
+      played.push(this.src);
+      return { catch() {} };
+    },
+  };
+  try {
+    player.setRoom(null);
+    player.ensureAudio = () => audio;
+    player.audio = audio;
+    player.queue = queue("a");
+    player._index = 0;
+    player._offline = new Map();
+    player._status = new Map();
+    player._resolveFixed = async (entry, variantId) => ({ sources: [], preferredVariantId: "", variantId });
+    player._startDownload = () => {};
+    player._prefetch = () => {};
+    player._ready = () => new Promise(() => {});
+    player._client = () => ({
+      mediaUrl: (variantId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/media/${variantId}?start=${Math.round(startMs)}`
+        : `/media/${variantId}`),
+      startDownload: async () => ({}),
+    });
+
+    await player.playVariant(track("a"), "v-room", { positionMs: 45000 });
+
+    assert.equal(audio.src, "/media/v-room?start=45000", "the request names where the room is");
+    assert.deepEqual(played, ["/media/v-room?start=45000"], "and that is what is heard from");
+    assert.equal(player.positionMs(), 45000, "so the song's own position starts there");
+  } finally {
+    player.audio = saved.audio;
+    player.ensureAudio = saved.ensureAudio;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._offline = saved.offline;
+    player._resolveFixed = saved.resolveFixed;
+    player._client = saved.client;
+    player._startDownload = saved.startDownload;
+    player._prefetch = saved.prefetch;
+    player._ready = saved.ready;
+    player._status = saved.status;
+    player._stream = saved.stream;
+    player._pendingSeek = saved.pendingSeek;
+    player._loading = saved.loading;
+    player.setRoom(saved.room);
+  }
+});
+
+// A stream has no length, so the element's own end cannot say whether the song
+// is over or the provider's section ran out under it. The length this app knows
+// decides: short of it the rest of the song is asked for from where it stopped,
+// at it the queue moves on, and with no length to judge by nothing is touched.
+test("a stream's own end is never read as the song's end", () => {
+  const saved = {
+    audio: player.audio,
+    variant: player._variant,
+    stream: player._stream,
+    streamResumedAt: player._streamResumedAt,
+    status: player._status,
+    queue: player.queue,
+    index: player._index,
+    client: player._client,
+    next: player.next,
+    wantResume: player._wantResume,
+    saveSoon: player._saveSoon,
+    room: player._room,
+  };
+  const played = [];
+  const audio = {
+    src: "/media/v-a?start=0",
+    currentTime: 5,
+    duration: Infinity,
+    paused: false,
+    ended: true,
+    volume: 1,
+    muted: false,
+    listeners: {},
+    addEventListener(name, fn) {
+      (this.listeners[name] = this.listeners[name] || []).push(fn);
+    },
+    removeEventListener(name, fn) {
+      this.listeners[name] = (this.listeners[name] || []).filter((each) => each !== fn);
+    },
+    fire(name) {
+      for (const fn of [...(this.listeners[name] || [])]) fn({ type: name });
+    },
+    play() {
+      this.paused = false;
+      played.push(this.src);
+      return { catch() {} };
+    },
+  };
+  let advanced = 0;
+  try {
+    player.setRoom(null);
+    player.audio = audio;
+    // The element's own handlers, which is what an ended event reaches.
+    player._wireAudio(audio);
+    player._variant = "v-a";
+    player._stream = { variantId: "v-a", startMs: 0, src: "/media/v-a?start=0", failed: false };
+    player._streamResumedAt = 0;
+    player._status = new Map();
+    player.queue = [{ id: "a", durationMs: 60000 }];
+    player._index = 0;
+    player._wantResume = () => {};
+    player._saveSoon = () => {};
+    player.next = () => {
+      advanced += 1;
+    };
+    player._client = () => ({
+      mediaUrl: (variantId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/media/${variantId}?start=${Math.round(startMs)}`
+        : `/media/${variantId}`),
+    });
+
+    audio.fire("ended");
+
+    assert.equal(audio.src, "/media/v-a?start=5000", "the rest of the song is asked for from where it stopped");
+    assert.deepEqual(played, ["/media/v-a?start=5000"], "and it carries on from there");
+    assert.equal(advanced, 0, "instead of the queue being moved on by an end nobody can judge");
+
+    // The element's clock runs from the new request's start, so 55 seconds of
+    // it is the end of a minute-long song.
+    audio.currentTime = 55;
+    audio.fire("ended");
+
+    assert.equal(advanced, 1, "a stream that reached the song's own end moves the queue on");
+    assert.equal(audio.src, "/media/v-a?start=5000", "without another request for bytes");
+
+    // With no length anywhere there is nothing to tell the two apart with.
+    audio.currentTime = 5;
+    player.queue = [{ id: "a" }];
+    audio.fire("ended");
+
+    assert.equal(advanced, 1, "an unknown length is never read as finished");
+    assert.equal(audio.src, "/media/v-a?start=5000", "nor is anything requested on a guess");
+  } finally {
+    player.audio = saved.audio;
+    player._variant = saved.variant;
+    player._stream = saved.stream;
+    player._streamResumedAt = saved.streamResumedAt;
+    player._status = saved.status;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._client = saved.client;
+    player.next = saved.next;
+    player._wantResume = saved.wantResume;
+    player._saveSoon = saved.saveSoon;
+    player.setRoom(saved.room);
+  }
+});
+
+// A file the backend already holds - the warm-ahead brought it before this song
+// was reached - is not streamed: the whole file goes on at once, and it can be
+// seeked within from the first moment. A `?start=` on it would be ignored (the
+// server answers a rendition on disk with the file) and a stream would be a
+// second fetch of bytes this page is about to be handed anyway.
+test("a rendition the backend already holds is played from the file itself", async () => {
+  const saved = {
+    ensureAudio: player.ensureAudio,
+    audio: player.audio,
+    queue: player.queue,
+    index: player._index,
+    offline: player._offline,
+    variantFor: player._variantFor,
+    client: player._client,
+    startDownload: player._startDownload,
+    prefetch: player._prefetch,
+    wantResume: player._wantResume,
+    ready: player._ready,
+    status: player._status,
+    stream: player._stream,
+    pendingSeek: player._pendingSeek,
+    loading: player._loading,
+    room: player._room,
+  };
+  const played = [];
+  const audio = {
+    src: "",
+    currentTime: 0,
+    duration: 200,
+    paused: true,
+    readyState: 0,
+    listeners: {},
+    addEventListener(name, fn) {
+      (this.listeners[name] = this.listeners[name] || []).push(fn);
+    },
+    removeEventListener(name, fn) {
+      this.listeners[name] = (this.listeners[name] || []).filter((each) => each !== fn);
+    },
+    fire(name) {
+      for (const fn of [...(this.listeners[name] || [])]) fn({ type: name });
+    },
+    removeAttribute() {},
+    load() {},
+    pause() {
+      this.paused = true;
+    },
+    play() {
+      this.paused = false;
+      played.push(this.src);
+      return { catch() {} };
+    },
+  };
+  try {
+    player.setRoom(null);
+    player.ensureAudio = () => audio;
+    player.audio = audio;
+    player.queue = queue("a");
+    player._index = 0;
+    player._offline = new Map();
+    player._variantFor = async (entry) => ({ variantId: `v-${entry.id}`, sources: [], preferredVariantId: "" });
+    player._startDownload = () => {};
+    player._prefetch = () => {};
+    player._wantResume = () => {};
+    player._client = () => ({
+      mediaUrl: (variantId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/media/${variantId}?start=${Math.round(startMs)}`
+        : `/media/${variantId}`),
+      startDownload: async () => ({}),
+    });
+    // A warm-ahead has already been told the file is here.
+    player._status = new Map([["v-a", { state: "ready", durationMs: 200000 }]]);
+    player._ready = async (variantId) => player._status.get(variantId) || { state: "none" };
+
+    await player._load(0, { autoplay: true, startMs: 45000 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    assert.equal(audio.src, "/media/v-a", "the whole file is what the element is given");
+    assert.equal(player._stream, null, "and nothing was streamed");
+    assert.equal(player._loading, false, "nothing had to be waited for");
+    assert.equal(player._pendingSeek, 45000, "and the position it asked for is applied to the file");
+    audio.fire("loadedmetadata");
+    assert.deepEqual(played, ["/media/v-a"], "which plays once the element can seek in it");
+  } finally {
+    player.ensureAudio = saved.ensureAudio;
+    player.audio = saved.audio;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._offline = saved.offline;
+    player._variantFor = saved.variantFor;
+    player._client = saved.client;
+    player._startDownload = saved.startDownload;
+    player._prefetch = saved.prefetch;
+    player._wantResume = saved.wantResume;
+    player._ready = saved.ready;
+    player._status = saved.status;
+    player._stream = saved.stream;
+    player._pendingSeek = saved.pendingSeek;
+    player._loading = saved.loading;
+    player.setRoom(saved.room);
+  }
+});
+
+// The DOM resolves `src` against the document, so the element holds an absolute
+// URL where the client builds a relative one. Comparing the stream's own path
+// with `audio.src` never matched: every stream looked like a file, so the
+// position had no offset, a seek was a `currentTime` a stream cannot honour, and
+// the hand-over took the branch that puts the whole file on the same element -
+// restarting the song at zero where everybody else is mid-song.
+test("a stream is recognised by the URL the element actually holds", async () => {
+  const saved = {
+    audio: player.audio,
+    spare: player._spare,
+    variant: player._variant,
+    stream: player._stream,
+    status: player._status,
+    queue: player.queue,
+    index: player._index,
+    client: player._client,
+    ready: player._ready,
+    pendingSeek: player._pendingSeek,
+    saveSoon: player._saveSoon,
+    wantResume: player._wantResume,
+    playingWanted: player._playingWanted,
+    document: globalThis.document,
+    room: player._room,
+  };
+  const played = [];
+  const audio = domAudio(played);
+  // The second element is a browser's too: the check that it can play what it
+  // was given compares URLs, so a spare that held its src verbatim would never
+  // match one the element resolved.
+  const spare = domAudio(played, { duration: 200 });
+  const tick = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  try {
+    globalThis.document = { baseURI: audio.baseURL };
+    player.setRoom(null);
+    player.audio = audio;
+    player._spare = spare;
+    player.queue = [{ id: "a", durationMs: 60000 }];
+    player._index = 0;
+    player._variant = "v-a";
+    player._status = new Map();
+    player._saveSoon = () => {};
+    player._wantResume = () => {};
+    player._client = () => ({
+      mediaUrl: (variantId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/api/v1/media/${variantId}?start=${Math.round(startMs)}&ms=local`
+        : `/api/v1/media/${variantId}?ms=local`),
+    });
+
+    // A room's song, joined forty-five seconds in.
+    player._pendingSeek = 45000;
+    player._playStream({ variantId: "v-a", autoplay: true });
+
+    // The client's path is root-relative, so the element resolves it to the
+    // origin - not to the document's own directory.
+    assert.equal(audio.src, "http://localhost/api/v1/media/v-a?start=45000&ms=local", "the element holds the absolute URL");
+    assert.equal(player._stream.src, audio.src, "and that is the URL the stream is held under");
+    assert.equal(player._streamingNow(), player._stream, "so the element is known to be playing a stream");
+
+    audio.currentTime = 5;
+    assert.equal(player.positionMs(), 50000, "and the song's position carries the offset");
+
+    // A seek inside a stream is a request, not a `currentTime` it cannot honour.
+    player.seek(90000);
+    assert.equal(audio.src, "http://localhost/api/v1/media/v-a?start=90000&ms=local");
+    assert.equal(player._stream.src, audio.src, "held the same way again");
+    assert.equal(player._pendingSeek, null, "with nothing left to land on");
+    audio.currentTime = 0;
+    assert.equal(player.positionMs(), 90000, "at the position that was asked for");
+
+    // And the file that lands is handed over to, not put on this element: the
+    // song carries on from where it is rather than starting again.
+    player._ready = async () => ({ state: "ready" });
+    player._pendingSeek = null;
+    await player._waitForFile({ variantId: "v-a", token: player._token, autoplay: true });
+    assert.equal(spare.src, "http://localhost/api/v1/media/v-a?ms=local", "the file is loaded on the second element");
+    assert.equal(audio.src, "http://localhost/api/v1/media/v-a?start=90000&ms=local", "while the stream keeps playing");
+
+    spare.readyState = 4;
+    spare.fire("canplay");
+    await tick(120);
+
+    assert.equal(player.audio, spare, "the file is the element in hand now");
+    assert.equal(spare.currentTime, 90, "at the position the music had reached");
+    assert.equal(player.positionMs(), 90000, "which is the song's own position");
+    assert.equal(player._stream, null, "and nothing is streaming any more");
+    assert.deepEqual(played, [
+      "http://localhost/api/v1/media/v-a?start=45000&ms=local",
+      "http://localhost/api/v1/media/v-a?start=90000&ms=local",
+      "http://localhost/api/v1/media/v-a?ms=local",
+    ], "the stream from the room's position, the stream again from the seek, then the file - never the file from the top");
+  } finally {
+    player.audio = saved.audio;
+    player._spare = saved.spare;
+    player._variant = saved.variant;
+    player._stream = saved.stream;
+    player._status = saved.status;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._client = saved.client;
+    player._ready = saved.ready;
+    player._pendingSeek = saved.pendingSeek;
+    player._saveSoon = saved.saveSoon;
+    player._wantResume = saved.wantResume;
+    player._playingWanted = saved.playingWanted;
+    if (saved.document === undefined) delete globalThis.document;
+    else globalThis.document = saved.document;
+    clearInterval(player._resumeTimer);
+    player._resumeTimer = 0;
+    player.setRoom(saved.room);
+  }
+});
+
+// An element the way a browser hands one over: `src` reads back resolved against
+// the document, which is where a relative path from the client and the element's
+// own absolute URL stop being the same string.
+const domAudio = (played, { baseURL = "http://localhost/app/", duration = Infinity } = {}) => {
+  const audio = {
+    baseURL,
+    _src: "",
+    currentTime: 0,
+    duration,
+    paused: false,
+    ended: false,
+    readyState: 0,
+    volume: 1,
+    muted: false,
+    listeners: {},
+    addEventListener(name, fn) {
+      (this.listeners[name] = this.listeners[name] || []).push(fn);
+    },
+    removeEventListener(name, fn) {
+      this.listeners[name] = (this.listeners[name] || []).filter((each) => each !== fn);
+    },
+    fire(name) {
+      for (const fn of [...(this.listeners[name] || [])]) fn({ type: name });
+    },
+    load() {},
+    pause() {
+      this.paused = true;
+    },
+    play() {
+      this.paused = false;
+      played.push(this.src);
+      return { catch() {} };
+    },
+    removeAttribute(name) {
+      if (name === "src") this._src = "";
+    },
+  };
+  Object.defineProperty(audio, "src", {
+    enumerable: true,
+    configurable: true,
+    get() {
+      return this._src;
+    },
+    set(value) {
+      this._src = new URL(value, baseURL).href;
+    },
+  });
+  return audio;
+};
+
+// The file the download made and the page's own copy of it can land within
+// moments of each other, and both want the one spare element. The newest wins;
+// the other stands down - and it has to stand down *before* the fallback that
+// moves the element in hand onto its own source, because that reset is what the
+// winner then reads its position from: the song rewound to zero at the one
+// moment the listener is mid-song.
+test("two hand-overs for one song do not fight over the element", async () => {
+  const saved = {
+    audio: player.audio,
+    spare: player._spare,
+    variant: player._variant,
+    stream: player._stream,
+    handOver: player._handOverId,
+    wantResume: player._wantResume,
+    pendingSeek: player._pendingSeek,
+    loading: player._loading,
+    room: player._room,
+  };
+  const played = [];
+  const audio = {
+    src: "/api/v1/media/v-a?start=45000&ms=local",
+    currentTime: 5,
+    duration: Infinity,
+    paused: false,
+    readyState: 4,
+    volume: 1,
+    muted: false,
+    listeners: {},
+    addEventListener(name, fn) {
+      (this.listeners[name] = this.listeners[name] || []).push(fn);
+    },
+    removeEventListener(name, fn) {
+      this.listeners[name] = (this.listeners[name] || []).filter((each) => each !== fn);
+    },
+    fire(name) {
+      for (const fn of [...(this.listeners[name] || [])]) fn({ type: name });
+    },
+    removeAttribute(name) {
+      if (name === "src") this.src = "";
+    },
+    load() {},
+    pause() {
+      this.paused = true;
+    },
+    play() {
+      this.paused = false;
+      played.push(this.src);
+      return { catch() {} };
+    },
+  };
+  const spare = spareElement(played);
+  const tick = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  try {
+    player.setRoom(null);
+    player.audio = audio;
+    player._spare = spare;
+    player._variant = "v-a";
+    player._loading = true;
+    player._handOverId = 0;
+    player._stream = { variantId: "v-a", startMs: 45000, src: audio.src, failed: false };
+    player._wantResume = () => {};
+    player._client = () => ({
+      mediaUrl: (variantId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/api/v1/media/${variantId}?start=${Math.round(startMs)}&ms=local`
+        : `/api/v1/media/${variantId}?ms=local`),
+    });
+
+    // The download's file, then the page's own copy of the same rendition - the
+    // second overwrites the spare the first is waiting on, exactly as they do
+    // when the two land together.
+    const file = player._handOverTo({ url: "/api/v1/media/v-a?ms=local" }, false, 4000);
+    const copy = player._handOverTo({ url: "blob:a" }, false, 2000);
+    spare.readyState = 4;
+    spare.fire("canplay");
+    await Promise.all([file, copy]);
+    await tick(120);
+
+    assert.equal(player.audio, spare, "the copy is the element in hand");
+    assert.equal(spare.src, "blob:a");
+    assert.equal(spare.currentTime, 50, "at the position the music had reached, not back at zero");
+    assert.equal(player.positionMs(), 50000, "which is the song's own position");
+    assert.equal(audio.src, "/api/v1/media/v-a?start=45000&ms=local", "and the element being left was never reset under it");
+    assert.equal(player._stream, null, "the stream is behind both of them");
+    assert.equal(player._loading, false);
+  } finally {
+    player.audio = saved.audio;
+    player._spare = saved.spare;
+    player._variant = saved.variant;
+    player._stream = saved.stream;
+    player._handOverId = saved.handOver;
+    player._wantResume = saved.wantResume;
+    player._pendingSeek = saved.pendingSeek;
+    player._loading = saved.loading;
     player.setRoom(saved.room);
   }
 });
@@ -1179,7 +2360,7 @@ test("a copy the browser will not start does not take over", async () => {
     player.setRoom(null);
     player.audio = audio;
     player._spare = spare;
-    await player._handOverToCopy({ url: "blob:a", variantId: "v-a" }, 42500, false);
+    await player._handOverTo({ url: "blob:a", variantId: "v-a" }, false);
 
     assert.equal(player.audio, audio, "the element in hand is still the one playing");
     assert.equal(audio.paused, false, "and it never stopped");
@@ -1315,7 +2496,11 @@ test("a song played from this page's own copy still names its source", () => {
 
 // A file that will not arrive gets one more attempt - on another source of the
 // same song when it has one, since what usually fails is one provider's file -
-// and then the queue carries on. Stopping on it is silence and a red line.
+// and then the queue carries on. Stopping on it is silence and a red line. A
+// load that is playing from a stream is not this case: there the sound is still
+// coming (see "a download that fails does not stop the stream that is playing"),
+// so what is exercised here is the load with no stream on the element at all -
+// the element has nothing to play, and the queue is what has to move.
 test("a file that will not arrive is tried from another source, then the queue moves on", async () => {
   const saved = {
     audio: player.audio,
@@ -1334,6 +2519,7 @@ test("a file that will not arrive is tried from another source, then the queue m
     room: player._room,
     retriedFor: player._retriedFor,
     failedVariant: player._failedVariant,
+    playStream: player._playStream,
   };
   const asked = [];
   const audio = {
@@ -1370,6 +2556,9 @@ test("a file that will not arrive is tried from another source, then the queue m
     player._index = 0;
     player._variant = "v-a";
     player._loading = true;
+    // The element is given no stream here: this is the load's file path on its
+    // own, with nothing of the song sounding from the provider's copy.
+    player._playStream = () => {};
     player.online = () => true;
     player._report = (error) => asked.push(`report:${error.message}`);
     player._reportListen = () => {};
@@ -1444,6 +2633,7 @@ test("a file that will not arrive is tried from another source, then the queue m
     player.setRoom(saved.room);
     player._retriedFor = saved.retriedFor;
     player._failedVariant = saved.failedVariant;
+    player._playStream = saved.playStream;
     clearInterval(player._resumeTimer);
     player._resumeTimer = null;
     clearTimeout(player._saveTimer);
@@ -2062,10 +3252,11 @@ test("a room's song is fetched without waiting for its sources", async () => {
 });
 
 // Changing songs takes the last one off the element. Paused and rewound is not
-// enough: anything that asks the element to play while the next file is being
-// fetched - the retry of a refused play, a wake-up - started the song that was
-// playing before, under a bar naming the new one.
-test("the song that was playing is unloaded when the track changes", async () => {
+// enough: anything that asks the element to play while the next one is on its
+// way - the retry of a refused play, a wake-up - started the song that was
+// playing before, under a bar naming the new one. The new song's own stream is
+// what goes on instead, so what a stray play starts is the song the bar names.
+test("the song that was playing is replaced when the track changes", async () => {
   const saved = {
     audio: player.audio,
     ensureAudio: player.ensureAudio,
@@ -2078,7 +3269,12 @@ test("the song that was playing is unloaded when the track changes", async () =>
     prefetch: player._prefetch,
     room: player._room,
     pendingSeek: player._pendingSeek,
+    stream: player._stream,
+    status: player._status,
+    playingWanted: player._playingWanted,
+    resume: player._resumeWanted,
   };
+  const played = [];
   const audio = {
     src: "/media/v-old",
     currentTime: 42,
@@ -2094,6 +3290,7 @@ test("the song that was playing is unloaded when the track changes", async () =>
     },
     play() {
       this.paused = false;
+      played.push(this.src);
       return { catch() {} };
     },
   };
@@ -2105,16 +3302,23 @@ test("the song that was playing is unloaded when the track changes", async () =>
     player._index = 0;
     player._startDownload = () => {};
     player._prefetch = () => {};
+    player._status = new Map();
     player._variantFor = async () => ({ variantId: "v-a", sources: [], preferredVariantId: "" });
+    player._client = () => ({
+      mediaUrl: (variantId, { startMs } = {}) => (Number.isFinite(Number(startMs))
+        ? `/media/${variantId}?start=${Math.round(startMs)}`
+        : `/media/${variantId}`),
+    });
     // The file is not here yet, which is the window this is about.
     player._ready = () => new Promise(() => {});
 
     await player._load(0, { autoplay: true });
 
-    assert.equal(audio.src, "", "the old song is off the element while the next one is fetched");
-    assert.equal(audio.paused, true, "and it is not playing");
-    assert.equal(player._playingWanted, false, "nothing is asking it to play while the file is on its way");
-    assert.equal(player._resumeWanted, false, "and the retry that wanted one is stopped");
+    assert.equal(audio.src, "/media/v-a?start=0", "the old song is off the element, replaced by the new one's stream");
+    assert.equal(played.includes("/media/v-old"), false, "and nothing started it again");
+    assert.deepEqual(played, ["/media/v-a?start=0"], "what plays is the song the bar names");
+    assert.equal(player._playingWanted, true, "and it is playing, not waiting");
+    assert.equal(audio.paused, false, "on the element itself");
   } finally {
     player.audio = saved.audio;
     player.ensureAudio = saved.ensureAudio;
@@ -2127,6 +3331,12 @@ test("the song that was playing is unloaded when the track changes", async () =>
     player._prefetch = saved.prefetch;
     player.setRoom(saved.room);
     player._pendingSeek = saved.pendingSeek;
+    player._stream = saved.stream;
+    player._status = saved.status;
+    player._playingWanted = saved.playingWanted;
+    player._wantResume(saved.resume);
+    clearInterval(player._resumeTimer);
+    player._resumeTimer = 0;
   }
 });
 

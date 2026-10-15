@@ -1,11 +1,14 @@
 // The playback engine and the now-playing bar.
 //
 // One audio element, one queue: a track is resolved to a source on the backend,
-// the file is fetched there and waited for, and only a whole file is handed to
-// the element - a whole file is what makes a seek instant instead of a
-// re-buffer. While it downloads the songs after it are asked for, and when the
-// page's own copy of the track that is playing arrives the element is moved
-// onto it, at the same position, so the rest of the song plays out of memory.
+// and a file that is not here yet is played from the provider's own stream -
+// the same song, arriving as it is fetched - while the download runs behind it.
+// The stream has no length and cannot be seeked, so the moment the backend
+// holds the file the element is handed over to it at the position the music has
+// reached: from then on the song is seekable and a replay is served from disk.
+// While it downloads the songs after it are asked for, and when the page's own
+// copy of the track that is playing arrives the element is moved onto it, at
+// the same position, so the rest of the song plays out of memory.
 // Everything else in the app talks to the `player` singleton and listens on
 // player.on(...).
 //
@@ -106,6 +109,22 @@ const FETCH_RETRY_PAUSE_MS = 700;
 // How long the copy is given to become playable on the second element before
 // the element in hand is moved onto it the old way.
 const COPY_READY_TIMEOUT_MS = 2000;
+// How long the file is given to become playable on the second element before
+// the streaming element in hand is moved onto it the old way. Longer than the
+// copy's: a blob is already in memory, while this is a file the element has to
+// fetch and decode the head of. The wait costs nothing - the stream is playing
+// throughout - so it is worth being patient for the gap-free switch.
+const FILE_READY_TIMEOUT_MS = 4000;
+// How far short of the length the app knows a stream has to end before its end
+// is read as the provider's section running out rather than the song finishing.
+const STREAM_END_SLACK_MS = 1500;
+// How many times a stream that would not play is asked for again before the
+// song is given up, and how long the first wait is. The server allows only a
+// couple of streams of one rendition and answers the rest `503` + `Retry-After:
+// 1`, so this is the queue a room of listeners joins; the waits then double, and
+// the whole set is about fifteen seconds for a download to land in.
+const STREAM_RETRIES = 4;
+const STREAM_RETRY_MS = 1000;
 // How long a start waits for the element to learn a file's length before the
 // play it was holding is let go. Nothing this page holds takes that long -
 // metadata follows the src almost at once - so the bound is only so a broken
@@ -242,17 +261,27 @@ export function nextIndex(queue, index, shuffle = false) {
   return playing && pick >= index ? pick + 1 : pick;
 }
 
-/** The queue with everything after `index` shuffled, the head untouched. */
-export function shuffleTail(queue, index, random = Math.random) {
+/** The whole queue shuffled, with the song that is playing left where it is.
+ *
+ * It used to shuffle only what came after the current song, which made the
+ * button a lie from the queue's own page: the list somebody is looking at stays
+ * in the order it was in, and only the part they cannot see moves. What is
+ * behind the playhead is not a reason to leave it in order - it is a queue, and
+ * the whole of it is what the button says it shuffles.
+ */
+export function shuffleWhole(queue, index, random = Math.random) {
   const list = [...(queue || [])];
-  const head = Math.max(0, Math.floor(Number(index) || 0)) + 1;
-  const tail = list.slice(head);
-  if (tail.length < 2) return list;
-  for (let i = tail.length - 1; i > 0; i -= 1) {
+  const playing = Math.max(0, Math.floor(Number(index) || 0));
+  const rest = list.filter((_, position) => position !== playing);
+  if (rest.length < 2) return list;
+  for (let i = rest.length - 1; i > 0; i -= 1) {
     const j = Math.floor(random() * (i + 1));
-    [tail[i], tail[j]] = [tail[j], tail[i]];
+    [rest[i], rest[j]] = [rest[j], rest[i]];
   }
-  return list.slice(0, head).concat(tail);
+  // Put back in one pass, so the playing song keeps its place in the list and
+  // the queue keeps playing it.
+  let next = 0;
+  return list.map((entry, position) => (position === playing ? entry : rest[next++]));
 }
 
 /** A track's artists as one line: the API sends a list. */
@@ -410,6 +439,19 @@ class Player {
     this._token = 0;              // which track the async work is still for
     this._loading = false;
     this._loadFor = "";           // the "track|variant" the load under way is for
+    // The streamed answer the element in hand is playing, while it is one:
+    // {variantId, startMs, src, failed}. A stream begins where its request
+    // named, so the element's own clock is that far into the song, and the
+    // length of the song is not the length of what the element holds.
+    this._stream = null;
+    // Where a stream that ran out was last asked to resume from, so the same
+    // stopped position is not asked for again and again (see `_streamEnded`).
+    this._streamResumedAt = 0;
+    // Which hand-over is the current one. Two can be in flight for the same song
+    // - the file the download finished and the page's own copy of it, both
+    // wanting the one spare element - and only the newest may touch anything
+    // (see `_handOverTo`).
+    this._handOverId = 0;
     this._buffering = false;      // the file is here, the sound is not yet
     this._progress = -1;          // this stage's share, or -1 while nothing is countable
     this._stage = "";             // which stage that share belongs to
@@ -676,11 +718,28 @@ class Player {
     room[name]?.(arg);
   }
 
-  /** Go to a position in the current track. Remembers it if the file is still loading. */
+  /** Go to a position in the current track. Remembers it if the file is still loading.
+   *
+   *  A seek inside a stream cannot be a range: a streamed answer has no length
+   *  and nothing to seek within, so the seek is a new request for the song from
+   *  that position onwards - `?start=<ms>` - and the sound carries on there. A
+   *  short gap while it reconnects is the honest cost of playing without
+   *  waiting for the file; a whole file, once it has been handed over to, is
+   *  seeked in place as it always was. */
   seek(ms) {
     const target = Math.max(0, Math.round(Number(ms) || 0));
     const audio = this.audio;
-    if (!audio || !audio.src || !audio.duration) {
+    if (!audio || !audio.src) {
+      this._pendingSeek = target;
+      return;
+    }
+    // The stream a seek has to re-request, when this element is playing one.
+    const stream = this._streamingNow();
+    if (stream) {
+      this._seekStream(stream, target);
+      return;
+    }
+    if (!audio.duration) {
       this._pendingSeek = target;
       return;
     }
@@ -693,23 +752,110 @@ class Player {
     this._saveSoon();
   }
 
+  /**
+   * Ask the backend for the rest of the song from `target`, and keep playing.
+   *
+   * The element is given the same rendition at the new position: the request is
+   * the seek, and the sound starts again where it was asked to. Nothing is left
+   * pending - a stream starts at the position its URL names, so there is
+   * nothing to land on afterwards - and the playing state carries over, so a
+   * seek does not need a second press of the button to be heard.
+   */
+  _seekStream(stream, target) {
+    const audio = this.audio;
+    if (!audio) return;
+    const wasPlaying = this._playingWanted || audio.paused === false;
+    stream.startMs = target;
+    audio.src = this._client().mediaUrl(stream.variantId, { startMs: target });
+    stream.src = this._elementUrl(audio.src);
+    this._pendingSeek = null;
+    this._positionEvent();
+    this._saveSoon();
+    if (!wasPlaying) return;
+    this._wantResume(true);
+    this._play();
+  }
+
   positionMs() {
     const audio = this.audio;
     if (!audio || !Number.isFinite(audio.currentTime)) return 0;
-    return Math.round(audio.currentTime * 1000);
+    // A stream's own clock starts where the request did, so the element's
+    // currentTime is that much short of where the song is.
+    return this._streamOffsetMs() + Math.round(audio.currentTime * 1000);
+  }
+
+  /** A media URL as the element will hold it.
+   *
+   *  The client builds a relative path (`/api/v1/media/...`), and the DOM
+   *  resolves what it is given against the document: the element's own `src` is
+   *  absolute, so a relative path is never equal to it. Everything that compares
+   *  the two - is this the stream I set, is the element already on the file -
+   *  has to resolve the same way the element does.
+   */
+  _elementUrl(url) {
+    const value = String(url || "");
+    if (!value) return value;
+    if (typeof document === "undefined" || !document.baseURI) return value;
+    try {
+      return new URL(value, document.baseURI).href;
+    } catch {
+      return value;
+    }
+  }
+
+  /** The streamed answer the element in hand is playing, if it is one.
+   *
+   *  The element's own src is what settles it: a stale note of a stream left
+   *  from an earlier load - or one whose element has since been given a file -
+   *  is not a stream, and reading the state alone would put a position on an
+   *  element that does not have one. */
+  _streamingNow() {
+    const stream = this._stream;
+    const audio = this.audio;
+    if (!stream || !audio || !stream.src || audio.src !== stream.src) return null;
+    return stream;
+  }
+
+  /** Let go of the stream the element was playing, and of any retry it had
+   *  waiting for: whatever is put on the element next is its source now. */
+  _dropStream() {
+    const stream = this._stream;
+    if (stream) clearTimeout(stream.retryTimer);
+    this._stream = null;
+  }
+
+  /** Where the element's own clock starts in the song: the position its stream
+   *  was requested from, or zero for a file, which begins at the beginning. */
+  _streamOffsetMs() {
+    const stream = this._streamingNow();
+    return stream ? Math.max(0, Math.round(Number(stream.startMs) || 0)) : 0;
   }
 
   /** The length of this local audio source, or 0 before metadata arrives.
-   *  It can differ from the host's room duration. */
+   *  It can differ from the host's room duration, and a streamed answer has no
+   *  length at all: the element reports Infinity for it. */
   measuredDurationMs() {
     const audio = this.audio;
     if (audio && Number.isFinite(audio.duration) && audio.duration > 0) return Math.round(audio.duration * 1000);
     return 0;
   }
 
+  /**
+   * How long the song is, from whatever this page knows.
+   *
+   * A whole file is measured from the element. A stream has no length to
+   * measure - it is a fetch arriving, and the element reads Infinity - so the
+   * length the app already knows is what the timeline and the position
+   * arithmetic run on: the status the backend reports the rendition with (the
+   * same number the stream's `X-Musoak-Duration` carries, which an element's
+   * response headers cannot be read from), and failing that the track's own
+   * length. Without this a streamed song is a bar that cannot say where it is.
+   */
   durationMs() {
     const measured = this.measuredDurationMs();
     if (measured > 0) return measured;
+    const reported = Math.round(Number(this._status.get(this._variant)?.durationMs) || 0);
+    if (reported > 0) return reported;
     return Math.round(Number(this.current()?.durationMs) || 0);
   }
 
@@ -790,8 +936,8 @@ class Player {
 
   /** Shuffle what is left of the queue, keeping the current track playing. */
   shuffleQueue() {
-    if (this.queue.length - (this._index + 1) < 2) return false;
-    this.queue = shuffleTail(this.queue, this._index);
+    if (this.queue.length < 2) return false;
+    this.queue = shuffleWhole(this.queue, this._index);
     this._emit("queue-changed", this.queue);
     this._prefetch();
     return true;
@@ -1263,6 +1409,8 @@ class Player {
     this._variant = "";
     this._source = null;
     this._sources = { sources: [], preferredVariantId: "" };
+    // Whatever was streaming stopped being this load's the moment it began.
+    this._dropStream();
     this._pendingSeek = Math.max(0, Math.round(Number(startMs) || 0));
 
     if (!track) {
@@ -1355,25 +1503,27 @@ class Player {
       // The copy is already here: nothing to fetch and nothing to wait for.
       audio.src = kept.url;
     } else {
-      // The file is fetched and then played, rather than streamed as it is
-      // fetched. A stream buys seconds at the start and costs a song that cannot
-      // be seeked: the routed bytes start at zero, so a room's position or a
-      // resumed one plays the beginning for a moment and then stalls until the
-      // download reaches the position anyway. Asked for now, shown as
-      // downloading in the bar, played when it is whole - and the server serves
-      // a whole file with byte ranges, so every seek after that is instant.
-      // Primary: this is the song the bar is naming and a person is waiting for,
-      // so the backend gives it the whole pipe - the prefetch's downloads for
-      // other songs are cancelled for it, and it starts as fast as the provider
-      // can go. The songs after this one are asked for below, which is why they
-      // are not primary: they are for later.
+      // A file that is not here yet plays from the provider's own stream, and
+      // the file is fetched behind it. Waiting for the whole file first meant
+      // silence for the provider's startup *plus* the transfer, the conversion
+      // and the probe; the stream is the same song from the same source, so
+      // what is heard arrives in the startup time alone. What the stream cannot
+      // do - be seeked, be replayed, outlive a dropped provider connection -
+      // the file does, and it takes over the moment it lands (see `_playStream`
+      // and `_waitForFile`). Primary: this is the song the bar is naming and a
+      // person is waiting for, so the backend gives it the whole pipe - the
+      // prefetch's downloads for other songs are cancelled for it, and it
+      // starts as fast as the provider can go. The songs after this one are
+      // asked for below, which is why they are not primary: they are for later.
       this._startDownload(resolved.variantId, null, true);
       // The songs after this one are asked for now, while this one downloads:
       // the page holds them by the time they are reached, and outside a room
       // it keeps its own copies of the window ahead as it always did. This is
       // the line the early return below used to skip.
       this._prefetch();
-      this._waitForFile({ variantId: resolved.variantId, token, autoplay: Boolean(autoplay) });
+      const attempt = { variantId: resolved.variantId, token, autoplay: Boolean(autoplay) };
+      this._playStream(attempt);
+      this._waitForFile(attempt);
       return;
     }
     this._loading = false;
@@ -1631,19 +1781,213 @@ class Player {
   }
 
   /**
-   * Fetch the file the load is for, and play it when the backend holds it.
+   * Give the element the song now, from the provider's own stream.
    *
-   * This is the load's own path now, not a fallback: what plays is always a
-   * whole file, which is what makes a seek - a room's position, a resumed one -
-   * instant instead of a re-buffer. The bar says it is downloading while it is.
+   * A file this page does not have is not silence while it arrives: the
+   * backend streams the same song from the provider's own fetch, and the
+   * request names the position the load wants (`?start=<ms>`), so a listener
+   * joining a song already playing - a room's, a resumed session's - hears the
+   * rest of it rather than the head. The bar keeps showing the download this
+   * started, because the download is still the thing that finishes the song.
+   *
+   * The position lives in the URL rather than in a seek: a stream has no
+   * length, so nothing is left pending on the element (and the element's own
+   * clock starts at zero, which is why `positionMs()` carries the offset).
+   *
+   * Nothing is streamed when the backend already holds the file: that is the
+   * whole rendition, and it goes on the element at once, at the position this
+   * load asked for - a file can be seeked within, so there is nothing to
+   * re-request.
+   */
+  _playStream(attempt) {
+    const audio = this.audio;
+    if (!audio) return;
+    // A file the backend already holds - a warm-ahead brought it before this
+    // song was reached - is not streamed: the whole file goes on at once and
+    // can be seeked within immediately, while a stream of it would be a second
+    // fetch of the same bytes, unseekable for as long as it lasted, and a
+    // `?start=` the server ignores for a rendition that is on disk. The wait
+    // for the file hands the element that whole file instead.
+    if (this._status.get(attempt.variantId)?.state === "ready") return;
+    const startMs = Math.max(0, Math.round(Number(this._pendingSeek) || 0));
+    this._pendingSeek = null;
+    audio.src = this._client().mediaUrl(attempt.variantId, { startMs });
+    // Read back off the element: this is the URL the element itself holds, and
+    // the one every later comparison and re-request is made against.
+    this._stream = {
+      variantId: String(attempt.variantId),
+      startMs,
+      src: this._elementUrl(audio.src),
+      failed: false,
+    };
+    this.renderBar();
+    if (!attempt.autoplay) {
+      // Where the song starts is the URL's business now, so nothing is pending;
+      // the bar shows a stopped player for a song nobody has started yet.
+      this._stateEvent();
+      return;
+    }
+    this._wantResume(true);
+    this._play();
+    // Not buffering: the sound is on its way from the provider's own fetch in
+    // the time a whole file's arrival used to take, and saying "loading" over
+    // a song that is about to be heard is the bar calling the wait it did not
+    // have. The download's own progress is on the bar throughout.
+    this._setBuffering(false);
+  }
+
+  /**
+   * Ask for a stream that would not play again, when it is worth asking.
+   *
+   * The backend serves a couple of streams of one rendition at a time and
+   * answers the rest `503` with `Retry-After: 1`, on purpose: the same bytes are
+   * not fetched three times, and by the time a listener comes back the download
+   * behind them has the file, which the same URL then answers whole and
+   * uncapped. A room of people pressing play together is exactly that queue, so
+   * a media error while the status still says the song is downloading is a wait,
+   * not a broken source - and skipping past a song everybody else is hearing is
+   * the one thing a listener must not do about it.
+   *
+   * The waits back off (a second, then two, four, eight) and they are bounded:
+   * a rendition the backend has called failed is not asked for again, and
+   * neither is one that has spent its attempts - that is a load the element
+   * cannot play, and the usual road (another source, then the queue) is what is
+   * left. An element cannot read the response's own `Retry-After`, so the second
+   * the server names is where the first wait starts.
+   *
+   * Says whether another ask was started. Nothing of the download is reset - the
+   * bar keeps its progress - and the queue is untouched.
+   */
+  _retryStream(stream) {
+    if (this._status.get(stream.variantId)?.state === "failed") return false;
+    const attempts = (Number(stream.attempts) || 0) + 1;
+    if (attempts > STREAM_RETRIES) return false;
+    stream.attempts = attempts;
+    // Where the listener had got to: the ask is for the rest of the song, not
+    // for its beginning again.
+    const at = Math.max(0, Math.round(Number(this.positionMs()) || 0));
+    clearTimeout(stream.retryTimer);
+    stream.retryTimer = setTimeout(() => {
+      stream.retryTimer = 0;
+      if (this._streamingNow() !== stream) return;   // the element has moved on
+      const audio = this.audio;
+      if (!audio) return;
+      const state = this._status.get(stream.variantId)?.state;
+      if (state === "failed") {
+        this._abandonLoad();
+        return;
+      }
+      // A session that went away while the wait ran has no media URLs to build:
+      // nothing to ask for, and nothing to say about it either.
+      const client = this._clientIfAny();
+      if (!client) return;
+      // The download may have won the race: then the URL answers the whole
+      // file, which is seeked into rather than asked to start at a position
+      // the server ignores for a rendition that is on disk.
+      const ready = state === "ready";
+      this._pendingSeek = ready ? at : null;
+      audio.src = ready
+        ? client.mediaUrl(stream.variantId)
+        : client.mediaUrl(stream.variantId, { startMs: at });
+      stream.startMs = at;
+      stream.src = this._elementUrl(audio.src);
+      if (ready) {
+        // A whole file on its way is not a stream any more.
+        this._dropStream();
+        this._loading = false;
+        this._stateEvent();
+      }
+      // The same URL the element already failed on is still a load: an element
+      // will not always re-fetch what it holds, and `load` says to.
+      try {
+        audio.load();
+      } catch {
+        /* nothing to reload yet */
+      }
+      if (!this._playingWanted) return;              // paused: it waits where it is
+      this._wantResume(true);
+      this._startAudio(ready ? at : 0);
+    }, STREAM_RETRY_MS * 2 ** (attempts - 1));
+    return true;
+  }
+
+  /** Give up on a load the element cannot play: another source of it, then the
+   *  queue. Used where the song really has failed - the stream is given up
+   *  first, so nothing is left thinking it is still sounding. */
+  _abandonLoad(error = "could not play that file") {
+    this._dropStream();
+    this._loading = false;
+    this._buffering = false;
+    if (!this.online() && this._skipUnavailable()) return;
+    this._error = error;
+    this._stateEvent();
+    this._failedVariant = String(this._variant || "");
+    this._recoverFromFailure();
+  }
+
+  /**
+   * What the end of a streamed answer means.
+   *
+   * A stream's length is unknown - the element reports Infinity for it - so its
+   * own end cannot say whether the song finished or the provider's section ran
+   * out under it. The length this app knows can. At the end of it the song
+   * really is over, and the queue moves on as it would for a file; short of it,
+   * what stopped is the bytes and not the song, so the rest of it is asked for
+   * from where it stopped - the same request a seek makes - and the sound
+   * carries on. A song whose length nobody knows is left where it is: there is
+   * nothing to tell the two apart with, and a queue advanced on a guess skips
+   * music.
+   */
+  _streamEnded() {
+    const known = this.durationMs();
+    const at = this.positionMs();
+    if (!(known > 0)) return;
+    if (at < known - STREAM_END_SLACK_MS) {
+      // A stream that stops again where the last one stopped - a position past
+      // the end the provider really has - is not asked for a third time, so
+      // this cannot turn into a loop of requests and silence.
+      if (at <= Math.max(0, Number(this._streamResumedAt) || 0) + 1000) return;
+      this._streamResumedAt = at;
+      const stream = this._streamingNow();
+      if (!stream) return;
+      this._seekStream(stream, at);
+      return;
+    }
+    if (!this._room || this._room.hostPlayback) this.next();
+  }
+
+  /**
+   * Wait for the file the load is for, and hand the element over to it.
+   *
+   * The song is already playing from the stream by now (see `_playStream`);
+   * this is the other half of it: when the backend holds the file, the same URL
+   * answers with the whole thing, and the element is moved onto it at the
+   * position the music has reached - seekable from then on, and a replay served
+   * from disk.
+   *
+   * A download that fails is not the song stopping: the stream is still coming
+   * from the provider's own copy, and a file that will never land is no reason
+   * to cut the sound off. Only a load that is not streaming - one the element
+   * was waiting on for a file it has no other way to play - takes the old road
+   * of a retry and then the next song.
    */
   async _waitForFile(attempt) {
     // Primary: the player is holding a load on this file, so it owns the pipe
     // until it is here.
     const status = await this._ready(attempt.variantId, attempt.token, true);
     if (attempt.token !== this._token || status === null) return;
+    const streaming = this._streamingNow();
+    const mine = Boolean(streaming && streaming.variantId === String(attempt.variantId));
     if (status.state === "failed") {
       this._loading = false;
+      if (mine) {
+        // Left alone on purpose: what is playing is the provider's own copy,
+        // and it plays out. The status stays on the rendition, so the bar and
+        // the source list keep saying the download did not finish.
+        streaming.failed = true;
+        this._stateEvent();
+        return;
+      }
       this._error = status.error || "that file could not be downloaded";
       this._stateEvent();
       if (!this.online()) {
@@ -1658,16 +2002,31 @@ class Player {
     }
     const audio = this.audio;
     if (!audio) return;
-    audio.src = this._client().mediaUrl(attempt.variantId);
+    const url = this._client().mediaUrl(attempt.variantId);
     this._loading = false;
     this._stateEvent();
     this.renderBar();
-    if (!attempt.autoplay) return;
-    this._wantResume(true);
-    // The position the song was asked to start at, applied before any sound -
-    // the file is whole here, and a seek into it is free.
-    this._startAudio(this._pendingSeek);
-    this._setBuffering(audio.readyState < 3);
+    if (!mine) {
+      // Nothing of this load is on the element - a stream that never started,
+      // or one the track has already moved off - so the file is simply given to
+      // it, as it always was. What the page's own copy has taken over with is
+      // left alone: that is the same rendition already in memory, and the file
+      // the backend has just finished has nothing better to give.
+      const kept = this._offline.get(String(this.current()?.id || ""));
+      if (audio.src === this._elementUrl(url) || (kept?.state === "ready" && kept.url === audio.src)) return;
+      this._dropStream();
+      audio.src = url;
+      if (!attempt.autoplay) return;
+      this._wantResume(true);
+      // The position the song was asked to start at, applied before any sound -
+      // the file is whole here, and a seek into it is free.
+      this._startAudio(this._pendingSeek);
+      this._setBuffering(audio.readyState < 3);
+      return;
+    }
+    // The stream is playing and the file has landed: move onto it without a
+    // gap, at the position the music has actually reached.
+    this._handOverTo({ url }, audio.paused !== false, FILE_READY_TIMEOUT_MS);
   }
 
   /** Ask the backend for a file, once - twice if this is the song being waited
@@ -1945,32 +2304,34 @@ class Player {
     const track = this.current();
     if (!track || String(track.id) !== id) return false;
     if (!this._variant || entry.variantId !== this._variant) return false;
-    if (audio.src === entry.url) return false;     // already the copy; never swap back
+    if (audio.src === this._elementUrl(entry.url)) return false;   // already the copy; never swap back
     // A page nobody is looking at must not be handed a new source: changing
     // `src` and asking to play is the one thing a hidden tab can refuse, and a
     // refusal there is the session stopping until somebody presses play. The
     // copy is kept either way, and the next load - or the next time this page
     // is visible - plays it from memory without a swap at all.
     if (this._hidden()) return false;
-    const atMs = Math.max(0, Math.round((Number(audio.currentTime) || 0) * 1000));
     const wasPaused = audio.paused !== false;
     // A source change is a pipeline reset, and that reset is the outage heard
     // when the page's own copy takes over mid-song. The copy goes onto a second
     // element instead, brought up to the position while the routed URL is still
     // playing, and the switch is then that element's play.
-    this._handOverToCopy(entry, atMs, wasPaused);
+    this._handOverTo(entry, wasPaused);
     return true;
   }
 
   /**
-   * The second element a copy is handed over to, made once and kept.
+   * The second element a hand-over is made onto, once and kept.
    *
    * It is a whole element of the player's own, wired the same way, because the
    * hand-over makes it the element in hand: whatever it is playing, the queue,
-   * the bar and the room all follow it from that moment on.
+   * the bar and the room all follow it from that moment on. A page with no
+   * second element to give returns nothing, and the caller moves the element it
+   * has onto the new source instead - a gap, but the song carries on.
    */
   _spareAudio() {
     if (this._spare) return this._spare;
+    if (typeof Audio !== "function") return null;
     const audio = new Audio();
     audio.preload = "auto";
     this._wireAudio(audio);
@@ -1987,38 +2348,57 @@ class Player {
   }
 
   /**
-   * Hand the playing element over to the page's own copy, without a gap.
+   * Hand the playing element over to another source, without a gap.
    *
-   * The copy is loaded on the second element and the music carries on from the
-   * routed URL while it gets there - a blob in memory is quick, and the whole
+   * The new source is loaded on the second element and the music carries on
+   * from what is playing while it gets there - a blob in memory or the file the
+   * backend has just finished are both there within moments, and the whole
    * point of this is that nobody hears it happen. The position is taken at the
-   * moment of the switch rather than when the copy landed, so nothing is
-   * rewound or skipped by however long that took.
+   * moment of the switch rather than when the new source landed, so nothing is
+   * rewound or skipped by however long that took; it is the song's own position,
+   * which a stream's offset is part of (see `positionMs`).
    */
-  async _handOverToCopy(entry, atMs, wasPaused) {
+  async _handOverTo(target, wasPaused, timeoutMs = COPY_READY_TIMEOUT_MS) {
     const from = this.audio;
     if (!from) return;
+    // This hand-over's own place in the queue, and what the element being left
+    // is playing. Two of these can be in flight for one song - the file the
+    // download made and the page's own copy of it land within moments of each
+    // other - and there is only one spare element to switch onto, so the newest
+    // one wins and every older one stands down. Standing down has to happen
+    // before the fallback below, or a superseded hand-over moves the element in
+    // hand onto its own source under the winner and the position read from it
+    // afterwards is the zero of a source that was just reset: the rewind this
+    // exists to prevent.
+    const id = (this._handOverId += 1);
+    const leaving = String(from.src || "");
     const spare = this._spareAudio();
-    this._loadCopy(spare, entry.url);
-    const ready = await this._whenPlayable(spare, entry.url, COPY_READY_TIMEOUT_MS);
-    if (from !== this.audio) return;              // the track changed while waiting
-    if (!ready) {
-      // The copy never became playable on the second element. Moving the
-      // element in hand onto it is the gap this exists to avoid, but a gap is
-      // not silence, and the copy is the only thing left to play.
-      this._moveOntoCopy(entry, atMs, wasPaused);
+    if (!spare) {
+      this._moveOntoTarget(target, wasPaused);
       return;
     }
-    // Where the music is now, not where it was when the copy landed.
-    const at = Math.max(0, Math.round((Number(from.currentTime) || 0) * 1000));
+    this._loadCopy(spare, target.url);
+    const ready = await this._whenPlayable(spare, target.url, timeoutMs);
+    // Anything newer - another hand-over, a load, a seek - has taken the element
+    // over in the meantime, or changed what it is playing: this one is done.
+    if (id !== this._handOverId || from !== this.audio || String(from.src || "") !== leaving) return;
+    if (!ready) {
+      // The new source never became playable on the second element. Moving the
+      // element in hand onto it is the gap this exists to avoid, but a gap is
+      // not silence, and it is the only thing left to play.
+      this._moveOntoTarget(target, wasPaused);
+      return;
+    }
+    // Where the music is now, not where the new source landed.
+    const at = this.positionMs();
     try {
       spare.currentTime = at / 1000;
     } catch {
       /* not seekable yet: it starts at the top */
     }
     if (wasPaused) {
-      // Nothing was playing, so nothing has to be faded: the copy simply
-      // becomes the element, still paused, at the same position.
+      // Nothing was playing, so nothing has to be faded: the new element
+      // simply becomes the element, still paused, at the same position.
       this._adoptCopy(spare, at);
       return;
     }
@@ -2026,7 +2406,7 @@ class Player {
       await spare.play();
     } catch {
       // The browser would not start it. The element in hand keeps the sound
-      // going, and the copy is taken up at the next load instead.
+      // going, and what was handed over to is taken up at the next load instead.
       return;
     }
     if (from !== this.audio) return;
@@ -2042,6 +2422,9 @@ class Player {
     const from = this.audio;
     this.audio = next;
     this._spare = from;
+    // The element in hand now holds a whole source of its own; whatever was
+    // streaming is behind it, and its clock is the song's from here on.
+    this._dropStream();
     // The names follow the elements: `data-e2e=audio` is always the one
     // playing, whichever element that is after a hand-over.
     if (from && from.dataset) from.dataset.e2e = "audio-spare";
@@ -2055,12 +2438,16 @@ class Player {
     this.renderBar();
   }
 
-  /** The element in hand is given the copy: the fallback for a spare that never came up. */
-  _moveOntoCopy(entry, atMs, wasPaused) {
+  /** The element in hand is given the new source: the fallback for a second
+   *  element that is not there or never came up. A gap, not silence. */
+  _moveOntoTarget(target, wasPaused) {
     const audio = this.audio;
     if (!audio) return;
+    const atMs = this.positionMs();
     this._pendingSeek = atMs;
-    audio.src = entry.url;
+    // Whatever was streaming is being replaced by a whole source.
+    this._dropStream();
+    audio.src = target.url;
     if (wasPaused) return;
     this._wantResume(true);
     this._startAudio(atMs);
@@ -2070,7 +2457,7 @@ class Player {
   _loadCopy(audio, url) {
     audio.volume = this._volume;
     audio.muted = this._muted;
-    if (audio.src === url) return;
+    if (audio.src === this._elementUrl(url)) return;
     audio.src = url;
     try {
       audio.load();
@@ -2081,7 +2468,11 @@ class Player {
 
   /** Whether an element can play the URL it was given, waited for up to `ms`. */
   _whenPlayable(audio, url, ms) {
-    if (audio.src === url && audio.readyState >= 3) return Promise.resolve(true);
+    // Whether it is the right source is settled on the URL the element holds,
+    // not on the path it was given: they are the same string only until the DOM
+    // resolves one of them.
+    const wanted = this._elementUrl(url);
+    if (audio.src === wanted && audio.readyState >= 3) return Promise.resolve(true);
     return new Promise((resolve) => {
       let timer = null;
       const finish = (ok) => {
@@ -2090,7 +2481,7 @@ class Player {
         audio.removeEventListener("error", onError);
         resolve(ok);
       };
-      const onCanPlay = () => finish(audio.src === url && audio.readyState >= 3);
+      const onCanPlay = () => finish(audio.src === wanted && audio.readyState >= 3);
       const onError = () => finish(false);
       audio.addEventListener("canplay", onCanPlay);
       audio.addEventListener("error", onError);
@@ -2220,6 +2611,13 @@ class Player {
       if (audio !== this.audio) return;
 
       this._setBuffering(false);
+      // A streamed answer has no length, so the element's own end cannot say
+      // whether the song is over or the bytes ran out under it: that decision
+      // is made on the length this app knows, and never on a guess.
+      if (!Number.isFinite(audio.duration)) {
+        this._streamEnded();
+        return;
+      }
       // The room host is a normal queue player: its own queue advances on the
       // element's end. Followers never advance locally; the host's next sync
       // tells them which song is on.
@@ -2229,6 +2627,20 @@ class Player {
       if (audio !== this.audio) return;
 
       if (!this._variant) return;
+      // A streamed answer that would not play: while the download behind it is
+      // still going this is the backend's own queue for a stream it only serves
+      // a couple of at a time, and the song is waited for rather than skipped
+      // (see `_retryStream`). Once that is spent - or the download has failed,
+      // or the element has moved on - the stream is given up and the usual
+      // recovery has it: another source, then the queue. Giving the stream up
+      // is also what stops `_waitForFile` deciding the song is still sounding
+      // when its download fails afterwards.
+      const stream = this._streamingNow();
+      if (stream) {
+        if (this._retryStream(stream)) return;
+        this._abandonLoad();
+        return;
+      }
       // A load still in flight means this is the error of a file the element
       // has already been moved off: it is not this song's failure to act on.
       const settled = !this._loading;
@@ -2506,6 +2918,7 @@ class Player {
 
   _stopAudio() {
     this._playingWanted = false;
+    this._dropStream();
     if (!this.audio) return;
     this.audio.pause();
     this.audio.removeAttribute("src");
@@ -2600,7 +3013,10 @@ class Player {
     // backgrounded phone needs to be allowed to start the next file at all.
     session.playbackState = this._playingWanted ? "playing" : "paused";
     if (typeof session.setPositionState !== "function") return;
-    const duration = this.measuredDurationMs();
+    // The length the app knows, not only the one the element measured: a
+    // streamed song has no measured length, and a lock screen with no position
+    // on it is a lock screen that cannot be scrubbed.
+    const duration = this.durationMs();
     const position = this.positionMs();
     if (duration <= 0 || position < 0 || position > duration) return;
     try {

@@ -127,3 +127,19 @@ test("an import is named for its folder, and loose files fall back", () => {
   assert.equal(importPlaylistName([]), "Imported songs");
   assert.equal(importPlaylistName(), "Imported songs");
 });
+
+// A playlist link pasted into the search box is not a search: it is the other
+// tab's job, and the dialog should get out of the way and go there.
+test("a pasted playlist link is recognised from the search box", async () => {
+  const { looksLikePlaylistLink } = await import("../views/playlists.js");
+
+  assert.equal(looksLikePlaylistLink("https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M"), true);
+  assert.equal(looksLikePlaylistLink("https://open.spotify.com/playlist/37i9dQ?si=abc&utm_source=copy-link"), true);
+  assert.equal(looksLikePlaylistLink("https://music.youtube.com/playlist?list=PL123"), true);
+  assert.equal(looksLikePlaylistLink("https://youtu.be/abc123"), true);
+
+  assert.equal(looksLikePlaylistLink("nine inch nails"), false, "words to search for are words");
+  assert.equal(looksLikePlaylistLink("open.spotify.com/playlist/x"), false, "a link is a URL, scheme and all");
+  assert.equal(looksLikePlaylistLink("https://example.com/playlist/x"), false, "a host this dialog cannot read");
+  assert.equal(looksLikePlaylistLink(""), false);
+});

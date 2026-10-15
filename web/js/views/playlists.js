@@ -359,6 +359,32 @@ async function load() {
 // --- importing from a platform ---------------------------------------------
 
 /** The platforms a playlist can be brought over from, in the order offered. */
+/** The hosts a pasted playlist link can come from: the platforms this dialog
+ *  knows, in the shapes their share links take. */
+const PLAYLIST_LINK_HOSTS = [
+  "open.spotify.com",
+  "spotify.link",
+  "music.youtube.com",
+  "youtube.com",
+  "youtu.be",
+];
+
+/** Whether what is in the box is a playlist from a platform rather than words
+ *  to search for.
+ *
+ * Exported because it is the whole of the decision - a link is a URL on a
+ * service this dialog knows - and it is worth testing without a dialog. */
+export function looksLikePlaylistLink(value) {
+  const text = String(value || "").trim();
+  if (!/^https?:\/\//i.test(text)) return false;
+  try {
+    const host = new URL(text).hostname.toLowerCase();
+    return PLAYLIST_LINK_HOSTS.some((known) => host === known || host.endsWith("." + known));
+  } catch {
+    return false;
+  }
+}
+
 const PLATFORMS = [
   { id: "ytmusic", label: "YouTube Music" },
   { id: "spotify", label: "Spotify" },
@@ -382,7 +408,16 @@ function importDialog() {
   let picked = null;
   let busy = false;
 
-  const input = h("input", { class: "input" });
+  const input = h("input", {
+    class: "input",
+    oninput: (event) => {
+      const value = event.currentTarget.value;
+      // A link in the search box is not a search. What the platform does with a
+      // URL is read that playlist, which is the other tab - so the dialog moves
+      // to it, and the value stays exactly where it was pasted.
+      if (mode !== "link" && looksLikePlaylistLink(value)) modeRow.children[1]?.click();
+    },
+  });
   const results = h("div", { class: "list", style: { maxHeight: "220px", overflow: "auto" } });
   const status = h("div", { class: "login-status", role: "status" });
 
