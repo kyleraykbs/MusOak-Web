@@ -5,15 +5,17 @@
 // the room as last described, applies the events that arrive, sends the
 // commands, and re-joins on its own when the socket drops.
 //
-// The server is the room's clock: it publishes the current song and position
-// about once a second and advances the queue on its own. Every member follows
-// the same way — load a different room song, seek only when drift exceeds two
-// seconds, and move on locally when the local file runs out before the room's
-// next tick. Members choose their own playable version.
+// The server is the room's clock, and the room's order and its fairness are
+// the server's alone: every member follows the order it publishes - load a
+// different room song, seek only when drift exceeds two seconds, and move on
+// locally when the local file runs out before the room's next tick. Members
+// choose their own playable version.
 //
-// Anything that only computes is pure: `applyEvent` and `mergeSnapshot` return
-// a new state and never touch the one they were given, which is what lets the
-// reducers be tested without a browser.
+// Anything that only computes is pure: `applyEvent` and `mergeSnapshot` hand
+// back a state and never touch the one they were given - the one they were
+// given being the answer when an event says nothing new, which is what keeps
+// the beat that republishes a room from rebuilding a view. That is also what
+// lets the reducers be tested without a browser.
 
 import { state, rememberRoom, forgetRoom } from "./state.js";
 import { TOLERANCE_MS, decide, driftAction, roomLength, roomPosition } from "./rooms/playback.js";
@@ -64,10 +66,13 @@ const CLOCK_BURST = 3;
 /** How long a track whose sources could not be read is left alone. */
 const RESOLVE_BACKOFF_MS = 5000;
 
-/** How many of the room's upcoming songs to have on disk. A song the server has
- *  never fetched is a search and a download before it can play, which is longer
- *  than the song it is queued behind, so the window is not one. */
-const PREFETCH_AHEAD = 3;
+/** How many of the room's upcoming songs to resolve and warm ahead of the song
+ *  on. A song the server has never fetched is a search and a download before it
+ *  can play, which is longer than the song it is queued behind, so the window is
+ *  not one. It is the player's own eager window (EAGER_AHEAD): the songs are
+ *  warmed through the player, and a window twice its size is a queue fetched in
+ *  an order nobody is going to hear. */
+const PREFETCH_AHEAD = 5;
 
 const DEFAULT_SKIP = {
   skipThreshold: 2,
@@ -162,33 +167,6 @@ function normalizeSkip(raw) {
 }
 
 /**
- * The room's play order, from the member queues and the join order.
- *
- * The server sends each member's queue and nothing derived from it; the order
- * is one item from each member per pass, in join order, which every client can
- * work out for itself. The current song keeps its place in its owner's queue
- * until the room moves off it, so the order is the same on both sides: the
- * server drops the played item when it advances, and the client drops it when
- * the `playback` event says the song changed.
- */
-export function deriveMaster(queues, members) {
-  const order = list(members)
-    .map((member) => str(member.id))
-    .filter(Boolean);
-  const items = (id) => list(queues && queues[id]);
-  let total = 0;
-  for (const id of order) total += items(id).length;
-  const master = [];
-  for (let pass = 0; master.length < total; pass += 1) {
-    for (const id of order) {
-      const queue = items(id);
-      if (pass < queue.length) master.push(queue[pass]);
-    }
-  }
-  return master;
-}
-
-/**
  * A room's state, empty but well-formed. The connection fields (`me`,
  * `connected`, `error`) belong to the client, not the server.
  */
@@ -274,9 +252,44 @@ function dropItem(queues, item) {
   return { ...queues, [owner]: next };
 }
 
+/** The room's place in the song it is on, as one number. A running song is
+ *  anchored at a position and a server time that move on together, so the pair
+ *  is what stays still; a paused or unstarted song is held at its position and
+ *  its `at` says nothing. */
+function anchorOf(current) {
+  return current.started && !current.paused ? current.positionMs - current.atMs : current.positionMs;
+}
+
+/** Whether two readings are the same tally of scores: a beat republishes the
+ *  votes it already gave, in a fresh object. */
+function sameVotes(left, right) {
+  const keys = Object.keys(left || {});
+  if (keys.length !== Object.keys(right || {}).length) return false;
+  return keys.every((key) => left[key] === right[key]);
+}
+
+/** Whether two readings of the room's current song say the same thing.
+ *
+ *  This is the heartbeat's question: comparing `positionMs` alone would call
+ *  every beat a change, because a running song's position is re-reported a
+ *  second later as the position it has since reached. The anchor is compared
+ *  instead, so a start, a pause, a resume, a seek or a vote is a change and the
+ *  beat that merely republishes is not. */
+function sameCurrent(previous, current) {
+  if (!previous || !current) return previous === current;
+  if (previous.item.id !== current.item.id) return false;
+  if (previous.item.title !== current.item.title) return false;
+  if (previous.item.artworkUrl !== current.item.artworkUrl) return false;
+  if (previous.started !== current.started || previous.paused !== current.paused) return false;
+  if (previous.durationMs !== current.durationMs) return false;
+  if (!sameVotes(previous.votes, current.votes)) return false;
+  return anchorOf(previous) === anchorOf(current);
+}
+
 /**
  * One event, applied to the room as we knew it. Returns the same object when
- * the event says nothing new (an unknown type, or another room's event).
+ * the event says nothing new: an unknown type, another room's event, or the
+ * beat that republishes the position of the song the room is already on.
  */
 export function applyEvent(state, event) {
   const type = str(event && event.type);
@@ -289,13 +302,15 @@ export function applyEvent(state, event) {
   switch (type) {
     case EVENTS.queueUpdated: {
       const queues = queuesFrom(state.queues, data);
-      // The server's own order when it sends one, because the room's order is
-      // the server's to know: a client that works out its own comes out with a
-      // different answer the moment a queue is edited, and then it plays one
-      // song while the room plays another with each pulling the other back.
-      // Deriving is the fallback for a server that does not send one.
+      // The room's order is the server's to know, and it sends it with every
+      // queue it touches. It is taken exactly as it came: a client that works
+      // one out for itself comes out with a different order - the server's
+      // fairness is its own - and then it advances to a song the room never
+      // chose while the room's next beat pulls it back to the one it did.
+      // A payload without one predates the field: the order we have is kept
+      // rather than invented.
       const master = Array.isArray(data.master) ? data.master.map(normalizeItem) : null;
-      return { ...state, ...stamp, queues, masterQueue: master || deriveMaster(queues, state.members) };
+      return { ...state, ...stamp, queues, masterQueue: master || state.masterQueue };
     }
 
     case EVENTS.memberJoined: {
@@ -303,6 +318,8 @@ export function applyEvent(state, event) {
       if (!member || !member.id) return state;
       const members = upsertMember(state.members, member);
       const queues = state.queues[member.id] ? state.queues : { ...state.queues, [member.id]: [] };
+      // The order is not touched here: a member arriving changes it only in the
+      // server's reckoning, which follows in the queue event it publishes.
       return {
         ...state,
         ...stamp,
@@ -310,7 +327,6 @@ export function applyEvent(state, event) {
         queues,
         memberCount: data.memberCount === undefined ? members.length : num(data.memberCount, members.length),
         host: str(data.host) || state.host,
-        masterQueue: deriveMaster(queues, members),
       };
     }
 
@@ -320,13 +336,14 @@ export function applyEvent(state, event) {
       const members = state.members.filter((member) => member.id !== memberId);
       const queues = { ...state.queues };
       delete queues[memberId];
+      // Same as a join: the server publishes the order the leaving member
+      // changes as a queue event of its own, and that is the one to keep.
       return {
         ...state,
         ...stamp,
         members,
         queues,
         memberCount: data.memberCount === undefined ? members.length : num(data.memberCount, members.length),
-        masterQueue: deriveMaster(queues, members),
       };
     }
 
@@ -341,19 +358,29 @@ export function applyEvent(state, event) {
     case EVENTS.playback: {
       const current = normalizeCurrent(data.current);
       const previous = state.current;
+      // The heartbeat is this event: the server republishes the song it is on,
+      // and the anchor it carries, about once a second. Between beats the
+      // position is derived from the anchor rather than carried by an event, so
+      // a beat that says the same song at the same point says nothing a view can
+      // show - and returning the state we were given is what keeps a page from
+      // rebuilding its whole DOM every second, losing its scroll and its focus
+      // with it.
+      if (sameCurrent(previous, current)) return state;
       const changed = !previous || !current || previous.item.id !== current.item.id;
       if (!changed) {
         // The same song, moved: a start, a pause, a resume, a seek or a vote.
         return { ...state, ...stamp, current };
       }
       // The room moved off that song, so the played item leaves its owner's
-      // queue and the play order — the same drop the server just did. The order
-      // is spliced, not rebuilt: rebuilding it would restart the round-robin
-      // and make the next song a different one from the room's.
+      // queue — the same drop the server just did. The order loses both the
+      // song that ended and the one that began: the server takes a song out of
+      // the order as it becomes the current one, so the order is what is yet to
+      // come and never the song on. It is filtered, never rebuilt: a rebuilt
+      // order is a different order, and a member following one plays a song the
+      // room never chose.
       const queues = previous ? dropItem(state.queues, previous.item) : state.queues;
-      const masterQueue = previous
-        ? state.masterQueue.filter((entry) => entry.id !== previous.item.id)
-        : state.masterQueue;
+      const gone = new Set([str(previous && previous.item.id), str(current && current.item.id)]);
+      const masterQueue = state.masterQueue.filter((entry) => !gone.has(str(entry.id)));
       return { ...state, ...stamp, current, queues, masterQueue };
     }
 
@@ -550,9 +577,14 @@ export async function enterRoom({ client, roomId, password = "", onLeave = null,
     attempts: 0,
     openedAt: 0,
     closed: false,
+    // The last seq the socket was told, which the state does not keep for the
+    // beats that change nothing (see onMessage). The room's own seq, from the
+    // join answer, is where the stream starts.
+    seq: 0,
     state: createRoomState({ me: memberId, connected: false }),
   };
   active.state = mergeSnapshot(active.state, joined);
+  active.seq = num(active.state.seq);
   // So a reload can put us back in this room, and the bar can say which one.
   rememberRoom({ roomId: active.roomId, name: str(joined.name), password });
   connect(active);
@@ -678,11 +710,15 @@ function onMessage(connection, message) {
     closeRoom("the room was closed");
     return;
   }
-  if (mine && event.seq && connection.state.seq && event.seq !== connection.state.seq + 1) {
-    // A gap means events were missed and the derived play order may be wrong:
-    // the snapshot is the way back.
-    scheduleResync(connection);
-  }
+  // A gap means events were missed and the derived play order may be wrong: the
+  // snapshot is the way back. It is measured against the last seq *seen*, not
+  // the last one that changed anything - the heartbeat spends a seq every second
+  // folding into the state it already had (see applyEvent) - and against the
+  // seq a snapshot left the state at, which is where a rejoin starts from.
+  const knownSeq = Math.max(num(connection.seq), num(connection.state.seq));
+  const missed = Boolean(mine && event.seq && knownSeq && event.seq !== knownSeq + 1);
+  if (event.seq) connection.seq = event.seq;
+  if (missed) scheduleResync(connection);
   const next = applyEvent(connection.state, event);
   if (next !== connection.state) {
     connection.state = next;
@@ -889,9 +925,12 @@ export function followWithPlayer(playbackPlayer) {
     // Sources resolved ahead of the song that needs them: a transition is meant
     // to be a switch, not a search (see prefetchResolution). `resolvingAhead` is
     // the ones on their way - not to be confused with `pending`, which is the
-    // tick that landed while another was running.
+    // tick that landed while another was running. `warmedKey` is the window of
+    // songs ahead that has already been asked for, so a tick that finds the same
+    // one does not ask again (see warmAhead).
     resolved: new Map(),
     resolvingAhead: new Set(),
+    warmedKey: "",
     // When the file for the current item was handed to the player, and when a
     // correction last landed: the two readings the drift rule needs.
     loadedAtMs: 0,
@@ -997,6 +1036,43 @@ function forgetTrack() {
   plugin.loadedAtMs = 0;
 }
 
+/** Whether the room's own order still holds a queue item of this id. */
+function holdsItem(order, id) {
+  return order.some((entry) => str(entry.id) === str(id));
+}
+
+/** Whether the room's own order still holds this track. */
+function holdsTrack(order, id) {
+  return order.some((entry) => str(entry.trackId) === str(id));
+}
+
+/** Drop what this client remembered about songs the room no longer has.
+ *
+ *  `advancedPast` is the items whose file ended here, `resolved` the sources
+ *  worked out for the songs ahead, and the steps said about a song are keyed by
+ *  its item: an answer is only ever needed again for a song the room still has.
+ *  "Still has" is the order *and* the song on - the order holds only what is
+ *  yet to come, so the item the beats still name while they lag is the song on,
+ *  and forgetting it would let a stale beat drag the member back onto it. A
+ *  session otherwise keeps one of each for every song the room has ever played. */
+function pruneBookkeeping(running, room) {
+  const current = room.current && room.current.item ? room.current.item : null;
+  const order = current ? [current, ...list(room.masterQueue)] : list(room.masterQueue);
+  for (const itemId of running.advancedPast) {
+    if (!holdsItem(order, itemId)) running.advancedPast.delete(itemId);
+  }
+  for (const trackId of running.resolved.keys()) {
+    if (!holdsTrack(order, trackId)) running.resolved.delete(trackId);
+  }
+  for (const trackId of running.resolvingAhead) {
+    if (!holdsTrack(order, trackId)) running.resolvingAhead.delete(trackId);
+  }
+  for (const key of saidSteps) {
+    const itemId = key.slice(key.indexOf(":") + 1);
+    if (!holdsItem(order, itemId)) saidSteps.delete(key);
+  }
+}
+
 /** One follow step: read the room and the player, let the core decide (see
  *  rooms/playback.js), and do what it says. Every reading about the player
  *  arrives as data; the decision itself is arithmetic elsewhere, where it can
@@ -1018,6 +1094,10 @@ async function followRoom(running) {
     running.resolved.clear();
     running.resolvingAhead.clear();
   }
+  // Everything this client remembers is about a song the room still has, and a
+  // song that has left makes it stale: left alone, the memory of a session is
+  // one entry per song the room has ever played.
+  pruneBookkeeping(running, room);
 
   const current = room.current || null;
   const item = current && current.item ? current.item : null;
@@ -1146,6 +1226,22 @@ function prefetchResolution(running, trackId) {
     .finally(() => running.resolvingAhead.delete(id));
 }
 
+/** Where this member's copy of an item should start: the room's own position
+ *  when the room is on that item, and the position it was handed otherwise.
+ *
+ *  Taken at the moment the file is handed over, not when the decision was made:
+ *  resolving and fetching take time, and a position from before them is one
+ *  already behind the room - which the drift rule then corrects with a seek,
+ *  which is the "syncing" heard a moment after a song starts. A song the room
+ *  has started is joined where the room is; one this member is moving to itself
+ *  starts at its beginning, because the room has not started it yet. */
+function startFor(itemId, at) {
+  const live = currentRoom();
+  const onRoom =
+    live && live.current && str(live.current.item?.id) === itemId && live.current.started && !live.current.paused;
+  return onRoom ? Math.max(0, positionMs(live, Date.now())) : Math.max(0, num(at));
+}
+
 /** Put this member on one of the room's items: find a source for the track,
  *  fetch what the bar needs, and hand the player the rendition and where in it
  *  to start. */
@@ -1161,59 +1257,68 @@ async function loadItem(running, item, { positionMs: at = 0, autoplay = true } =
     running.failedItemId === itemId && running.failedAt && Date.now() - running.failedAt < RESOLVE_BACKOFF_MS;
   if (cooling || running.resolving === trackId) return;
 
+  // The rendition for this item may already be in hand: it was resolved, and
+  // the track fetched, when the room first said this song. Handing it over
+  // again is a local call; resolving it again is two provider round trips, and
+  // this is asked for whenever the player is not on the item the room says it
+  // is. So the source is worked out once per item, and the item is put on the
+  // player as often as it takes.
   running.itemId = itemId;
-  running.loadedItemId = "";
-  running.variantId = "";
-  running.track = null;
-  running.failedItemId = "";
-  running.failedAt = 0;
-  sayStep(`song:${itemId}`, `Room: ${item.title || "the next song"}`);
+  if (running.loadedItemId !== itemId || !running.variantId) {
+    running.loadedItemId = "";
+    running.variantId = "";
+    running.track = null;
+    running.failedItemId = "";
+    running.failedAt = 0;
+    sayStep(`song:${itemId}`, `Room: ${item.title || "the next song"}`);
 
-  // The source this member would play, if it was worked out while the song
-  // before this one was playing. It usually was.
-  const known = running.resolved.get(trackId);
-  if (known) {
-    running.track = known.track;
-    running.variantId = known.variantId;
-  } else {
-    running.resolving = trackId;
-    setStatus(running, "Finding a source…");
-    let variant = "";
-    let track = null;
-    try {
-      [variant, track] = await Promise.all([resolveVariant(trackId, player), loadTrack(active, trackId)]);
-    } finally {
-      if (plugin === running) running.resolving = "";
+    // The source this member would play, if it was worked out while the song
+    // before this one was playing. It usually was.
+    const known = running.resolved.get(trackId);
+    if (known) {
+      running.track = known.track;
+      running.variantId = known.variantId;
+    } else {
+      running.resolving = trackId;
+      setStatus(running, "Finding a source…");
+      let variant = "";
+      let track = null;
+      try {
+        [variant, track] = await Promise.all([resolveVariant(trackId, player), loadTrack(active, trackId)]);
+      } finally {
+        if (plugin === running) running.resolving = "";
+      }
+      if (plugin !== running || running.itemId !== itemId) return;
+      running.track = track;
+      running.variantId = str(variant);
+      if (!running.variantId) {
+        running.failedItemId = itemId;
+        running.failedAt = Date.now();
+        setStatus(running, "That song could not be found.");
+        return;
+      }
+      running.resolved.set(trackId, { variantId: running.variantId, track });
     }
-    if (plugin !== running || running.itemId !== itemId) return;
-    running.track = track;
-    running.variantId = str(variant);
-    if (!running.variantId) {
-      running.failedItemId = itemId;
-      running.failedAt = Date.now();
-      setStatus(running, "That song could not be found.");
-      return;
-    }
-    running.resolved.set(trackId, { variantId: running.variantId, track });
   }
-
-  // Where to start is taken now, not when the decision was made: resolving and
-  // fetching take time, and a position from before them is a position already
-  // behind the room - which the drift rule then corrects with a seek, which is
-  // the "syncing" heard a moment after a song starts. A song the room has
-  // started is joined where the room is; one this member is moving to itself
-  // starts at its beginning, because the room has not started it yet.
-  const live = currentRoom();
-  const onRoom = live && live.current && str(live.current.item?.id) === itemId && live.current.started && !live.current.paused;
-  const startAt = onRoom ? Math.max(0, positionMs(live, Date.now())) : Math.max(0, num(at));
 
   running.loadedItemId = itemId;
   running.loadedAtMs = Date.now();
   setStatus(running, "");
   player.playVariant(running.track || { id: trackId, title: item.title }, running.variantId, {
-    positionMs: startAt,
+    positionMs: startFor(itemId, at),
     autoplay,
   });
+  // The player took the rendition, or it did not. One it would not take - what
+  // it holds is still another song - must not be asked for on every tick: each
+  // `_load` pauses the element and clears its source, so a load that is
+  // re-issued is a song that never buffers and a page doing it for ever. The
+  // room's clock has moved on regardless, so the item is backed off the way an
+  // unresolvable source is, and the beat after the back-off asks again.
+  if (str(player.current?.()?.id) !== trackId) {
+    running.failedItemId = itemId;
+    running.failedAt = Date.now();
+    setStatus(running, "That song could not be played here.");
+  }
 }
 
 /**
@@ -1271,6 +1376,16 @@ function warmAhead(running, room, itemId) {
   const at = order.findIndex((entry) => str(entry.id) === str(itemId));
   const from = at < 0 ? 0 : at;
   const upcoming = order.slice(from).map((entry) => ({ id: str(entry.trackId), title: entry.title }));
+  // Asked for once per window, not once per tick. This runs on every beat and
+  // on every position event the player emits (several a second), and each call
+  // behind that slice is a provider resolution, a fetch and a re-derivation of
+  // the offline window across the whole order - so a song change spent the cost
+  // of the whole queue several times over. The callers are told again when the
+  // songs ahead actually change, which is the only time there is anything new
+  // to fetch; a source that failed is asked for again when its song is reached.
+  const key = `${player.online?.() ? "online" : "offline"}:${upcoming.map((entry) => entry.id).join(",")}`;
+  if (key === running.warmedKey) return;
+  running.warmedKey = key;
   for (const entry of upcoming.slice(0, PREFETCH_AHEAD)) {
     player.warm?.(entry);
     prefetchResolution(running, entry.id);

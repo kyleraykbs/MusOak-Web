@@ -46,6 +46,7 @@ const TICK_MS = 1000;
 let host = null;
 let ticker = 0;
 let unsubscribe = null;
+let unhookOnline = null;
 let hookedPlayer = false;
 let positionLabel = null;
 
@@ -58,11 +59,15 @@ followWithPlayer(player);
 
 function render(container) {
   host = container;
+  // Both of these are subscriptions, and a view is rendered again every time
+  // somebody navigates to it: without letting the last pair go, every visit
+  // leaves another redraw behind for each beat of the room.
   if (unsubscribe) unsubscribe();
   unsubscribe = subscribe(() => scheduleRedraw());
-  watchPlayer();
+  if (unhookOnline) unhookOnline();
   // Offline is said on the card, so the card has to be redrawn when it changes.
-  on("online-changed", () => scheduleRedraw());
+  unhookOnline = on("online-changed", () => scheduleRedraw());
+  watchPlayer();
   // Paint what we hold, then ask for the room as it stands: arriving from the
   // Rooms list, what we hold can be a snapshot from before somebody queued
   // anything, and nothing would tell us so until the next event.
@@ -81,7 +86,6 @@ const scheduleRedraw = scheduleFrame(() => {
 
 function paint() {
   if (!host) return;
-  stopTicker();
   positionLabel = null;
   const room = currentRoom();
   clear(host);
@@ -104,7 +108,7 @@ function paint() {
 
   if (room.error) mount(host, h("div", { class: "banner error" }, h("span", { class: "grow", text: room.error })));
   mount(host, header(room), nowPlaying(room), members(room), queues(room));
-  startTicker();
+  ensureTicker();
 }
 
 // --- pieces ----------------------------------------------------------------
@@ -440,13 +444,18 @@ function watchPlayer() {
   player.on?.("offline-changed", () => scheduleRedraw());
 }
 
-function startTicker() {
-  stopTicker();
+/** The clock under the title is a reading of the room's position, so it ticks
+ *  once a second while this view is the one on screen. It is built on the way
+ *  in and left alone by every repaint: building it in `paint` is what had it
+ *  torn down and made again on each beat of the room, which reset the second
+ *  and so rarely let it fire at all. */
+function ensureTicker() {
+  if (ticker || state.view !== "room" || !currentRoom()) return;
   ticker = setInterval(updateClock, TICK_MS);
 }
 
 function stopTicker() {
-  if (ticker) clearInterval(ticker);
+  clearInterval(ticker);
   ticker = 0;
 }
 
@@ -466,14 +475,15 @@ export function roomClock(player, room, current, nowMs = Date.now()) {
 }
 
 function updateClock() {
-  const label = positionLabel;
-  if (!label) return;
-  if (state.view !== "room") {
+  const room = currentRoom();
+  // A view is not told when it is left, so this is where the ticker finds out:
+  // the second it wakes on is not one this clock is for any more.
+  if (state.view !== "room" || !room) {
     stopTicker();
     return;
   }
-  const room = currentRoom();
-  if (!room) return;
+  const label = positionLabel;
+  if (!label) return;
   const current = room.current;
   if (!current || !current.item) return;
 

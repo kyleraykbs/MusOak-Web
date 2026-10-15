@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import {
   TOLERANCE_MS,
   COOLDOWN_MS,
+  GRACE_MS,
   roomPosition,
   roomLength,
   finishesAt,
@@ -48,6 +49,15 @@ test("inside the tolerance is left alone; outside it is a correction", () => {
   assert.equal(driftAction(room - TOLERANCE_MS, room), "hold");
   assert.equal(driftAction(room + TOLERANCE_MS + 1, room), "back", "ahead of the room");
   assert.equal(driftAction(room - TOLERANCE_MS - 1, room), "forward", "behind the room");
+});
+
+test("a run still settling is not corrected, however far off it reads", () => {
+  const room = 0;
+  const far = 50000;
+  assert.equal(driftAction(far, room, { sinceStartMs: GRACE_MS - 1 }), "hold", "the load is not drift");
+  assert.equal(driftAction(-far, room, { sinceStartMs: GRACE_MS - 1 }), "hold");
+  assert.equal(driftAction(far, room, { sinceStartMs: GRACE_MS }), "back", "once settled, a real gap is corrected");
+  assert.equal(driftAction(far, room), "back", "a run of unknown age is not held back");
 });
 
 test("one correction at a time: a fresh seek is left to land", () => {
@@ -155,6 +165,31 @@ test("drift inside the tolerance holds; beyond it, one seek", () => {
   assert.equal(badlyBehind.action, "seek");
   assert.equal(badlyBehind.positionMs, 0);
   assert.equal(badlyBehind.direction, "forward");
+});
+
+// The seek that follows a load is the one the grace exists to stop: a file that
+// was handed to the player a moment ago reads wherever it is starting from, not
+// where the room is, and correcting that is the "Syncing to the room" heard
+// just after a song begins.
+test("a run that has just loaded is held rather than seeked", () => {
+  const current = running({ id: "a", positionMs: 0, atMs: NOW });
+  const far = -TOLERANCE_MS * 4;
+
+  const settling = decide({ ...base, current, localPositionMs: far, sinceStartMs: GRACE_MS - 1 });
+  assert.equal(settling.action, "hold", "the first moments of a run are not drift");
+
+  const settled = decide({ ...base, current, localPositionMs: far, sinceStartMs: GRACE_MS + 1 });
+  assert.equal(settled.action, "seek", "once it has settled, the same gap is corrected");
+});
+
+test("the grace is measured from the load when the tick does not say", () => {
+  const current = running({ id: "a", positionMs: 0, atMs: NOW });
+  const far = -TOLERANCE_MS * 4;
+  // The tick carries the moment it handed the file over and no age beside it.
+  const fresh = decide({ ...base, current, localPositionMs: far, sinceStartMs: undefined, loadedAtMs: NOW - 500 });
+  assert.equal(fresh.action, "hold", "half a second into a run is still the run settling");
+  const old = decide({ ...base, current, localPositionMs: far, sinceStartMs: undefined, loadedAtMs: NOW - 10000 });
+  assert.equal(old.action, "seek", "ten seconds in is a real gap");
 });
 // A member who has moved on to the next song still belongs to the room: the
 // beat can be naming the song they finished, and a pause or a play in that

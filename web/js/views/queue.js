@@ -121,6 +121,9 @@ export function queueProjection({ room = null, showMaster = false, playerQueue =
     // is next - and it is the one row nobody may move.
     const playing = String(room.current?.item?.id || "");
     const order = items.map((item) => String(item.id || ""));
+    // Where each item sits, so a row's place is a lookup and not a scan of the
+    // whole queue for every row.
+    const places = new Map(order.map((id, at) => [id, at]));
     const upcoming = items.filter((item) => String(item.id || "") !== playing);
     return {
       mode: "room",
@@ -138,7 +141,7 @@ export function queueProjection({ room = null, showMaster = false, playerQueue =
         key: String(item.id || `item-${position}`),
         // `index` is the item's real place in the queue, which is what the
         // reorder needs; `number` is the place the row shows.
-        index: order.indexOf(String(item.id || "")),
+        index: places.get(String(item.id || "")),
         number: position + 1,
         title: item.title,
         subtitle: roomRowSubtitle(item, room),

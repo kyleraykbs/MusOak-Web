@@ -19,6 +19,16 @@ const DB_NAME = "musoak-offline";
 const DB_VERSION = 1;
 const STORE = "playlists";
 
+/** How long the server is given to have one song on disk before this page stops
+ *  waiting for it. The player waits the same length for the file it is about to
+ *  play; a fetch that has not finished by then is stuck rather than slow, and
+ *  waiting for it is a "Keep playlist" that spins for the session while every
+ *  playlist behind the first one waits for ever. */
+const READY_TIMEOUT_MS = 60000;
+
+/** How often the server is asked whether the file has landed. */
+const READY_POLL_MS = 500;
+
 const MUTED_COLOUR = "var(--red)";
 
 // --- pure logic (used by the module and by its tests) ----------------------
@@ -119,7 +129,9 @@ let loading = null;
 let swRegistered = false;
 const listeners = new Set();
 const jobs = new Map();
-const syncing = new Set();
+// The keep-in-step runs under way, by playlist: what is there so a second ask
+// can call the first off rather than wait behind it.
+const syncing = new Map();
 const pending = new Map();
 
 function hasIndexedDb() {
@@ -235,17 +247,21 @@ function delay(ms, signal) {
   });
 }
 
-/** Wait until the server has this variant on disk, polling while it downloads. */
+/** Wait until the server has this variant on disk, polling while it downloads.
+ *  The wait has a deadline: a download the server never finishes would
+ *  otherwise leave this loop spinning for the rest of the session. */
 async function ensureReady(client, variantId, signal) {
   let status = await client.mediaStatus(variantId);
   if (status.state === "ready") return status;
   if (status.state === "failed") throw new Error("the server could not fetch this song");
   await client.startDownload(variantId, false);
+  const deadline = Date.now() + READY_TIMEOUT_MS;
   for (;;) {
-    await delay(500, signal);
+    await delay(READY_POLL_MS, signal);
     status = await client.mediaStatus(variantId);
     if (status.state === "ready") return status;
     if (status.state === "failed") throw new Error("the server could not fetch this song");
+    if (Date.now() >= deadline) throw new Error("the server did not finish fetching this song");
   }
 }
 
@@ -538,6 +554,9 @@ export async function remove(playlistId) {
   await ensureLoaded();
   const record = mirror.get(String(playlistId));
   if (!record) return 0;
+  // A keep-in-step still running would fetch the songs straight back, so the
+  // ask to remove is also the ask to stop.
+  syncing.get(record.id)?.abort();
   const client = activeClient();
   mirror.delete(record.id);
   await dropRecord(record.id);
@@ -575,13 +594,21 @@ async function removeKept(playlistId) {
 
 // --- keeping in step -------------------------------------------------------
 
-/** Bring one kept playlist up to date, fetching only what is missing. */
+/** Bring one kept playlist up to date, fetching only what is missing.
+ *
+ *  A second ask for the same playlist is somebody who has given up waiting on
+ *  the first: the run already going is called off rather than left to hold the
+ *  new one behind it, which is what left "Sync now" doing nothing at all after
+ *  one song had stuck. */
 async function syncOne(playlistId, name, { quiet = true } = {}) {
-  if (syncing.has(playlistId)) return false;
+  const id = String(playlistId);
+  syncing.get(id)?.abort();
   const client = activeClient();
-  const record = mirror.get(String(playlistId));
+  const record = mirror.get(id);
   if (!client || !record) return false;
-  syncing.add(playlistId);
+  const run = new AbortController();
+  syncing.set(id, run);
+  const { signal } = run;
   try {
     const detail = await client.playlist(playlistId);
     const tracks = await inQueueOrder(detail.tracks || []);
@@ -591,6 +618,7 @@ async function syncOne(playlistId, name, { quiet = true } = {}) {
     let bytes = 0;
 
     for (const track of tracks) {
+      if (signal.aborted) return false;
       let variantId = "";
       try {
         variantId = await resolveVariant(client, track.id);
@@ -608,7 +636,7 @@ async function syncOne(playlistId, name, { quiet = true } = {}) {
         size = await responseBytes(hit);
       } else {
         try {
-          size = await fetchVariantToCache(client, variantId, null);
+          size = await fetchVariantToCache(client, variantId, signal);
           present = true;
         } catch {
           present = false;
@@ -632,10 +660,15 @@ async function syncOne(playlistId, name, { quiet = true } = {}) {
     if (changed && !quiet) await announce(`Updated ${record.name || "the playlist"} for offline play.`);
     return changed;
   } catch (error) {
+    // Called off is not a failure to report: whoever asked is already waiting
+    // on the run that replaced this one.
+    if (signal.aborted) return false;
     if (!quiet) await report(error);
     return false;
   } finally {
-    syncing.delete(playlistId);
+    // Only if this is still the run for this playlist: a called-off one must
+    // not drop the entry the run that replaced it put there.
+    if (syncing.get(id) === run) syncing.delete(id);
   }
 }
 

@@ -23,6 +23,7 @@ import {
   closeRoom,
   leaveRoom,
   pause,
+  skip,
   followWithPlayer,
   setStatusNotice,
 } from "../rooms-state.js";
@@ -57,11 +58,18 @@ function twoMemberRoom() {
   return state;
 }
 
-test("a queue event carries one member's queue, and the mix is derived", () => {
+test("a queue event carries one member's queue, and the order the server sent", () => {
   const next = applyEvent(twoMemberRoom(), {
     type: "queue_updated",
     roomId: "room-1",
-    data: { memberId: SAM, memberQueue: [item("b1", "sam one", SAM), item("b2", "sam two", SAM)] },
+    data: {
+      memberId: SAM,
+      memberQueue: [item("b1", "sam one", SAM), item("b2", "sam two", SAM)],
+      // The room's fairness is the server's alone - least-heard first, then
+      // longest-waiting, then join order - so its answer cannot be worked out
+      // here. It is taken as it comes, item for item.
+      master: [item("b2", "sam two", SAM), item("b1", "sam one", SAM), item("a2", "second", KYLE)],
+    },
   });
   assert.deepEqual(
     next.queues[SAM].map((entry) => entry.id),
@@ -72,14 +80,29 @@ test("a queue event carries one member's queue, and the mix is derived", () => {
     ["a1", "a2"],
     "the other member's queue is untouched"
   );
-  // One item from each member per pass, in join order: kyle, sam, kyle, sam.
   assert.deepEqual(
     next.masterQueue.map((entry) => entry.id),
-    ["a1", "b1", "a2", "b2"]
+    ["b2", "b1", "a2"],
+    "the order is exactly the server's, not one this client worked out"
   );
   assert.deepEqual(
     next.masterQueue.map((entry) => entry.addedBy),
-    [KYLE, SAM, KYLE, SAM]
+    [SAM, SAM, KYLE]
+  );
+
+  // A payload from before the field keeps the order it had rather than
+  // inventing one: an order this client guessed is one the room is not walking,
+  // and following it plays a song the room never chose.
+  const kept = applyEvent(next, {
+    type: "queue_updated",
+    roomId: "room-1",
+    seq: 6,
+    data: { memberId: KYLE, memberQueue: [item("a1", "first", KYLE)] },
+  });
+  assert.deepEqual(
+    kept.masterQueue.map((entry) => entry.id),
+    ["b2", "b1", "a2"],
+    "an order the event does not carry is left where it was"
   );
 });
 
@@ -90,14 +113,18 @@ test("a member leaving takes their queue out of the mix", () => {
     data: { memberId: SAM, memberCount: 1 },
   });
   assert.equal(left.queues[SAM], undefined, "their queue is dropped");
+  assert.equal(left.memberCount, 1);
+  // The order this changes is published by the server as a queue event of its
+  // own, and that is the one to keep: deriving a replacement is the divergence
+  // that had members playing songs the room had never chosen.
   assert.deepEqual(
     left.masterQueue.map((entry) => entry.id),
-    ["a1", "a2"]
+    ["a1", "b1", "a2"],
+    "the order waits for the server's own answer"
   );
-  assert.equal(left.memberCount, 1);
 });
 
-test("the playback event replaces the song, and drops the one it left", () => {
+test("the playback event replaces the song, and the order loses it", () => {
   const room = twoMemberRoom();
   const playing = applyEvent(room, {
     type: "playback",
@@ -112,8 +139,16 @@ test("the playback event replaces the song, and drops the one it left", () => {
     ["a1", "a2"],
     "the playing song keeps its place in its owner's queue while it plays"
   );
+  // The order the server keeps is what is yet to come: a song leaves it as it
+  // becomes the one playing, so a client whose order still named the song on
+  // would hand that song back to itself on the next advance.
+  assert.deepEqual(
+    playing.masterQueue.map((entry) => entry.id),
+    ["b1", "a2"],
+    "the song on is not part of the order"
+  );
 
-  // The same song, moved: a pause says nothing about the queues.
+  // The same song, moved: a pause says nothing about the queues or the order.
   const paused = applyEvent(playing, {
     type: "playback",
     roomId: "room-1",
@@ -125,9 +160,11 @@ test("the playback event replaces the song, and drops the one it left", () => {
     paused.queues[KYLE].map((entry) => entry.id),
     ["a1", "a2"]
   );
+  assert.deepEqual(paused.masterQueue.map((entry) => entry.id), ["b1", "a2"]);
 
-  // The room moved on: the played song leaves its owner's queue and the mix,
-  // exactly as the server dropped it.
+  // The room moved on: the played song leaves its owner's queue, and the song
+  // it moved onto leaves the order — the same two the server did, and in the
+  // same order the server did them in.
   const advanced = applyEvent(paused, {
     type: "playback",
     roomId: "room-1",
@@ -140,12 +177,50 @@ test("the playback event replaces the song, and drops the one it left", () => {
     advanced.queues[KYLE].map((entry) => entry.id),
     ["a2"]
   );
-  // The order is spliced, not rebuilt: b1 was next in the room's round robin
-  // and stays next, even though a fresh derive would put kyle's a2 first.
   assert.deepEqual(
     advanced.masterQueue.map((entry) => entry.id),
-    ["b1", "a2"]
+    ["a2"],
+    "b1 began, so it is the song on and not part of what is yet to come"
   );
+});
+
+test("the beat that says the same song at the same point is not a new room", () => {
+  const room = twoMemberRoom();
+  const song = { item: item("a1", "first", KYLE), positionMs: 0, atMs: 1000, started: true, paused: false, durationMs: 30000 };
+  const playing = applyEvent(room, { type: "playback", roomId: "room-1", seq: 1, data: { current: song } });
+
+  // The heartbeat: the same anchor a second on, which is the same point of the
+  // same song. It has to leave the state alone - a room that answered with a
+  // fresh object on every beat is a room whose views rebuild their DOM every
+  // second they are open, losing the scroll and the drag with it.
+  const beat = applyEvent(playing, {
+    type: "playback",
+    roomId: "room-1",
+    seq: 2,
+    data: { current: { ...song, positionMs: 1000, atMs: 2000 } },
+  });
+  assert.equal(beat, playing, "nothing observable changed, so nothing is rebuilt");
+
+  // A room with nothing on has nothing to say either.
+  const idle = createRoomState({ me: KYLE });
+  assert.equal(applyEvent(idle, { type: "playback", data: { current: null } }), idle);
+
+  // A beat with something to say is still a change: a pause, and a vote.
+  const paused = applyEvent(playing, {
+    type: "playback",
+    roomId: "room-1",
+    seq: 3,
+    data: { current: { ...song, paused: true } },
+  });
+  assert.notEqual(paused, playing);
+  assert.equal(paused.current.paused, true);
+  const voted = applyEvent(playing, {
+    type: "playback",
+    roomId: "room-1",
+    seq: 4,
+    data: { current: { ...song, votes: { [SAM]: 5 }, meanScore: 5 } },
+  });
+  assert.notEqual(voted, playing, "a vote is a tally that changed");
 });
 
 test("the room's position ages from its anchor, and stops when paused", () => {
@@ -264,6 +339,12 @@ function fakeClient({ room = BASE_ROOM, memberId = KYLE } = {}) {
     },
     roomPause(roomId) {
       calls.commands.push({ name: "roomPause", args: [roomId] });
+      return Promise.resolve(client.roomData);
+    },
+    roomSkip(roomId) {
+      calls.commands.push({ name: "roomSkip", args: [roomId] });
+      // The command answers with the room as it now stands, the snapshot the
+      // real endpoint sends: the order the skip produced comes back with it.
       return Promise.resolve(client.roomData);
     },
     leaveRoom(roomId) {
@@ -477,14 +558,19 @@ test("a queue change carries the room's order, and the room's wins", () => {
     "the artist names ride along with the order they came in"
   );
 
-  // A server that sends none: the client falls back to deriving one.
-  const derived = applyEvent(state, {
+  // A server that sends none: the order the client already has is kept, since
+  // one it worked out here is an order the room is not walking.
+  const keptStale = applyEvent(kept, {
     type: "queue_updated",
     roomId: "room-1",
     seq: 6,
     data: { memberId: KYLE, memberQueue: [k1, k2] },
   });
-  assert.deepEqual(derived.masterQueue.map((entry) => entry.id), ["k1", "s1", "k2"]);
+  assert.deepEqual(
+    keptStale.masterQueue.map((entry) => entry.id),
+    ["s1", "k1", "k2"],
+    "an order the event does not carry is left where it was"
+  );
 });
 
 test("the “click the page once” hint does not outlive the playback it was about", async (t) => {
@@ -837,6 +923,33 @@ test("an idle room stops this client's player", async (t) => {
   assert.ok(await waitFor(() => player.paused === true), "nothing playing means nothing playing here");
 });
 
+// The room's seq counts every event it publishes, including the beats that
+// change nothing here (see the reducer test above). A beat the state does not
+// take up is still one the socket heard: if it were not counted, the next event
+// would look like a gap in the stream and the client would go back for a
+// snapshot it does not need.
+test("a beat the room spends on nothing is still an event heard", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const client = fakeClient({ memberId: SAM });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1", rejoin: true });
+  const track = item("a1", "first", KYLE);
+  client.roomData = roomWith(track, { started: true });
+  const socket = client.calls.sockets[0];
+  socket.onEvent({ type: "playback", roomId: "room-1", seq: 1, data: { current: client.roomData.current } });
+  assert.ok(await waitFor(() => player.plays.length === 1));
+  const fetches = client.calls.snapshots;
+
+  // Two beats that say nothing, then a queue event: seq 4 follows seq 3 with
+  // nothing missing in between, so nothing is fetched to fill a hole.
+  socket.onEvent({ type: "playback", roomId: "room-1", seq: 2, data: { current: client.roomData.current } });
+  socket.onEvent({ type: "playback", roomId: "room-1", seq: 3, data: { current: client.roomData.current } });
+  socket.onEvent({ type: "queue_updated", roomId: "room-1", seq: 4, data: { memberId: KYLE, memberQueue: [track] } });
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  assert.equal(client.calls.snapshots, fetches, "the stream was whole, so the room was not refetched");
+});
+
 test("a command folds the room's answer into the state", async (t) => {
   t.after(closeRoom);
   const client = fakeClient({ memberId: KYLE });
@@ -958,6 +1071,112 @@ test("the room's pause pauses this member's own player", async (t) => {
   client.roomData = roomWith(track, { started: true, paused: false, positionMs: 4000, atMs: Date.now() });
   socket.onEvent({ type: "playback", roomId: "room-1", seq: 3, data: { current: client.roomData.current } });
   assert.ok(await waitFor(() => player.paused === false), "and the room's play starts it again");
+});
+
+// A skip is one load of the room's new song and then a hold. The follow tick
+// runs several times a second (every beat, and every position the player
+// emits), so anything the tick does anew is done per tick: a provider
+// resolution and a fetch of the songs ahead, a re-derivation of the offline
+// window across the whole order, and - if the load never lands - a fresh
+// `_load` that pauses the element and clears its source, which is a song that
+// never buffers. A 40-song room made that a page falling over instead of a
+// song change.
+test("a skip is one load and then a hold, whatever the ticks do", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const counts = { playVariant: 0, seek: 0, warm: 0, keepOffline: 0, variant: 0 };
+  for (const name of ["playVariant", "seek", "warm", "keepOffline", "variantFor"]) {
+    const real = player[name].bind(player);
+    const key = name === "variantFor" ? "variant" : name;
+    player[name] = (...args) => {
+      counts[key] += 1;
+      return real(...args);
+    };
+  }
+
+  // The room's order for what comes next, as the server's fairness has it:
+  // kyle's second song before sam's first, which no rule of this client's
+  // would arrive at by itself.
+  const first = item("a1", "first", KYLE);
+  const second = item("b1", "second", SAM);
+  const third = item("c1", "third", KYLE);
+  const room = {
+    ...BASE_ROOM,
+    current: { item: first, positionMs: 0, atMs: Date.now(), started: true, paused: false, durationMs: 30000 },
+    queues: { [KYLE]: [first, third], [SAM]: [second] },
+    masterQueue: [third, second],
+  };
+  const client = fakeClient({ room, memberId: SAM });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1", rejoin: true });
+  const socket = client.calls.sockets[0];
+  assert.ok(await waitFor(() => player.plays.length === 1 && player.current()?.id === first.trackId));
+  await new Promise((resolve) => setTimeout(resolve, 60));
+
+  // The skip: the room takes the head of its order, publishes the song it is
+  // on, and answers the command with the room as it now stands.
+  const skipped = {
+    ...room,
+    current: { item: third, positionMs: 0, atMs: Date.now(), started: true, paused: false, durationMs: 30000 },
+    queues: { [KYLE]: [third], [SAM]: [second] },
+    masterQueue: [second],
+  };
+  client.roomData = skipped;
+  socket.onEvent({ type: "playback", roomId: "room-1", seq: 2, data: { current: skipped.current } });
+  socket.onEvent({
+    type: "queue_updated",
+    roomId: "room-1",
+    seq: 3,
+    data: { memberId: KYLE, memberQueue: [third], master: [second] },
+  });
+  await skip();
+  assert.ok(await waitFor(() => player.current()?.id === third.trackId), "the member is on the song the room skipped to");
+  assert.deepEqual(
+    currentRoom().masterQueue.map((entry) => entry.id),
+    ["b1"],
+    "the order is the one the server sent, not one derived here"
+  );
+
+  // A second of ticks - position events and the follow ticker both - asks for
+  // nothing more: not another load, not another source, not another warm.
+  const settled = { ...counts };
+  for (let beat = 0; beat < 16; beat += 1) {
+    player.emit("position");
+    await new Promise((resolve) => setTimeout(resolve, 60));
+  }
+  assert.deepEqual(counts, settled, "a second of ticks asked for nothing more");
+  assert.equal(counts.playVariant, 2, "one load for the room's first song, one for the skip");
+  assert.ok(counts.warm <= 6, `the songs ahead are warmed once per window, not per tick (${counts.warm})`);
+});
+
+// A rendition the player will not take is a load that must not be re-issued on
+// every tick: each `_load` pauses the element and clears its source, so asking
+// again and again is a song that never buffers, and a page doing it forever.
+// The room's clock has moved on regardless, so the item is backed off like one
+// whose source could not be resolved, and the beat after the back-off asks
+// again.
+test("a load the player will not take is not re-issued on every tick", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  let asked = 0;
+  // The player refuses the rendition: what is on the element stays what it was,
+  // so `current()` never becomes the room's song.
+  player.playVariant = () => {
+    asked += 1;
+    return Promise.resolve();
+  };
+  const client = fakeClient({ memberId: SAM });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1", rejoin: true });
+  const track = item("a1", "first", KYLE);
+  client.roomData = roomWith(track, { started: true, positionMs: 0, atMs: Date.now() });
+  client.calls.sockets[0].onEvent({ type: "playback", roomId: "room-1", seq: 1, data: { current: client.roomData.current } });
+  assert.ok(await waitFor(() => asked === 1), "the room's song is asked for once");
+  for (let beat = 0; beat < 8; beat += 1) {
+    player.emit("position");
+    await new Promise((resolve) => setTimeout(resolve, 60));
+  }
+  assert.equal(asked, 1, "a load the player would not take is left alone");
 });
 
 // The same thing through the engine, where it was seen: a song change moves the

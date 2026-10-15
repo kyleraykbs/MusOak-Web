@@ -31,6 +31,14 @@ export const TOLERANCE_MS = 2000;
  *  chance to land before the next beat calls for another. */
 export const COOLDOWN_MS = 5000;
 
+/** The first moments of a run, in which the position is not corrected at all.
+ *  A file that has just been handed to the player is still settling - it is
+ *  decoding, and its playhead is not yet where it was asked to start - so what
+ *  the first beats measure is the load, not a drift. Seeking it back is the
+ *  "Syncing to the room" heard a moment after a song begins, which is the
+ *  stutter this whole file exists to keep out. */
+export const GRACE_MS = 2000;
+
 /** Where the room is at a given server time.
  *
  *  The anchor is the server's: `positionMs` is the position at `atMs`, and a
@@ -62,11 +70,18 @@ export function finishesAt(current) {
 }
 
 /** What to do about a member's position: `"hold"` while it is inside the
- *  tolerance or while a correction just landed, `"back"` or `"forward"` for the
- *  seek that closes a real gap. */
+ *  tolerance, while the run is still settling, or while a correction just
+ *  landed; `"back"` or `"forward"` for the seek that closes a real gap.
+ *
+ *  `sinceStartMs` is how long this member's file has been running, and a run
+ *  younger than GRACE_MS is left alone whatever it measures - see the constant.
+ *  A caller that does not know (or does not say) gives Infinity, which is a run
+ *  too old for the grace to apply. */
 export function driftAction(localMs, roomMs, options = {}) {
   const tolerance = Number.isFinite(options.toleranceMs) ? options.toleranceMs : TOLERANCE_MS;
   const cooldown = Number.isFinite(options.cooldownMs) ? options.cooldownMs : COOLDOWN_MS;
+  const sinceStart = Number.isFinite(options.sinceStartMs) ? options.sinceStartMs : Infinity;
+  if (sinceStart < GRACE_MS) return "hold";
   const sinceCorrect = Number.isFinite(options.sinceCorrectMs) ? options.sinceCorrectMs : Infinity;
   if (sinceCorrect < cooldown) return "hold";
   const drift = (Number(localMs) || 0) - (Number(roomMs) || 0);
@@ -160,6 +175,14 @@ export function decide(input) {
   const length = roomLength(current);
   const startedAt = Number(input.loadedAtMs);
   const aged = Number.isFinite(startedAt) ? Number(input.nowMs) - startedAt : 0;
+  // How long this member's file has been running, for the grace the drift rule
+  // applies. The caller may say, and the tick does not: the load it remembers
+  // is the same moment, so the grace is measured from the load either way.
+  const sinceStartMs = Number.isFinite(Number(input.sinceStartMs))
+    ? Number(input.sinceStartMs)
+    : Number.isFinite(startedAt)
+      ? Number(input.nowMs) - startedAt
+      : Infinity;
   const roomOver = length > 0 && roomMs >= length;
   const fileOver = input.ended || (Number(input.measuredMs) > 0 && aged > Number(input.measuredMs));
   if (roomOver || fileOver) {
@@ -173,7 +196,7 @@ export function decide(input) {
   }
 
   const drift = driftAction(input.localPositionMs, roomMs, {
-    sinceStartMs: input.sinceStartMs,
+    sinceStartMs,
     sinceCorrectMs: input.sinceCorrectMs,
   });
   if (drift === "hold") return { action: "hold" };
