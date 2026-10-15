@@ -7,6 +7,7 @@
 package web
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -21,6 +22,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -70,9 +72,14 @@ type Server struct {
 
 // assetEntry is one frontend file as it was read: its bytes, and the tag a
 // browser revalidates them by. Every revalidation of a file is a question about
-// the same bytes, so the file is read once per revision of the frontend.
+// the same bytes, so the file is read once per revision of the frontend. `gz`
+// is those same bytes as gzip, packed the first time a client that takes gzip
+// asks for the file and kept for every request after it: the frontend is nearly
+// a megabyte of JavaScript, and compressing it again for each of those requests
+// was the whole of that work, repeated.
 type assetEntry struct {
 	body []byte
+	gz   []byte
 	tag  string
 }
 
@@ -121,6 +128,12 @@ func New(cfg *config.Config, logger *slog.Logger, staticDir string) (*Server, er
 		DialContext:         s.dialGuard,
 		MaxIdleConnsPerHost: 8,
 		IdleConnTimeout:     90 * time.Second,
+		// A backend that accepts the connection and then says nothing is a
+		// request with no answer at all: this is where that becomes a failure
+		// the page can act on instead of a tab that spins for as long as the
+		// browser is willing. It bounds the wait for the response's *headers*
+		// only - a song's body is as long as the song is.
+		ResponseHeaderTimeout: 30 * time.Second,
 	}
 	s.proxy = s.newProxy()
 	if !s.live {
@@ -339,19 +352,16 @@ func bodyless(status int) bool {
 	return status < 200 || status == http.StatusNoContent || status == http.StatusNotModified
 }
 
-// compressible reports whether this request is one to compress: a client that
-// said it takes gzip, asking for something that is text. The page is HTML
-// whatever its URL looks like - a route the router owns has no extension to
-// read a type from - so it says so for itself; a file is text by its extension.
-// Anything else is served exactly as before.
-func compressible(r *http.Request, page bool) bool {
-	if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
-		return false
-	}
-	if page {
-		return true
-	}
-	return compressedExtensions[strings.ToLower(path.Ext(r.URL.Path))]
+// acceptsGzip reports whether the client said it takes gzip.
+func acceptsGzip(r *http.Request) bool {
+	return strings.Contains(r.Header.Get("Accept-Encoding"), "gzip")
+}
+
+// packable reports whether a file is one worth compressing: text, by its
+// extension. Fonts and images are already compressed, so running them through
+// gzip again costs CPU and saves nothing.
+func packable(name string) bool {
+	return compressedExtensions[strings.ToLower(path.Ext(name))]
 }
 
 // handleSite serves the frontend, falling back to its index for the routes the
@@ -368,22 +378,28 @@ func (s *Server) handleSite(w http.ResponseWriter, r *http.Request) {
 	// one of the two is worth compressing on these terms.
 	route := strings.TrimPrefix(r.URL.Path, "/")
 	page := route == "" || strings.HasSuffix(route, "/") || route == "index.html"
+	gzip := acceptsGzip(r)
 	var entry assetEntry
 	if !page {
 		var err error
-		entry, err = s.asset(route)
+		// The file is packed here, once, if this client would take it that way
+		// and it is the kind of file worth packing.
+		entry, err = s.asset(route, gzip && packable(route))
 		page = err != nil
 	}
-	if compressible(r, page) {
-		// Said out loud, because what comes back depends on it: a cache that
-		// stores the compressed body without knowing that would hand it to a
-		// client that cannot read it.
-		w.Header().Add("Vary", "Accept-Encoding")
-		packed := &gzipWriter{ResponseWriter: w}
-		defer packed.Close()
-		w = packed
-	}
 	if page {
+		// The page is built for the request that asked for it - it carries the
+		// revision's URL and the origin it was reached by - so it is compressed
+		// as it goes. A file is not: it is packed once and sent many times.
+		if gzip {
+			// Said out loud, because what comes back depends on it: a cache
+			// that stores the compressed body without knowing that would hand
+			// it to a client that cannot read it.
+			w.Header().Add("Vary", "Accept-Encoding")
+			packed := &gzipWriter{ResponseWriter: w}
+			defer packed.Close()
+			w = packed
+		}
 		s.servePage(w, r)
 		return
 	}
@@ -495,24 +511,41 @@ func (s *Server) stampLocked() string {
 // asset is one frontend file's bytes and tag, read once per revision of the
 // frontend. A browser revalidating a module it already has asks about bytes
 // that were read a moment ago, and the answer to that should be a lookup rather
-// than a walk to the disk or the embed.
-func (s *Server) asset(name string) (assetEntry, error) {
+// than a walk to the disk or the embed. `pack` is the caller saying it will
+// serve the file compressed, so the packing is done here rather than by
+// whoever compresses.
+func (s *Server) asset(name string, pack bool) (assetEntry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.stampLocked()
-	if entry, ok := s.files[name]; ok {
-		return entry, nil
+	entry, ok := s.files[name]
+	if !ok {
+		body, err := fs.ReadFile(s.siteFS, name)
+		if err != nil {
+			return assetEntry{}, err
+		}
+		entry = assetEntry{body: body, tag: `"` + assetTag(body) + `"`}
 	}
-	body, err := fs.ReadFile(s.siteFS, name)
-	if err != nil {
-		return assetEntry{}, err
+	if pack && entry.gz == nil {
+		entry.gz = gzipBytes(entry.body)
 	}
-	entry := assetEntry{body: body, tag: `"` + assetTag(body) + `"`}
 	if s.files == nil {
 		s.files = make(map[string]assetEntry)
 	}
 	s.files[name] = entry
 	return entry, nil
+}
+
+// gzipBytes is the bytes as gzip. The default level, deliberately: this runs
+// once per revision of a file and then stands for every request after it, and
+// the extra milliseconds of the highest level would be spent in front of the
+// first person asking for the page.
+func gzipBytes(body []byte) []byte {
+	var buf bytes.Buffer
+	writer := gzip.NewWriter(&buf)
+	_, _ = writer.Write(body)
+	_ = writer.Close()
+	return buf.Bytes()
 }
 
 // digestSite is a digest of the frontend's file names and contents, short
@@ -556,6 +589,19 @@ func (s *Server) serveAsset(w http.ResponseWriter, r *http.Request, name string,
 	}
 	if matchesETag(r.Header.Get("If-None-Match"), entry.tag) {
 		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	if entry.gz != nil && acceptsGzip(r) {
+		// The packed bytes are in the entry because a client asked for them
+		// once; whether *this* client gets them is this request's own business.
+		//
+		// What came back depends on the request, so a cache has to know that.
+		w.Header().Add("Vary", "Accept-Encoding")
+		w.Header().Set("Content-Encoding", "gzip")
+		// Known here, unlike the streamed form: the compressed size was
+		// settled when it was packed.
+		w.Header().Set("Content-Length", strconv.Itoa(len(entry.gz)))
+		_, _ = w.Write(entry.gz)
 		return
 	}
 	_, _ = w.Write(entry.body)
@@ -619,6 +665,16 @@ func nameFor(raw string) string {
 
 // dialGuard is the network half of the private-range policy: whatever a name
 // resolves to here is what gets refused.
+//
+// The dialer is shared, and carries a timeout: a name that resolves into a
+// black hole is otherwise dialled for as long as the operating system's own
+// default allows - minutes - with a request hanging on it and nothing to show
+// the person waiting.
+var dialer = &net.Dialer{
+	Timeout:   10 * time.Second,
+	KeepAlive: 30 * time.Second,
+}
+
 func (s *Server) dialGuard(ctx context.Context, network, address string) (net.Conn, error) {
 	if s.cfg.BlockPrivateServers {
 		host, _, err := net.SplitHostPort(address)
@@ -628,7 +684,7 @@ func (s *Server) dialGuard(ctx context.Context, network, address string) (net.Co
 			}
 		}
 	}
-	return (&net.Dialer{}).DialContext(ctx, network, address)
+	return dialer.DialContext(ctx, network, address)
 }
 
 func isPrivate(ip net.IP) bool {

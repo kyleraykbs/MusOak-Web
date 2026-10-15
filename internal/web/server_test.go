@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -569,8 +570,11 @@ func TestSiteCompressesTextForClientsThatAsk(t *testing.T) {
 	if got := compressed.Header().Get("Vary"); !strings.Contains(got, "Accept-Encoding") {
 		t.Errorf("Vary = %q, want Accept-Encoding", got)
 	}
-	if got := compressed.Header().Get("Content-Length"); got != "" {
-		t.Errorf("Content-Length = %q, want it dropped: the compressed size is not known up front", got)
+	// The packed body was measured when it was packed, so its length goes out
+	// with it: a wrong Content-Length truncates the body, and one that is left
+	// off leaves the response chunked.
+	if got, want := compressed.Header().Get("Content-Length"), strconv.Itoa(compressed.Body.Len()); got != want {
+		t.Errorf("Content-Length = %q, want %q: the length of the compressed body", got, want)
 	}
 	reader, err := gzip.NewReader(bytes.NewReader(compressed.Body.Bytes()))
 	if err != nil {
