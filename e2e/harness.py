@@ -105,17 +105,19 @@ class Ui:
     # --- console ------------------------------------------------------------
 
     def _install_console_capture(self):
-        """Collect console errors and uncaught exceptions through BiDi.
+        """Collect console errors through BiDi and JS errors from Firefox's log.
 
-        BiDi is asked for explicitly in the capabilities; a session without it
-        falls back to reading the driver's own log, which carries Firefox's
-        console output. Which one is in use is reported by the self-check.
+        Selenium 4.40's typed `add_javascript_error_handler` raises
+        `KeyError('stackTrace')` on Firefox events that legitimately omit that
+        field, inside its websocket callback thread. That is both noisy and a
+        way to lose an error. The console handler is safe for console entries;
+        JavaScript errors are read from Firefox's own driver log in
+        `_read_log`, which is why the two collectors are deliberately split.
         """
         try:
             self.driver.script.add_console_message_handler(self._on_console)
-            self.driver.script.add_javascript_error_handler(self._on_javascript_error)
             self._console_available = True
-        except Exception:  # noqa: BLE001 - a session without BiDi still runs
+        except Exception:  # noqa: BLE001 - a session without BiDi still logs
             self._console_available = False
 
     def _on_console(self, entry):
@@ -123,10 +125,6 @@ class Ui:
         text = getattr(entry, "text", "") or str(entry)
         if str(level).lower() in {"error", "severe"}:
             self._errors.append({"kind": "console", "level": str(level), "text": text, "source": "bidi"})
-
-    def _on_javascript_error(self, entry):
-        text = getattr(entry, "text", "") or str(entry)
-        self._errors.append({"kind": "javascript", "level": "error", "text": text, "source": "bidi"})
 
     def console_available(self):
         return self._console_available or bool(self._log_path)

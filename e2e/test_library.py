@@ -434,22 +434,30 @@ def test_the_position_bar_and_the_mute_button(ui, backend, media_factory):
 
 
 def test_the_keyboard(ui, backend, media_factory):
-    """Space pauses and resumes; the README's player keys are the CLI's.
+    """Every transport key does the thing it names, and only where it applies.
 
-    `space` is the one binding the web UI has (`app.js`'s keydown listener emits
-    "toggle-play"), and it is asserted here. The README's key table (`k`/`j`
-    volume, `l`/`h` next/previous, `q` quit) documents the `musoak play` CLI's
-    status line, not this page: pressing those keys here does nothing, which
-    this test records rather than pretends. What each key did is printed, and
-    the mismatch is reported rather than hidden behind a relaxed assertion.
+    A page is the same kind of player as `musoak play`, so the terminal's keys
+    are both players' keys (the README's table says who takes each one):
+    space pause/resume, l/right next, h/left previous, k/up volume up, j/down
+    volume down, m mute. `q` is the terminal's alone - there is no session to
+    end in a page - and is asserted to do nothing here.
+
+    Two songs are queued, because "next" has to have somewhere to go: a skip
+    with one song in the queue is a skip that must do nothing at all.
     """
     tag = uuid.uuid4().hex[:6]
-    title = f"Keys {tag}"
-    account, _ = library_of(backend, media_factory, [(title, 9)])
+    first, second = f"Keys A {tag}", f"Keys B {tag}"
+    account, _ = library_of(backend, media_factory, [(first, 9), (second, 10)])
     enter(ui, account)
 
-    play_from_manage(ui, title)
-    wait_sounding(ui, title, 9)
+    play_from_manage(ui, first)
+    wait_sounding(ui, first, 9)
+    queue_from_manage(ui, second)
+    ui.click_tab("Queue")
+    ui.click_xpath(f"//div[contains(@class,'row')][.//div[contains(@class,'title')][normalize-space(.)='{first}']]",
+                   f"the {first!r} queue row")
+    wait_sounding(ui, first, 9)
+    assert ui.now_playing() == first, f"the queue did not put {first!r} on: {ui.now_playing()!r}"
 
     blur(ui)
     ui.key(" ")
@@ -461,27 +469,56 @@ def test_the_keyboard(ui, backend, media_factory):
         "space did not resume the song",
     )
 
-    observed = []
-    for key in ("l", "h", "k", "j", "q"):
-        blur(ui)
-        before = ui.player()
-        before_title = ui.now_playing()
-        ui.key(key)
-        after = ui.player()
-        observed.append(
-            f"{key}: now_playing {before_title!r}->{ui.now_playing()!r}, "
-            f"paused {before['paused']}->{after['paused']}, muted {before['muted']}->{after['muted']}"
-        )
-        # None of them is bound, so none of them may take the page anywhere or
-        # leave it erroring; the song that was playing keeps playing.
-        assert ui.now_playing() == before_title, (
-            f"pressing {key!r} changed what is playing (the web UI has no binding for it, "
-            f"so this is unexpected): {ui.now_playing()!r}"
-        )
-        assert not after["paused"], f"pressing {key!r} paused the song"
-    print("\n[library] the README's player keys on the web UI (unbound here):")
-    for line in observed:
-        print(f"[library]   {line}")
+    # The transport keys the terminal player has, plus mute: a page is the same
+    # kind of player, so they belong to both (the README's table says who takes
+    # each key). Each one is asserted against the thing it moves - the song for
+    # a skip, the element's own volume for k/j - because "something happened" is
+    # not a rule.
+    blur(ui)
+    before_title = ui.now_playing()
+    ui.key("l")
+    ui.wait(lambda: ui.now_playing() != before_title, "l did not move to the next song", timeout=15)
+    print(f"\n[library] l took {before_title!r} to {ui.now_playing()!r}")
+
+    blur(ui)
+    title_now = ui.now_playing()
+    ui.key("h")
+    ui.wait(lambda: ui.now_playing() != title_now, "h did not go back a song", timeout=15)
+    print(f"[library] h took {title_now!r} back to {ui.now_playing()!r}")
+
+    # Lower first, then raise: the saved volume starts at full, so raising it
+    # from there is a key that correctly does nothing. Both directions are
+    # asserted against the reading each one changed.
+    blur(ui)
+    before_volume = ui.player()["volume"]
+    ui.key("j")
+    lower = ui.wait_player(
+        lambda state: state if state["volume"] < before_volume else None,
+        "j did not lower the volume",
+        timeout=5,
+    )
+    ui.key("k")
+    ui.wait_player(
+        lambda state: state if state["volume"] > lower["volume"] else None,
+        "k did not raise the volume back",
+        timeout=5,
+    )
+    print(f"[library] volume {before_volume:.2f} -> {lower['volume']:.2f} -> {ui.player()['volume']:.2f}")
+
+    blur(ui)
+    ui.key("m")
+    ui.wait_player(lambda state: state if state["muted"] else None, "m did not mute", timeout=5)
+    blur(ui)
+    ui.key("m")
+    ui.wait_player(lambda state: state if not state["muted"] else None, "m did not unmute", timeout=5)
+
+    # 'q' is the terminal player's alone - there is no session to end in a page -
+    # so it must do nothing at all here.
+    blur(ui)
+    before_title, before_state = ui.now_playing(), ui.player()
+    ui.key("q")
+    assert ui.now_playing() == before_title, "q changed what is playing (it is the terminal's key, not the page's)"
+    assert not ui.player()["paused"], "q paused the song"
 
     assert_clock_moves(ui, "the song after the keyboard")
     ui.assert_no_errors("the keyboard")

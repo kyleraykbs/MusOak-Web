@@ -30,6 +30,7 @@ import time
 import pytest
 
 from conftest import register_ui
+from test_library import click_row_menu, choose_menu, open_manage
 
 pytestmark = [pytest.mark.slow, pytest.mark.browsers]
 
@@ -142,21 +143,32 @@ def _cover_a_track(backend, media_factory, token, track_id, cover):
 # --- the page ---------------------------------------------------------------
 
 
-def _queue_and_open(ui, tracks):
-    """Hand the app's own player a queue, then show it as a person would.
+def _queue_and_open(ui, tracks, backend, token):
+    """Put the songs through a real playlist control, then show Queue.
 
-    The player module is the real one on the page, so the rows are drawn from
-    exactly the state the app keeps; the Queue tab renders them.
+    A page-side import of player.js boots a second app under the service worker;
+    that was useful for an early probe but is not a user path and makes the test
+    measure the wrong player. The playlist page's own Play button is the same
+    queue mutation a person uses.
     """
-    ui.wait_quiet()
-    ui.js_async(
-        "const module = await import('/js/player.js');"
-        "window.__e2e = { ...(window.__e2e || {}), player: module.player };"
+    playlist_name = f"Image queue {os.urandom(3).hex()}"
+    status, playlist = backend.post("/api/v1/me/playlists", {"name": playlist_name}, token=token)
+    assert status in (200, 201) and playlist.get("id"), f"playlist create: {status} {playlist}"
+    status, _ = backend.post(
+        f"/api/v1/me/playlists/{playlist['id']}/items",
+        {"trackIds": [track["id"] for track in tracks]},
+        token=token,
     )
-    ui.wait_js("window.__e2e && window.__e2e.player", "the player module never loaded on the page")
-    ui.js("window.__e2e.player.play(arguments[0]); return true;", tracks)
+    assert status == 200, f"playlist add: {status}"
+    ui.wait_quiet()
+    ui.click_tab("Playlists")
+    ui.click_xpath(
+        f"//div[contains(@class,'row')][.//div[contains(@class,'title')][normalize-space(.)={json.dumps(playlist_name)}]]",
+        "the image playlist row",
+    )
+    ui.click("button[title='Play these tracks']")
     ui.click_tab("Queue")
-
+    return playlist
 
 def _wait_for_row_images(ui, expected, timeout):
     """Wait until `expected` row pictures exist and every one has finished."""
@@ -263,7 +275,7 @@ def test_artwork_appears_for_a_song_that_has_a_cover(ui, backend, media_factory)
     expected = sum(1 for track in tracks if track.get("artworkUrl"))
     assert expected >= 2, f"only {expected} queued song(s) ended up with artwork: {[track.get('artworkUrl') for track in tracks]}"
 
-    _queue_and_open(ui, tracks)
+    _queue_and_open(ui, tracks, backend, token)
     imgs = _wait_for_row_images(ui, expected=expected, timeout=ROW_IMAGES_BUDGET_S)
     _assert_images_loaded(imgs)
 
@@ -275,7 +287,6 @@ def test_artwork_appears_for_a_song_that_has_a_cover(ui, backend, media_factory)
 
 # --- 3. no image request is slow --------------------------------------------
 
-
 def test_no_image_request_is_slow(ui, backend, media_factory):
     """Every picture the page asks for must be answered inside the budget."""
     token = _register(ui)
@@ -285,7 +296,7 @@ def test_no_image_request_is_slow(ui, backend, media_factory):
         _cover_a_track(backend, media_factory, token, entry["trackId"], cover)
 
     tracks = [_fetch_track(backend, token, entry["trackId"]) for entry in songs]
-    _queue_and_open(ui, tracks)
+    _queue_and_open(ui, tracks, backend, token)
     _wait_for_row_images(ui, expected=3, timeout=ROW_IMAGES_BUDGET_S)
 
     images = _image_requests(ui)
@@ -319,16 +330,8 @@ def test_a_page_of_many_images_stays_responsive(ui, backend, media_factory):
     tracks = [_fetch_track(backend, token, entry["trackId"]) for entry in songs]
     assert all(track.get("artworkUrl") for track in tracks), "not every row got a cover, so the count below would be wrong"
 
-    ui.wait_quiet()
-    ui.js_async(
-        "const module = await import('/js/player.js');"
-        "window.__e2e = { ...(window.__e2e || {}), player: module.player };"
-    )
-    ui.wait_js("window.__e2e && window.__e2e.player", "the player module never loaded on the page")
-
     started = time.monotonic()
-    ui.js("window.__e2e.player.play(arguments[0]); return true;", tracks)
-    ui.click_tab("Queue")
+    _queue_and_open(ui, tracks, backend, token)
 
     # The page's own interactions must not sit behind the covers arriving.
     click_started = time.monotonic()
