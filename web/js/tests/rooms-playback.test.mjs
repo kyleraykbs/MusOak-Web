@@ -142,11 +142,26 @@ test("the transition is the client's: the room's clock running out moves the mem
   assert.equal(answer.fromItemId, "a");
 });
 
-test("a file that runs out before the room's clock does moves the member on too", () => {
-  // A trimmed copy is shorter than the length the room was told, so this device
-  // reaches the end of the file while the room's clock still has seconds on it.
-  const answer = decide({ ...base, localPositionMs: 199000, measuredMs: 199000, ended: false, loadedAtMs: NOW - 199500 });
-  assert.equal(answer.action, "advance");
+test("a file that runs out well before the room's clock waits instead of moving on", () => {
+  // A trimmed copy is shorter than the length the room was told: this device
+  // reaches the end of its file while the room still has a minute of song. Moving
+  // on here is the transition heard early, and the room's own switch then drags
+  // the member back - the reset. The room's clock decides; the member waits it
+  // out, quietly.
+  const answer = decide({ ...base, localPositionMs: 140000, measuredMs: 140000, ended: false, loadedAtMs: NOW - 140500 });
+  assert.equal(answer.action, "pause", "the room is still on this song");
+  assert.equal(answer.waiting, true, "and this member is only waiting for it to finish");
+
+  // Ending on the room's own end is the case the transition is for.
+  const roomEnds = decide({
+    ...base,
+    current: running({ id: "a", positionMs: 0, atMs: NOW - 199500, durationMs: 200000 }),
+    localPositionMs: 199500,
+    measuredMs: 199500,
+    ended: false,
+    loadedAtMs: NOW - 200000,
+  });
+  assert.equal(roomEnds.action, "advance", "the room's own end is the transition");
 });
 
 test("a transition with nothing after it holds instead of guessing", () => {

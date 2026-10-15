@@ -31,6 +31,11 @@ export const TOLERANCE_MS = 2000;
  *  chance to land before the next beat calls for another. */
 export const COOLDOWN_MS = 5000;
 
+/** How close to the room's own end a member's file may run out and still count
+ *  as the song being over. Anything earlier is a copy shorter than the length
+ *  the room was told; see the transition in decide. */
+export const FILE_END_SLACK_MS = 2500;
+
 /** The first moments of a run, in which the position is not corrected at all.
  *  A file that has just been handed to the player is still settling - it is
  *  decoding, and its playhead is not yet where it was asked to start - so what
@@ -185,11 +190,23 @@ export function decide(input) {
       : Infinity;
   const roomOver = length > 0 && roomMs >= length;
   const fileOver = input.ended || (Number(input.measuredMs) > 0 && aged > Number(input.measuredMs));
-  if (roomOver || fileOver) {
+  // The room's clock is what says when the song is over; a member's own file
+  // running out is only evidence of it when it runs out *near* the room's end.
+  // A copy shorter than the length the room was told - trimmed differently, or
+  // a different rendition - ends early, and moving on there is the transition
+  // heard before the song was over; the room's own switch then drags the member
+  // back onto the song they had already started, which is the reset. So a file
+  // that ends first waits for the room, quietly.
+  //
+  // With no length known there is nothing to measure against, and the local end
+  // is all the evidence there is.
+  const nearRoomEnd = length <= 0 || length - roomMs <= FILE_END_SLACK_MS;
+  if (roomOver || (fileOver && nearRoomEnd)) {
     const next = nextItem(input.state, itemId);
     if (!next) return { action: "pause" };
     return { action: "advance", itemId: String(next.id), fromItemId: itemId, autoplay: true };
   }
+  if (fileOver) return { action: "pause", waiting: true };
 
   if (!playing) {
     return { action: "resume", blocked: Boolean(input.blocked) };

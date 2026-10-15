@@ -884,10 +884,20 @@ test("when its file ends, the member advances locally and keeps playing", async 
   await enterRoom({ client, roomId: "room-1", rejoin: true });
   assert.ok(await waitFor(() => player.plays.length === 1 && player.current()?.id === first.trackId));
 
-  // The local file has played out while the room still says this song: the
-  // member does not wait for the room, it moves to the next song by itself.
+  // The local file runs out while the room's clock still has the song: this
+  // member's copy is shorter than the room thinks the song is, and moving on
+  // here is the premature switch - the room's own change then drags them back.
+  // So they wait it out, quietly.
   player.ended = true;
   player.emit("position");
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(player.plays.length, 1, "a file that ends early does not move the member on");
+
+  // The room's own clock reaches the end of the song: that is the transition.
+  client.calls.sockets[0].onEvent({
+    type: "playback", roomId: "room-1", seq: 2,
+    data: { current: { item: first, positionMs: 30000, atMs: Date.now(), started: true, paused: false, durationMs: 30000 } },
+  });
   assert.ok(await waitFor(() => player.plays.length === 2), "the next song of the room's order is loaded");
   assert.equal(player.plays[1].track.id, second.trackId);
   assert.equal(player.plays[1].positionMs, 0);
@@ -897,7 +907,7 @@ test("when its file ends, the member advances locally and keeps playing", async 
   // The room's own tick lags by up to a second and still names the song we
   // left. It must not drag the member back onto it.
   client.calls.sockets[0].onEvent({
-    type: "playback", roomId: "room-1", seq: 2,
+    type: "playback", roomId: "room-1", seq: 3,
     data: { current: { item: first, positionMs: 0, atMs: Date.now(), started: true, paused: false, durationMs: 30000 } },
   });
   await new Promise((resolve) => setTimeout(resolve, 100));
@@ -1198,22 +1208,25 @@ test("a pause pressed after a song change reaches this member", async (t) => {
   await enterRoom({ client, roomId: "room-1", rejoin: true });
   assert.ok(await waitFor(() => player.plays.length === 1 && player.current()?.id === first.trackId));
 
-  // The local file runs out first: the member moves to the next song by itself.
-  player.ended = true;
-  player.emit("position");
-  assert.ok(await waitFor(() => player.plays.length === 2), "the member advanced locally");
-
-  // The room pauses while its own beat still names the song that just played.
+  // The room's clock reaches the end of the song: the member moves to the next
+  // one by itself, so the room's own beat still names the song they left.
   const socket = client.calls.sockets[0];
   socket.onEvent({
     type: "playback", roomId: "room-1", seq: 2,
+    data: { current: { item: first, positionMs: 30000, atMs: Date.now(), started: true, paused: false, durationMs: 30000 } },
+  });
+  assert.ok(await waitFor(() => player.plays.length === 2), "the member advanced locally");
+
+  // The room pauses while its own beat still names the song that just played.
+  socket.onEvent({
+    type: "playback", roomId: "room-1", seq: 3,
     data: { current: { item: first, positionMs: 0, atMs: Date.now(), started: true, paused: true, durationMs: 30000 } },
   });
   assert.ok(await waitFor(() => player.paused === true), "the pause reaches the player despite the stale item");
 
   // And the room playing again starts this member again.
   socket.onEvent({
-    type: "playback", roomId: "room-1", seq: 3,
+    type: "playback", roomId: "room-1", seq: 4,
     data: { current: { item: first, positionMs: 0, atMs: Date.now(), started: true, paused: false, durationMs: 30000 } },
   });
   assert.ok(await waitFor(() => player.paused === false), "and its play starts the member again");
@@ -1253,8 +1266,12 @@ test("the next song's source is resolved ahead of time, and the transition uses 
   );
 
   const before = asked.length;
-  player.ended = true;
-  player.emit("position");
+  // The room's own clock ends the song: that is the transition, and it must not
+  // need a source it has not already resolved.
+  client.calls.sockets[0].onEvent({
+    type: "playback", roomId: "room-1", seq: 2,
+    data: { current: { item: first, positionMs: 30000, atMs: Date.now(), started: true, paused: false, durationMs: 30000 } },
+  });
   assert.ok(await waitFor(() => player.plays.length === 2), "the member moves to the next song");
   assert.equal(asked.length, before, "and the transition did not have to search for a source");
   assert.ok(player.plays[1].positionMs < 1000, `it starts at the beginning (${player.plays[1].positionMs}ms)`);
