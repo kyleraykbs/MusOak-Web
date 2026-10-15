@@ -177,7 +177,6 @@ async function inQueueOrder(tracks) {
 /** id -> {id, name, trackIds, bytes, savedAt}, so reads are synchronous. */
 let mirror = new Map();
 let loading = null;
-let swRegistered = false;
 const listeners = new Set();
 const jobs = new Map();
 // The keep-in-step runs under way, by playlist: what is there so a second ask
@@ -350,10 +349,17 @@ function fetchVariantToCache(client, variantId, signal) {
       }));
     }
     return blob.size;
-  })().finally(() => pending.delete(key));
+  }).finally(() => pending.delete(key));
 
   pending.set(key, work);
   return work;
+}
+
+/** What went wrong, in words a person can act on. */
+function reasonFor(error) {
+  if (!error) return "it failed for no stated reason";
+  if (error.status) return `the server said ${error.status}${error.message ? ` (${error.message})` : ""}`;
+  return String(error.message || error);
 }
 
 /** Which variant of a song this client would play, from the account's picks. */
@@ -415,31 +421,16 @@ async function report(error) {
   await announce(error?.message || String(error), "error");
 }
 
-/** The worker that serves kept songs with no server: registered on first use. */
-function ensureServiceWorker() {
-  if (swRegistered) return;
-  swRegistered = true;
-  if (typeof navigator === "undefined" || !navigator.serviceWorker || typeof window === "undefined") return;
-  try {
-    navigator.serviceWorker
-      .register(new URL("../sw.js", import.meta.url).href, { type: "module" })
-      .catch(() => {
-        swRegistered = false;
-      });
-  } catch {
-    swRegistered = false;
-  }
-}
-
+/** The worker that serves kept songs with no server is registered by the shell,
+ *  in app.js, on every load. It used to be registered from here as well - this
+ *  module is the one that knows what the worker is for - but that made the
+ *  registration a side effect of a *feature* module loading: with the views
+ *  imported behind the first paint, a load that never opened Playlists never
+ *  registered a worker at all, and the offline shell quietly did not exist. */
 if (typeof window !== "undefined") {
   window.addEventListener("online", () => {
     syncKept().catch(() => {});
   });
-  // Registered whether or not anything is kept: the worker also makes sure the
-  // app's own files are fetched rather than reused from a cache that predates
-  // the server's caching policy, which is what left people running yesterday's
-  // modules with nothing they could do about it.
-  ensureServiceWorker();
 }
 
 // --- what is kept ----------------------------------------------------------
@@ -526,7 +517,6 @@ function downloadDialog(name, onCancel) {
  */
 export async function download(playlistId, name, tracks, onProgress) {
   if (!playlistId || jobs.has(playlistId)) return null;
-  ensureServiceWorker();
   await ensureLoaded();
   const client = activeClient();
   if (!client) {
@@ -545,6 +535,7 @@ export async function download(playlistId, name, tracks, onProgress) {
     );
     const total = list_.length;
     const entries = [];
+    const reasons = [];
     let bytes = 0;
     let failed = 0;
 
@@ -566,14 +557,20 @@ export async function download(playlistId, name, tracks, onProgress) {
           await report(error);
           return null;
         }
+        // Say *why*, and say it in the log as well as the dialog: a song that
+        // cannot be downloaded used to be counted and thrown away, so the one
+        // person who could have fixed it - whoever is looking at the page - saw
+        // "1 of 1 songs could not be downloaded" and nothing else.
         failed += 1;
+        reasons.push(`${track.title || "a song"}: ${reasonFor(error)}`);
+        console.warn("offline: could not keep", track.title || track.id, error);
       }
     }
 
     if (stopped()) return null;
 
     if (failed) {
-      const message = `${failed} of ${total} songs could not be downloaded. Nothing is kept yet.`;
+      const message = `${failed} of ${total} songs could not be downloaded. Nothing is kept yet. ${reasons.join("; ")}`;
       view.setError(message);
       await announce(message, "error");
       return null;
@@ -727,7 +724,6 @@ async function syncOne(playlistId, name, { quiet = true } = {}) {
 
 /** Quietly re-download anything missing from every kept playlist. */
 export async function syncKept() {
-  ensureServiceWorker();
   await ensureLoaded();
   for (const record of list()) {
     await syncOne(record.id, record.name);
@@ -765,7 +761,6 @@ export function button(playlist) {
   const control = h("button", {
     class: "btn flat round",
     onclick: () => {
-      ensureServiceWorker();
       if (isKept(id)) openKeptDialog({ id, name });
       else download(id, name, null, null);
     },

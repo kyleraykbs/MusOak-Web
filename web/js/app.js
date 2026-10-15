@@ -221,7 +221,14 @@ function startServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   try {
     const scope = new URL("../", import.meta.url);
-    navigator.serviceWorker.register(new URL("sw.js", scope), { scope }).then(
+    // `type: "module"` is not optional: sw.js imports the cache names and the
+    // media key out of offline.js, and a classic worker cannot have an import
+    // at its top. Registering it as one fails with a syntax error, and the
+    // failure is invisible - the page simply has no worker, every load is a
+    // full one, and the offline shell never exists. That mistake hid here for
+    // a while: the only other registration lived in offline.js, so the worker
+    // appeared only on the loads that happened to import that feature module.
+    navigator.serviceWorker.register(new URL("sw.js", scope), { scope, type: "module" }).then(
       (registration) => {
         // Tell the worker what this page is made of: every script and style it
         // loaded, from the browser's own record of the load. Without that the

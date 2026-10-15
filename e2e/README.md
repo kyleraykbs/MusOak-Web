@@ -128,6 +128,12 @@ failing test. They are measured, not guessed.
 - **Firefox reports no 304 in Resource Timing.** A revalidated file shows up as
   the final `200` with `transferSize` 0 (or as a service-worker answer with
   `encodedBodySize` 0). Assert "no bytes came off the wire", not "status is 304".
+- **A media element's request is not in Resource Timing.** The service worker
+  answers `/api/v1/media/...` from Cache Storage, so the fetch is the worker's
+  and the page's resource table never shows it. Anything asserting on a media
+  request must read the element's own `src` (which is absolute - resolve any
+  relative URL you compare it against) plus the server's log, not Resource
+  Timing.
 - **A revalidation may still be a request.** The shell asks for `/ui/config`
   again on a reload, deliberately and behind the paint - the fix was to stop
   *waiting* for it, not to stop asking. Assert what changed rather than a round

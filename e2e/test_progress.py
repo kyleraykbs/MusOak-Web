@@ -14,6 +14,16 @@ answers with the same token the page is using. The second is the plumbing; the
 first is what a person sees. A bar that moves while the status sits still, or
 the other way round, is a bug either way.
 
+A not-yet-downloaded song plays from the provider's own stream while the
+download runs behind it (`internal/media/stream.go`), so the element is handed a
+source - the stream - at the start rather than when the file lands. That is why
+this test watches the download to its end rather than stopping at the first
+sound, and why it reads the element's own `src`: the bar is drawing the
+*download's* progress, not the song's position, and the two are only in the same
+place if the fill is the endpoint's fraction. (The element's requests are not in
+Resource Timing - the service worker answers `/api/v1/media/...`, so the bytes
+belong to the worker's fetch - which is why the src is read from the element.)
+
 Everything the fake reports is fixed - a source of 2,880,044 bytes (30 s of
 48 kHz mono s16le, plus a header) streamed in ten chunks, then a conversion
 reported as the song's 30,000 ms - so the assertions are about the numbers the
@@ -142,10 +152,11 @@ def _kind(text):
 def _watch(ui, backend, token, variant_id):
     """Sample the page and the status endpoint every quarter second.
 
-    Stops when the song is playing - a source, not paused, a clock that has
-    moved - or when the wait runs out, whichever comes first. Nothing here
-    sleeps *for* the app: the only wait is between samples, and what ends the
-    loop is a reading.
+    Stops when the backend says the file is ready - the end of the story this
+    test is about - or when the wait runs out, whichever comes first. Not at the
+    first sound: a streamed song is sounding within a second, and stopping there
+    would leave the download's own stages unread. Nothing here sleeps *for* the
+    app: the only wait is between samples, and what ends the loop is a reading.
     """
     samples = []
     started = time.monotonic()
@@ -153,6 +164,7 @@ def _watch(ui, backend, token, variant_id):
     while True:
         bar = ui.js(BAR_JS) or {}
         state = ui.player() or {}
+        src = state.get("src") or ""
         status, answer = backend.get(f"/api/v1/media/{variant_id}/status", token=token)
         api = answer if isinstance(answer, dict) else {}
         samples.append({
@@ -160,7 +172,11 @@ def _watch(ui, backend, token, variant_id):
             "fill": _percent(bar.get("fill")),
             "text": bar.get("subtitle", ""),
             "shown": bool(bar.get("shown")),
-            "has_src": bool(state.get("src")),
+            "has_src": bool(src),
+            # A stream is a media URL that names a position; a whole file names
+            # none. This is the app's own marker, and the element's own src.
+            "streaming": _start_param(src) is not None,
+            "sounding": bool(src) and not state.get("paused") and (state.get("currentTime") or 0) > 0.1,
             "api": {
                 "http": status,
                 "state": api.get("state", ""),
@@ -170,21 +186,28 @@ def _watch(ui, backend, token, variant_id):
                 "totalBytes": api.get("totalBytes") or 0,
             },
         })
-        playing = samples[-1]["has_src"] and not state.get("paused") and (state.get("currentTime") or 0) > 0.1
-        if playing or time.monotonic() >= deadline:
+        if samples[-1]["api"]["state"] == "ready" or time.monotonic() >= deadline:
             return samples
         time.sleep(STEP)
 
 
+def _start_param(url):
+    """The position a media URL names, or None when it names none."""
+    raw = urllib.parse.parse_qs(urllib.parse.urlparse(url or "").query).get("start", [""])[0]
+    return int(raw) if raw.isdigit() else None
+
+
 def _table(samples):
     """Every sample, one line each: the evidence a failure is read from."""
-    rows = ["    t     bar says                                   fill   bar  src  api stage    api bytes/total"]
+    rows = ["    t     bar says                                   fill   bar  src   stream  sounding  api stage    api bytes/total"]
     for sample in samples:
         api = sample["api"]
         fill = "  -  " if sample["fill"] is None else f"{sample['fill']:>3}% "
         rows.append(
             f"    {sample['t']:>5.2f} {sample['text'][-42:]:<42} {fill}  "
             f"{'on ' if sample['shown'] else 'off'}  {'yes' if sample['has_src'] else 'no ':>3}  "
+            f"{'stream' if sample['streaming'] else ('file  ' if sample['has_src'] else '  -   '):<6}  "
+            f"{'yes' if sample['sounding'] else 'no ':>3}       "
             f"{(api['stage'] or '-'):<10} {api['bytes']}/{api['totalBytes']}"
         )
     return "\n".join(rows)
@@ -309,17 +332,30 @@ def test_the_bar_draws_the_download_the_provider_reports(ui, backend, signed_in)
     )
     assert max(painted) >= 90, _report("the highest painted fill while downloading", max(painted), "at least 90%")
 
-    # The bar reached that far before the file was here: a source on the element
-    # is the file having arrived.
-    before_source = [
-        s for s in bar_download if not s["has_src"] and s["fill"] is not None and s["fill"] >= 90
-    ]
-    assert before_source, (
-        "the bar never showed 90%+ before the element had a source: the fill would then be "
-        f"describing the wrong thing\n{_table(samples)}"
+    # The bar reached that far while the song was already playing: a streamed
+    # song sounds within a second, and the fill is the download's own fraction,
+    # not the song's position - which is the whole point of drawing it.
+    assert bar_download[0]["streaming"], (
+        "the element was not handed a stream when the song started: its src was "
+        f"{bar_download[0]!r}\n{_table(samples)}"
     )
-    assert all(s["api"]["state"] != "ready" for s in before_source), _report(
-        "the status at those samples", [s["api"]["state"] for s in before_source], "still arriving"
+    assert all(s["streaming"] for s in bar_download), _report(
+        "the kind of source on the element while the download was drawn",
+        [("stream" if s["streaming"] else "file") for s in bar_download],
+        "a stream throughout: the file is not here yet",
+    )
+    sounding = [s for s in bar_download if s["sounding"]]
+    assert len(sounding) >= 4, (
+        f"the song was only sounding in {len(sounding)} of the {len(bar_download)} samples where "
+        f"the bar drew the download\n{_table(samples)}"
+    )
+    nearly = [s for s in sounding if s["api"]["bytes"] >= 0.9 * DOWNLOAD_TOTAL]
+    assert nearly, (
+        "the song was never sounding while the download was nearly finished: the bar would have "
+        f"been describing a wait nobody was having\n{_table(samples)}"
+    )
+    assert all(s["api"]["state"] != "ready" for s in nearly), _report(
+        "the status at those samples", [s["api"]["state"] for s in nearly], "still arriving"
     )
 
     # The conversion is its own count: the bar says its percent, paints exactly

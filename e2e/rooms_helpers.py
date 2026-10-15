@@ -356,16 +356,20 @@ def in_room_mode(ui, room_id, timeout=15.0):
 # a person does, and reads the DOM and the API.
 
 def queue_favourites(ui, room_name):
-    """Queue this member's songs the way a person does: open Favourites and play.
+    """Put this member's whole list in the room the way a person does.
 
-    While a room is followed the player hands the list it is given to the room
-    instead of playing it (`player.play` -> the room's `onAdd`), so one click
-    here is one queue edit: the whole Favourites list goes into the member's own
-    room queue. Which is also why the queue it makes is the member's *list* -
-    the app's own contract, and what a member's turn is made of.
+    While a room is followed, a list's own header offers *Queue* - "Add these
+    tracks to the room queue" - and that is the control for a list. Clicking a
+    song's row is deliberately something else: it puts that song on and nothing
+    else (`playOne`: "a list of songs is a menu of them, not a set to adopt, and
+    a click that quietly takes the whole playlist makes every later choice a
+    position in a list nobody asked to be in"). A test that wants a member's
+    whole turn in the room therefore clicks the list's own button, not a row -
+    and a member with one track of their own still gets one item, which is what
+    the turn order is measured in.
 
-    Playing from Favourites means *being* on Favourites, so the member is put
-    back on the room's own page before this returns: everything after this in a
+    The member is put back on the room's own page before this returns: playing
+    from Favourites means *being* on Favourites, and everything after this in a
     test reads the room the member is looking at.
     """
     ui.click_tab("Favourites")
@@ -374,9 +378,10 @@ def queue_favourites(ui, room_name):
         "[contains(@class,'clickable')][.//div[contains(@class,'title')]]"
     )
     ui.wait_xpath(row, f"{ui.name}'s favourites never appeared")
-    # The title, not the row: the row also holds the queue and menu buttons, and
-    # a click on those is not "play this".
-    ui.click_xpath(row + "//div[contains(@class,'title')]", "the first favourite")
+    ui.click_xpath(
+        "//button[@title='Add these tracks to the room queue']",
+        "the list's Queue button",
+    )
     ui.click_tab("Rooms")
     wait_room_view(ui, room_name)
     return ui
