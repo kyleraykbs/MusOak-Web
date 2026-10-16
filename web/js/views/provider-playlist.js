@@ -85,7 +85,7 @@ function paint(container, params, client, answer) {
     )
   );
 
-  sheet.appendChild(h("div", { class: "section-title", text: `Songs · ${tracks.length}` }));
+  sheet.appendChild(h("div", { class: "section-title provider-playlist-section-title", text: `Songs · ${tracks.length}` }));
   if (!tracks.length) {
     sheet.appendChild(emptyState("note", "Nothing listed", "The provider did not list any tracks for this playlist."));
     return;

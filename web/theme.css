@@ -773,6 +773,9 @@ img.art[data-loaded="true"] { opacity: 1; }
 .rooms-empty { padding: 20px; }
 .room-policy-toggle { padding: 8px 0; border: 0; }
 .room-status-message { padding: 0 4px 8px; }
+.provider-playlist-section-title { margin-top: 10px; }
+.provider-playlist-more { min-width: 128px; }
+.provider-playlist-more-row { min-height: 40px; align-items: center; }
 
 /* ---------- popovers (menus, source picker) ---------- */
 
