@@ -800,6 +800,8 @@ img.art[data-loaded="true"] { opacity: 1; }
 .find-source-copy .subtitle { overflow-wrap: anywhere; }
 .source-loading { min-width: 280px; }
 .source-loading .skeleton-list { min-height: 150px; }
+.share-song-fields { display: flex; flex-direction: column; gap: 12px; }
+.share-song-results { min-height: 48px; }
 
 /* ---------- popovers (menus, source picker) ---------- */
 

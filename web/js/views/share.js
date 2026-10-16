@@ -234,7 +234,7 @@ function personRow(client, user, onPick) {
     avatarFor(client, user),
     h(
       "div",
-      { style: { flex: 1, minWidth: 0 } },
+      { class: "grow social-row-copy" },
       h("div", { class: "title", text: displayName(user) }),
       subtitleLine(user?.username ? `@${user.username}` : "")
     ),
@@ -374,10 +374,10 @@ function chooseSong(client, friend) {
     placeholder: "Search your library\u2026",
   });
   const status = h("p", { class: "subtitle", text: "Search for a song to send." });
-  const results = h("div", { class: "list", style: { display: "none" } });
+  const results = h("div", { class: "list share-song-results", hidden: true });
   const body = h(
     "div",
-    { style: column(12) },
+    { class: "share-song-fields" },
     h("p", { text: `Share a song with ${displayName(friend)}.` }),
     input,
     status,
@@ -390,7 +390,7 @@ function chooseSong(client, friend) {
     const query = input.value.trim();
     const mine = ++searchGeneration;
     mount(results);
-    results.style.display = query ? "" : "none";
+    results.hidden = !query;
     if (query.length < MIN_QUERY) {
       status.textContent = "Search for a song to send.";
       return;
