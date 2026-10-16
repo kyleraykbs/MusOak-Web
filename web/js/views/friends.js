@@ -104,7 +104,7 @@ function userRow(client, user, { onOpen, trailing = [] } = {}) {
   const online = isOnline(user);
   return h(
     "div",
-    { class: "row clickable", title: "Open their page", onclick: onOpen },
+    { class: "row clickable friend-status-row", title: "Open their page", onclick: onOpen },
     avatarFor(client, user),
     h(
       "div",
