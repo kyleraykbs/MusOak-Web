@@ -107,7 +107,7 @@ function setProgress(position, total, text) {
   ui.progressPct = total > 0 ? Math.round((position / total) * 100) : 0;
   ui.progressText = text;
   if (progressText) progressText.textContent = text;
-  if (progressBar) progressBar.style.width = `${ui.progressPct}%`;
+  if (progressBar) progressBar.style.setProperty("--progress", `${ui.progressPct}%`);
 }
 
 async function run() {
@@ -312,7 +312,7 @@ function runCard() {
     },
   });
 
-  progressBar = h("div", { class: "bar", style: { width: `${ui.progressPct}%` } });
+  progressBar = h("div", { class: "bar import-progress-bar", style: { "--progress": `${ui.progressPct}%` } });
   progressText = h("span", { class: "subtitle", text: ui.progressText });
 
   return h(

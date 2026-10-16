@@ -1148,7 +1148,7 @@ input[type="range"].volume { flex: 3 1 0; width: auto; min-width: 90px; }
   background: var(--bg2);
   overflow: hidden;
 }
-.progress .bar { height: 100%; background: var(--green-dim); width: 0; transition: width 180ms ease; }
+ .progress .bar { height: 100%; background: var(--green-dim); width: var(--progress, 0%); transition: width 180ms ease; }
 
 /* A track that is here but not yet making a sound: the bar sweeps, because a
    pause button over silence reads as a player that has stopped working. */
