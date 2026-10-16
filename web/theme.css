@@ -491,7 +491,8 @@ img.art[data-loaded="true"] { opacity: 1; }
 }
 /* Failed artwork falls back to the same neutral tile without changing row
    dimensions or leaving a broken-image glyph in the layout. */
-.art[data-failed="true"] { display: inline-flex; align-items: center; justify-content: center; }
+.art[data-failed="true"] { display: inline-flex; align-items: center; justify-content: center; background: var(--bg2); opacity: 1; }
+.art[data-failed="true"]::after { content: "♪"; color: var(--fg4); font-size: 1.15rem; }
 
 /* Mobile panels stay readable when the keyboard and browser chrome reduce the
    visual viewport: dialogs become bottom sheets, list panes scroll themselves,

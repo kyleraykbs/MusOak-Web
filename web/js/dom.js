@@ -109,26 +109,37 @@ export function panelHeading(title, subtitle = "", ...actions) {
   );
 }
 
+const artworkLoads = new Map();
+
 /**
- * One consistent artwork element. Keeping the tile in the DOM while an image
- * loads prevents rows and panels from jumping; lazy decoding avoids making a
- * long queue compete with the current song for the main thread.
+ * One consistent artwork element. Stable dimensions prevent layout jumps;
+ * shared load state avoids repeating failure work when the same cover appears
+ * in queue, search, profile, and playlist panels.
  */
 export function artworkImage(src, { className = "art", alt = "", eager = false } = {}) {
   if (!src) return null;
-  return h("img", {
+  const loaded = artworkLoads.get(src);
+  const image = h("img", {
     class: className,
     src,
     alt,
     loading: eager ? "eager" : "lazy",
     decoding: "async",
     fetchpriority: eager ? "high" : "auto",
+    ...(loaded === "failed" ? { "data-failed": "true" } : {}),
+    onload: (event) => {
+      artworkLoads.set(src, "loaded");
+      event.currentTarget.dataset.loaded = "true";
+    },
     onerror: (event) => {
+      artworkLoads.set(src, "failed");
       event.currentTarget.dataset.failed = "true";
       event.currentTarget.removeAttribute("src");
       event.currentTarget.setAttribute("alt", alt || "Artwork unavailable");
     },
   });
+  if (loaded === "loaded") image.dataset.loaded = "true";
+  return image;
 }
 
 /**
