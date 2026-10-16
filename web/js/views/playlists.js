@@ -523,9 +523,9 @@ function importDialog() {
         text: value.label,
         onclick: (event) => {
           apply(value.id);
+          searchGeneration += 1;
           picked = null;
           mount(results);
-          for (const button of row.children) button.classList.toggle("active", button === event.currentTarget);
           restyle();
         },
       }
