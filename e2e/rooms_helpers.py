@@ -211,6 +211,9 @@ return [...panel.querySelectorAll(".list > .row")].map((row) => {
     title: title ? title.textContent.trim() : "",
     time: time ? time.textContent.trim() : "",
     now: row.classList.contains("now"),
+    // The song on is marked with the same drawn play icon the queue's own rows
+    // use, so the mark is an element rather than a typed glyph.
+    playing_mark: !!(time && time.querySelector("svg")),
   };
 });
 """

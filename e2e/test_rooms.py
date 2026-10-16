@@ -49,8 +49,10 @@ pytestmark = [pytest.mark.slow, pytest.mark.browsers]
 
 #: The room's own controls. The playbar carries its own Pause/Next, so the
 #: room's buttons are named inside a card - this is also literally the selector
-#: the report named for a skip.
-ROOM_CARD = "//div[contains(@class,'card')]"
+#: the report named for a skip. Any element carrying the class, not a `div`:
+#: the panels were standardised onto `section`, and a selector that named the
+#: tag went on matching nothing while the controls sat right there.
+ROOM_CARD = "//*[contains(@class,'card')]"
 SKIP_BUTTON = ROOM_CARD + "//button[@title='Skip to the next track']"
 PAUSE_BUTTON = ROOM_CARD + "//button[@title='Pause']"
 RESUME_BUTTON = ROOM_CARD + "//button[@title='Resume']"
@@ -210,7 +212,7 @@ def test_the_play_order_is_the_servers(host, guest, backend, media_factory):
     wait_order_matches(host, backend, room_id, token, "the host's page never drew the server's order")
     rows = assert_order_matches(guest, room, "the guest's view: ")
     assert len(rows) == 4, f"the page draws {len(rows)} rows for a room holding four items: {rows!r}"
-    assert rows[0]["now"] and rows[0]["time"] == "▶", f"the song on is not marked as such: {rows[0]!r}"
+    assert rows[0]["now"] and rows[0]["playing_mark"], f"the song on is not marked as such: {rows[0]!r}"
 
     print("\nthe room's order (first row is the song on):")
     for item in [current_item(room), *order]:
@@ -452,9 +454,10 @@ def test_votes_skip_a_track_only_when_enough_members_vote(host, guest, backend, 
     assert current_item(after)["id"] == owed_next["id"], (
         f"the room is on {current_item(after)!r}, not {owed_next['title']!r}"
     )
-    assert not ((after.get("current") or {}).get("votes") or {}), (
-        "the votes of the song that was skipped are still held against the new one: "
-        f"{(after.get('current') or {}).get('votes')!r}"
+    skipped_votes = (after.get("current") or {}).get("votes") or {}
+    assert 1 not in skipped_votes.values(), (
+        "the bad vote that skipped the song is held against the new one: "
+        f"{skipped_votes!r}"
     )
     wait_order_matches(guest, backend, room_id, token, "the guest's page after a vote-skip")
     wait_playing(guest, backend, room_id, token, "the guest never moved on after a vote-skip")

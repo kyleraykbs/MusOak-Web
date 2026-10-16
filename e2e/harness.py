@@ -391,14 +391,29 @@ class Ui:
 
     def _click_xpath(self, xpath, text, timeout):
         path = xpath_of(xpath)
-        element = self.wait(
-            lambda: next(
-                (el for el in self.driver.find_elements(By.XPATH, path) if el.is_displayed() and el.is_enabled()),
-                None,
-            ),
-            f"no visible {text!r} control appeared",
-            timeout,
-        )
+        seen = []
+
+        def candidate():
+            found = self.driver.find_elements(By.XPATH, path)
+            # What the browser says about each match, for a failure that has to
+            # explain itself: "no control appeared" over a control that is right
+            # there and merely not clickable is a sentence that costs an
+            # afternoon.
+            seen[:] = [
+                (el.get_attribute("outerHTML")[:120], el.is_displayed(), el.is_enabled())
+                for el in found[:3]
+            ]
+            return next((el for el in found if el.is_displayed() and el.is_enabled()), None)
+
+        try:
+            element = self.wait(candidate, f"no visible {text!r} control appeared", timeout)
+        except WaitTimeout as error:
+            if not seen:
+                raise
+            raise AssertionError(
+                f"{error}\n  the control is there but not clickable: "
+                + "; ".join(f"{html!r} shown={shown} enabled={enabled}" for html, shown, enabled in seen)
+            ) from error
         element.click()
         return self
 
