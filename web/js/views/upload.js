@@ -426,7 +426,7 @@ function showDialog({
   const results = h("div", { class: "list upload-search-results" });
   const searchPanel = h(
     "div",
-    { class: "upload-search-panel" },
+    { class: "upload-search-panel", "aria-busy": "false" },
     query,
     searchStatus,
     results
@@ -450,14 +450,17 @@ function showDialog({
     activeQuery = text;
     generation += 1;
     const mine = generation;
+    searchPanel.setAttribute("aria-busy", "true");
     mount(results, loadingState("Searching…"));
     try {
       const { groups } = await client.search(text, 10);
       if (mine !== generation) return;
       mount(results, trackResultRows(groups, pick));
+      searchPanel.setAttribute("aria-busy", "false");
       searchStatus.textContent = groups.length ? "" : `Nothing found for \u201c${text}\u201d.`;
     } catch (error) {
       if (mine !== generation) return;
+      searchPanel.setAttribute("aria-busy", "false");
       searchStatus.textContent = String(error.message || error);
     }
   };
@@ -788,7 +791,7 @@ export function openTrackPicker({ title = "Associate with a song" } = {}) {
     const query = h("input", { class: "input", type: "search", placeholder: "Search for the song this is" });
     const status = h("div", { class: "search-status" });
     const results = h("div", { class: "list upload-search-results" });
-    let generation = 0;
+    const searchPanel = h("div", { class: "upload-search-panel upload-picker-panel", "aria-busy": "false" }, query, status, results);
 
     const runSearch = async () => {
       const text = query.value.trim();
@@ -796,14 +799,17 @@ export function openTrackPicker({ title = "Associate with a song" } = {}) {
       generation += 1;
       const mine = generation;
       status.textContent = "Searching…";
+      searchPanel.setAttribute("aria-busy", "true");
       mount(results, loadingState("Searching…"));
       try {
         const { groups } = await client.search(text, 10);
         if (mine !== generation) return;
         mount(results, trackResultRows(groups, (track) => finish(trackMatch(track))));
+        searchPanel.setAttribute("aria-busy", "false");
         status.textContent = groups.length ? "" : `Nothing found for \u201c${text}\u201d.`;
       } catch (error) {
         if (mine !== generation) return;
+        searchPanel.setAttribute("aria-busy", "false");
         status.textContent = String(error.message || error);
       }
     };
@@ -816,7 +822,7 @@ export function openTrackPicker({ title = "Associate with a song" } = {}) {
 
     const handle = dialog({
       title,
-      body: h("div", { class: "upload-search-panel upload-picker-panel" }, query, status, results),
+      body: searchPanel,
       actions: [{ label: "Cancel", class: "flat", onClick: () => finish(null) }],
       onOpen: (panel, close) => {
         closeDialog = close;
