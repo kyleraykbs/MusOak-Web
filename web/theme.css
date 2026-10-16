@@ -377,7 +377,9 @@ button, input, select, textarea {
   padding: 16px;
 }
 
-.page { padding: 18px 22px; display: flex; flex-direction: column; gap: 18px; }
+.page { width: min(100%, 1180px); margin: 0 auto; padding: 20px 28px 28px; display: flex; flex-direction: column; gap: 20px; }
+.page > .card, .page > .list { width: 100%; }
+.page > .section-title { max-width: 1180px; width: 100%; margin-inline: auto; }
 
 .list {
   background: var(--bg0-s);
@@ -1304,7 +1306,7 @@ body:has(.drawer:not([hidden])) .player-bar > .btn[title="Open the room"] { disp
 
   .main { grid-row: 2; }
   .content { padding-bottom: 12px; }
-  .page { padding: 14px; gap: 14px; }
+  .page { width: 100%; padding: 14px; gap: 14px; }
   /* Two buttons side by side do not fit a phone: they stack, which is also what
      keeps the row from setting the page wider than the screen. */
   .form-row { flex-wrap: wrap; }

@@ -604,7 +604,6 @@ function watchQueueFab() {
 }
 
 function wireQueueDrawer() {
-  if (typeof window === "undefined") return;
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && layout?.drawer && !layout.drawer.hidden) toggleQueueDrawer(false);
     const target = event.target;
@@ -613,9 +612,13 @@ function wireQueueDrawer() {
       event.preventDefault();
       toggleQueueDrawer();
     }
+    if (event.key === "/" && !typing && !event.ctrlKey && !event.metaKey && !event.altKey && !transportBlocked()) {
+      event.preventDefault();
+      navigate("search");
+      requestAnimationFrame(() => document.querySelector("input[type='search']")?.focus());
+    }
   });
 }
-
 /** An open drawer follows the queue; a closed one has nothing to follow. */
 function followPlayerQueue() {
   for (const event of ["queue-changed", "track-changed"]) {
