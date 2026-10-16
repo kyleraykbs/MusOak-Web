@@ -1131,17 +1131,17 @@ class Player {
       bar.subtitle.style.color = this._error ? "var(--red)" : "";
 
       const art = track.artworkUrl && client ? client.artworkUrl(track.artworkUrl) : "";
-      if (art) {
-        if (bar.cover.getAttribute("src") !== art) bar.cover.src = art;
-      } else {
-        bar.cover.removeAttribute("src");
+      const currentArt = bar.cover.getAttribute("src") || "";
+      if (currentArt !== art) {
+        if (art) bar.cover.src = art;
+        else bar.cover.removeAttribute("src");
       }
       this._syncMediaMetadata(track);
     } else {
       setText(bar.title, "Nothing playing");
       setText(bar.subtitle, this._error);
       bar.subtitle.style.color = this._error ? "var(--red)" : "";
-      bar.cover.removeAttribute("src");
+      if (bar.cover.getAttribute("src")) bar.cover.removeAttribute("src");
       this._syncMediaMetadata(null);
     }
 
