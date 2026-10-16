@@ -570,6 +570,11 @@ img.art[data-loaded="true"] { opacity: 1; }
 .dialog-intro { margin: 0; }
 .sync-control { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .sync-status { min-height: 1.2em; }
+.queue-tabs-row { flex-wrap: wrap; }
+.queue-heading-row { flex-wrap: wrap; }
+.queue-heading-title { font-size: 18px; font-weight: 600; }
+.queue-tab { padding: 4px 10px; }
+.queue-panel-title { font-size: 15px; font-weight: 600; }
 
 .form-row { display: flex; gap: 12px; align-items: flex-end; }
 .form-row .field { flex: 1; }

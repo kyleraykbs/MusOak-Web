@@ -427,7 +427,7 @@ function draw({ sheet, compact }, projection, room) {
       sheet,
       h(
         "div",
-        { class: "row", style: { flexWrap: "wrap" } },
+        { class: "row queue-tabs-row" },
         tab(compact, "mine", "My songs", "The songs you queued", () => toggle("mine", sheet)),
         tab(compact, "room", "Whole Room", "The room's play order — the fair mix everyone plays (read only)", () => toggle("room", sheet)),
         clear
@@ -446,13 +446,12 @@ function draw({ sheet, compact }, projection, room) {
     sheet,
     h(
       "div",
-      { class: "row", style: { flexWrap: "wrap" } },
+      { class: "row queue-heading-row" },
       h(
         "div",
         { class: "grow" },
         h("div", {
-          class: compact ? "subtitle" : "title",
-          style: compact ? null : { fontSize: "18px", fontWeight: "600" },
+          class: compact ? "subtitle" : "title queue-heading-title",
           text: `${projection.label} · ${projection.count}`,
         })
       ),
@@ -474,8 +473,7 @@ function draw({ sheet, compact }, projection, room) {
 /** One tab: it shows or hides the panel it names. */
 function tab(compact, key, label, title, onclick) {
   return h("button", {
-    class: shown[key] ? "tab active" : "tab",
-    style: compact ? { padding: "4px 10px" } : null,
+    class: `tab queue-tab${shown[key] ? " active" : ""}`.trim(),
     text: label,
     title,
     "aria-pressed": shown[key] ? "true" : "false",
@@ -520,8 +518,7 @@ function panel(compact, sheet, projection, heading, key, hidden) {
     "div",
     { class: "queue-panel", "data-panel": key, hidden },
     h("div", {
-      class: compact ? "subtitle" : "title",
-      style: compact ? null : { fontSize: "15px", fontWeight: "600" },
+      class: compact ? "subtitle" : "title queue-panel-title",
       text: `${heading} · ${projection.count}`,
     }),
     projection.rows.length
