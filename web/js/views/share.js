@@ -6,7 +6,7 @@
 //
 // The pure helpers at the top are what the unit tests import this module for.
 
-import { h, mount, dialog, toast, debounce, icon, artworkImage } from "../dom.js";
+import { h, mount, dialog, toast, debounce, icon, artworkImage, loadingState } from "../dom.js";
 import { currentClient, banner, requireLogin } from "../app.js";
 import { iconVersion, userIdOf } from "../state.js";
 
@@ -394,6 +394,7 @@ function chooseSong(client, friend) {
       return;
     }
     status.textContent = `Searching for \u201c${query}\u201d\u2026`;
+    mount(results, loadingState("Searching…"));
     let groups = [];
     try {
       ({ groups } = await client.search(query, SEARCH_LIMIT));
