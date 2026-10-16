@@ -263,7 +263,7 @@ button, input, select, textarea {
   font-size: 17px;
   white-space: nowrap;
 }
-.brand img { height: 26px; width: 26px; }
+.brand img, .brand-icon { height: 26px; width: 26px; object-fit: contain; }
 /* The wordmark is one word: no gap, no space between its halves. */
 .brand .wordmark { display: inline-flex; }
 .brand .accent { color: var(--orange); }

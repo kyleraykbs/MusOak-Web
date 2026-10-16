@@ -754,9 +754,10 @@ function renderBrand() {
   // word, because as siblings the brand's flex gap sat between its halves and
   // read as a space. The picture is the 64px file, which is what a 26px corner
   // asks for: the 1080px one is a third of a megabyte behind a favicon.
+  const image = artworkImage("icon-64.png", { className: "brand-icon", alt: "", eager: true });
   mount(
     layout.brand,
-    h("img", { src: "icon-64.png", alt: "", width: 26, height: 26 }),
+    image,
     h(
       "span",
       { class: "wordmark" },
