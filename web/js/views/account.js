@@ -193,8 +193,7 @@ function deviceCard() {
       { class: "list" },
       h("div", { class: "row" }, field("account-download-limit", "Download at a time", select)),
       h("div", {
-        class: "subtitle",
-        style: { padding: "0 4px 8px" },
+        class: "account-device-note",
         text: "How many songs this device fetches at once when it warms the queue or keeps a playlist. Five by default.",
       })
     )
@@ -215,9 +214,8 @@ function iconTile() {
     ? artworkImage(url, { className: "art big round", alt: "Your icon", eager: true })
     : h("div", { class: "art big round", role: "img", "aria-label": "No icon yet" }, icon("users", 48));
   return h("button", {
-    class: "btn",
+    class: "btn account-icon-button",
     title: "Choose a new icon",
-    style: { padding: "0", border: "0", background: "transparent" },
     onclick: chooseIcon,
   }, tile);
 }
@@ -249,13 +247,13 @@ function profileCard() {
 
 function actionsRow() {
   return h("div", { class: "form-row" },
-    h("button", { class: "btn", style: { flex: "1" }, text: "Change password", onclick: openPassword }),
-    h("button", { class: "btn", style: { flex: "1" }, text: "Change username", onclick: openUsername }));
+    h("button", { class: "btn account-action-button", text: "Change password", onclick: openPassword }),
+    h("button", { class: "btn account-action-button", text: "Change username", onclick: openUsername }));
 }
 
 function saveFooter() {
-  discardButton = h("button", { class: "btn", style: { flex: "1" }, text: "Discard", disabled: true, onclick: discardName });
-  saveButton = h("button", { class: "btn suggested", style: { flex: "1" }, text: "Save", disabled: true, onclick: saveName });
+  discardButton = h("button", { class: "btn account-action-button", text: "Discard", disabled: true, onclick: discardName });
+  saveButton = h("button", { class: "btn suggested account-action-button", text: "Save", disabled: true, onclick: saveName });
   nameInput.addEventListener("input", syncNameButtons);
   return h("div", { class: "form-row" }, discardButton, saveButton);
 }

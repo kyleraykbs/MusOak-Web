@@ -599,7 +599,9 @@ img.art[data-loaded="true"] { opacity: 1; }
 .upload-art-placeholder { display: inline-flex; align-items: center; justify-content: center; color: var(--gray); }
 .upload-art-tile { width: 96px; height: 96px; flex: none; padding: 0; display: inline-flex; align-items: center; justify-content: center; overflow: hidden; }
 
-.form-row { display: flex; gap: 12px; align-items: flex-end; }
+ .account-device-note { padding: 0 4px 8px; }
+ .account-icon-button { padding: 0; border: 0; background: transparent; }
+ .account-action-button { flex: 1; min-width: 0; }
 .form-row .field { flex: 1; }
 
 /* ---------- dialogs ---------- */
