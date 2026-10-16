@@ -789,9 +789,15 @@ export function openTrackPicker({ title = "Associate with a song" } = {}) {
   return new Promise((resolve) => {
     let settled = false;
     let closeDialog = () => {};
+    let generation = 0;
+    let searchPending = false;
+    let searchButton = null;
     const finish = (track) => {
       if (settled) return false;
       settled = true;
+      generation += 1;
+      searchPending = false;
+      if (searchButton) searchButton.disabled = false;
       closeDialog();
       resolve(track);
       return false;
@@ -800,10 +806,9 @@ export function openTrackPicker({ title = "Associate with a song" } = {}) {
     const query = h("input", { class: "input", type: "search", placeholder: "Search for the song this is" });
     const status = h("div", { class: "search-status", role: "status", "aria-live": "polite" });
     const results = h("div", { class: "list upload-search-results" });
-    const searchButton = h("button", { class: "btn flat", type: "button", text: "Search", onclick: () => runSearch() });
+    searchButton = h("button", { class: "btn flat", type: "button", text: "Search", onclick: () => runSearch() });
     const searchControls = h("div", { class: "upload-search-controls" }, query, searchButton);
     const searchPanel = h("div", { class: "upload-search-panel upload-picker-panel", "aria-busy": "false" }, searchControls, status, results);
-    let searchPending = false;
     const runSearch = async () => {
       const text = query.value.trim();
       if (!text || searchPending) return;
