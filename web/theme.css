@@ -709,6 +709,10 @@ img.art[data-loaded="true"] { opacity: 1; }
 .profile-identity { display: flex; gap: 18px; align-items: center; }
 .profile-copy { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .profile-name { font-size: 24px; font-weight: 700; color: var(--fg0); }
+.friends-section { display: flex; flex-direction: column; gap: 8px; }
+.friends-search-toolbar { display: flex; gap: 8px; align-items: center; }
+.friends-search-toolbar .input { min-width: 0; flex: 1; }
+.friends-tab-body { display: flex; flex-direction: column; gap: 12px; }
 
 /* ---------- popovers (menus, source picker) ---------- */
 

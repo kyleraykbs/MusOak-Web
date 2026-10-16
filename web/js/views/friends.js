@@ -92,7 +92,7 @@ function actionButton(label, className, run) {
 function section(title, rows) {
   return h(
     "div",
-    { style: { display: "flex", flexDirection: "column", gap: "8px" } },
+    { class: "friends-section" },
     h("h2", { class: "section-title", text: title }),
     h("div", { class: "list" }, rows)
   );
@@ -247,7 +247,7 @@ function loadSearch() {
     bodyEl,
     h(
       "div",
-      { style: { display: "flex", gap: "8px", alignItems: "center" } },
+      { class: "friends-search-toolbar" },
       searchInput,
       h("button", {
         class: "btn",
@@ -495,7 +495,7 @@ function render(container, params = {}) {
   // A tab named by whoever sent us here: a notification about a request wants
   // the tab where it is answered, not whichever tab was last open.
   if (params?.tab && TABS.some((tab) => tab.id === params.tab)) activeTab = String(params.tab);
-  bodyEl = h("div", { style: { display: "flex", flexDirection: "column", gap: "12px" } });
+  bodyEl = h("div", { class: "friends-tab-body" });
   if (activeTab) {
     mount(container, tabBar(container), bodyEl);
     showTab();
