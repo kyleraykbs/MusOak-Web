@@ -346,7 +346,7 @@ function playlistRow(playlist) {
       { class: "grow" },
       h(
         "div",
-        { style: { display: "flex", alignItems: "center", gap: "8px", minWidth: 0 } },
+        { class: "playlist-row-title" },
         h("div", { class: "title", text: playlist.name || "Untitled" }),
         playlist.public === false ? h("span", { class: "tag", text: "private" }) : null
       ),
