@@ -188,39 +188,35 @@ async function syncIntoLibrary(kind, item) {
 async function addToPlaylist(tracks) {
   const client = currentClient();
   if (!client) return;
+  const content = h("div", { class: "dialog-content" }, loadingState("Loading playlists…"));
+  const ref = dialog({
+    title: tracks.length === 1 ? "Add to playlist" : `Add ${tracks.length} tracks`,
+    body: content,
+    actions: [{ label: "Cancel" }],
+  });
   let playlists = [];
   try {
     playlists = await client.playlists();
   } catch (error) {
+    ref.close();
     handle(error);
     return;
   }
-
   const body = playlists.length
-    ? h(
-        "div",
-        { class: "search-playlist-menu" },
-        playlists.map((playlist) =>
-          h("button", {
-            class: "menu-item",
-            text: playlist.name || "Untitled",
-            onclick: async () => {
-              ref.close();
-              await addTracks(client, playlist.id, tracks);
-            },
-          })
-        )
-      )
+    ? h("div", { class: "search-playlist-menu" }, playlists.map((playlist) =>
+        h("button", {
+          class: "menu-item",
+          text: playlist.name || "Untitled",
+          onclick: async () => {
+            ref.close();
+            await addTracks(client, playlist.id, tracks);
+          },
+        })
+      ))
     : h("p", { text: "No playlists yet. Create one first." });
-
-  const ref = dialog({
-    title: tracks.length === 1 ? "Add to playlist" : `Add ${tracks.length} tracks`,
-    body,
-    actions: [
-      { label: "New playlist...", onClick: () => void createPlaylistThenAdd(client, tracks) },
-      { label: "Cancel" },
-    ],
-  });
+  mount(content, body);
+  const actions = ref.node.querySelector(".actions");
+  if (actions) actions.prepend(h("button", { class: "btn", text: "New playlist…", onclick: () => void createPlaylistThenAdd(client, tracks) }));
 }
 
 async function addTracks(client, playlistId, tracks) {
