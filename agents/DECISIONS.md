@@ -57,6 +57,21 @@
   bounded to one song, which the player's own offline budget already allows.
 - Reversible: yes.
 
+## 2026-10-15 A background pass leaves a rendition the store has already failed
+- Decision: `prefetch.Media` gains `Failed`, and `pass` skips those variants; a failure is paced like a fetch (the same gap), and the pass reports how many it skipped.
+- Why: measured on the live server (the log, over an hour): a pass every ~10 minutes, each running the full retry ladder - three attempts with an exponential wait, then `media download failed` - for renditions already known to be unavailable, several seconds each. That is the box's own load, and it is what a listener's request queues behind. `Ensure` is unchanged: a person who presses play is worth the attempt.
+- Reversible: yes (one method on the interface, one check in the pass).
+
+## 2026-10-15 The resolve says which kind of "no source" it means
+- Decision: `MatchTrackSource` tracks whether any provider offered a candidate above the threshold, and logs "no provider had a candidate" (with the title) rather than pointing at a duplicate track when none was ever found.
+- Why: the hint sent a reader to look for duplicate tracks that were not there. The log is the only place this is visible, so a wrong hint costs more than it saves.
+- Reversible: yes.
+
+## 2026-10-15 A song the client cannot play is retried on a growing wait
+- Decision: the room's per-item resolve backoff doubles per try, 5 s to 5 min.
+- Why: a song whose source the server cannot find was asked for again every five seconds for ever, and each ask is a provider round trip on the server. A few quick tries cover a provider having a bad minute; after that, one ask every five minutes is enough, and the status line stops repeating itself.
+- Reversible: yes (one constant and one map).
+
 ## 2026-10-15 One position, applied by every source change
 - Decision: the song's position is never derived from a comparison of `src`
   strings (`_streamOffsetMs` reads the recorded stream), and every hand-over onto
