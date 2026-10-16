@@ -534,7 +534,7 @@ export async function inviteFriendsToRoom(room) {
     closeButton: true,
     body: h(
       "div",
-      { style: column(10) },
+      { class: "invite-dialog-fields" },
       h("p", { text: `Invite friends to ${room?.name || "the room"}.` }),
       search,
       list

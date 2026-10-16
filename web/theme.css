@@ -804,6 +804,8 @@ img.art[data-loaded="true"] { opacity: 1; }
 .source-loading .skeleton-list { min-height: 150px; }
 .share-song-fields { display: flex; flex-direction: column; gap: 12px; }
 .share-song-results { min-height: 48px; }
+.invite-dialog-fields { display: flex; flex-direction: column; gap: 10px; }
+.invite-dialog-fields .list { max-height: 46vh; overflow: auto; }
 
 /* ---------- popovers (menus, source picker) ---------- */
 
