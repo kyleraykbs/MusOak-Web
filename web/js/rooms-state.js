@@ -65,6 +65,13 @@ const CLOCK_BURST = 3;
 
 /** How long a track whose sources could not be read is left alone. */
 const RESOLVE_BACKOFF_MS = 5000;
+/** How long a song this client cannot play is left alone at its worst. A song
+ *  whose source the server cannot find is not found by asking again every five
+ *  seconds: the search behind each ask is a provider round trip, and the room's
+ *  own status line says the same thing each time. The wait doubles per try, so
+ *  the first few are quick (a provider having a bad minute is common) and a song
+ *  that is really unplayable settles into one ask every five minutes. */
+const RESOLVE_BACKOFF_MAX_MS = 5 * 60 * 1000;
 
 /** How many of the room's upcoming songs to resolve and warm ahead of the song
  *  on. A song the server has never fetched is a search and a download before it
@@ -917,6 +924,9 @@ export function followWithPlayer(playbackPlayer) {
     resolving: "",
     failedItemId: "",
     failedAt: 0,
+    // How many times each item has been tried and could not be played, which is
+    // what makes the wait before the next try grow (see `markUnplayable`).
+    failedTries: new Map(),
     roomId: "",
     // The item ids this client has moved past on its own. The server's tick
     // lags by up to a second, so a `current` still naming one of these says
@@ -1033,6 +1043,7 @@ function forgetTrack() {
   plugin.resolving = "";
   plugin.failedItemId = "";
   plugin.failedAt = 0;
+  plugin.failedTries = new Map();
   plugin.loadedAtMs = 0;
 }
 
@@ -1256,8 +1267,12 @@ async function loadItem(running, item, { positionMs: at = 0, autoplay = true } =
 
   // A track whose sources could not be read is left alone for a while, and one
   // already being resolved is not asked twice: the answer is on its way.
+  const tries = Number(running.failedTries?.get(itemId) || 0);
   const cooling =
-    running.failedItemId === itemId && running.failedAt && Date.now() - running.failedAt < RESOLVE_BACKOFF_MS;
+    running.failedItemId === itemId &&
+    running.failedAt &&
+    Date.now() - running.failedAt <
+      Math.min(RESOLVE_BACKOFF_MS * 2 ** Math.max(0, tries - 1), RESOLVE_BACKOFF_MAX_MS);
   if (cooling || running.resolving === trackId) return;
 
   // The rendition for this item may already be in hand: it was resolved, and
@@ -1295,8 +1310,7 @@ async function loadItem(running, item, { positionMs: at = 0, autoplay = true } =
       running.track = track;
       running.variantId = str(variant);
       if (!running.variantId) {
-        running.failedItemId = itemId;
-        running.failedAt = Date.now();
+        markUnplayable(running, itemId);
         setStatus(running, "That song could not be found.");
         return;
       }
@@ -1318,10 +1332,23 @@ async function loadItem(running, item, { positionMs: at = 0, autoplay = true } =
   // room's clock has moved on regardless, so the item is backed off the way an
   // unresolvable source is, and the beat after the back-off asks again.
   if (str(player.current?.()?.id) !== trackId) {
-    running.failedItemId = itemId;
-    running.failedAt = Date.now();
+    markUnplayable(running, itemId);
     setStatus(running, "That song could not be played here.");
   }
+}
+
+/**
+ * A song this client cannot play: left alone for longer each time it is tried.
+ *
+ * The count is per item, so a provider having a bad minute costs a few quick
+ * retries and a song that is really unplayable settles into one ask every few
+ * minutes instead of the room asking for ever on a five-second beat.
+ */
+function markUnplayable(running, itemId) {
+  running.failedTries ||= new Map();
+  running.failedTries.set(itemId, Number(running.failedTries.get(itemId) || 0) + 1);
+  running.failedItemId = itemId;
+  running.failedAt = Date.now();
 }
 
 /**
