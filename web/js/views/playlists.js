@@ -75,7 +75,8 @@ const SIGN_IN_HINT = "Sign in to this server to see your playlists.";
 
 let current = null; // the container this view drew into
 let listEl = null; // where the rows go
-let signedInSheet = false; // whether the sheet on screen belongs to an account
+let signedInSheet = false;
+let loadGeneration = 0;
 
 // --- small builders --------------------------------------------------------
 
@@ -415,8 +416,7 @@ async function showKept() {
 
 async function load() {
   if (!current) return;
-  // A guest has nothing to load, and nothing they could do with what they
-  // cannot see: the view is the sign-in prompt.
+  const mine = ++loadGeneration;
   if (!isSignedIn()) {
     if (signedInSheet) sheet();
     return;
@@ -425,19 +425,13 @@ async function load() {
   const client = currentClient();
   if (!client || !listEl) return;
   mount(listEl, loadingState("Loading playlists…"));
-  // The server is asked first, as it always was - except on a page that already
-  // knows it has none (`player.online()` false): there the ask can only fail,
-  // and waiting for it to say so keeps somebody who has music on this machine
-  // staring at "Loading playlists..." for as long as the browser takes to give
-  // up. The kept lists are what that page shows instead.
   if (!player.online() && (await showKept())) return;
   try {
-    show(await client.playlists());
+    const playlists = await client.playlists();
+    if (mine !== loadGeneration || !current?.isConnected || !listEl?.isConnected) return;
+    show(playlists);
   } catch (error) {
-    // A server that cannot be reached is not music that cannot be played: the
-    // lists kept on this machine are still here. A server that *answered* -
-    // "sign in", "no such account" - has said what it means, and its own words
-    // are what the page shows instead.
+    if (mine !== loadGeneration || !current?.isConnected || !listEl?.isConnected) return;
     if (!serverAnswered(error) && (await showKept())) return;
     if (listEl) clear(listEl);
     handle(error);
