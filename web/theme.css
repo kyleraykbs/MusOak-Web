@@ -691,6 +691,11 @@ img.art[data-loaded="true"] { opacity: 1; }
 .find-source-toolbar { display: flex; gap: 8px; }
 .find-source-toolbar .input { min-width: 0; flex: 1; }
 .find-source-results { min-height: 48px; }
+.search-section { display: flex; flex-direction: column; gap: 8px; }
+.search-toolbar { display: flex; gap: 8px; align-items: center; }
+.search-toolbar .input { min-width: 0; flex: 1; }
+.search-provider-warning { color: var(--fg4); font-size: 13px; min-height: 18px; }
+.search-results { display: flex; flex-direction: column; gap: 18px; }
 
 /* ---------- popovers (menus, source picker) ---------- */
 

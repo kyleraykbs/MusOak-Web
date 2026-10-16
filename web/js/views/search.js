@@ -302,7 +302,7 @@ function collectionRow(kind, item) {
 function sectionNode(section) {
   return h(
     "div",
-    { class: "section", style: { display: "flex", flexDirection: "column", gap: "8px" } },
+    { class: "section search-section" },
     h("div", { class: "section-title", text: section.title }),
     h(
       "div",
@@ -416,7 +416,7 @@ function showResults(sections, problems, query) {
     if (problems.length) {
       problemsEl.appendChild(
         h("div", {
-          style: { color: "var(--fg4)", fontSize: "13px" },
+          class: "search-provider-warning",
           text: `Some providers had trouble \u2014 ${providerErrorLines(problems).join("; ")}`,
         })
       );
@@ -453,7 +453,7 @@ function render(container, params = {}) {
     onclick: () => search(input.value, true),
   });
   problemsEl = h("div", {});
-  resultsEl = h("div", { style: { display: "flex", flexDirection: "column", gap: "18px" } });
+  resultsEl = h("div", { class: "search-results" });
   tabsEl = h("div", { class: "tabs" }, kindTabNodes());
   filterEl = platformFilter({
     providers: knownPlatforms(),
@@ -466,7 +466,7 @@ function render(container, params = {}) {
     container,
     tabsEl,
     filterRow,
-    h("div", { style: { display: "flex", gap: "8px", alignItems: "center" } }, input, button),
+    h("div", { class: "search-toolbar" }, input, button),
     problemsEl,
     resultsEl
   );
