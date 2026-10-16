@@ -255,7 +255,7 @@ export async function downloadSongFile(track) {
     }
     const artists = artistLine(track);
     const name = fileName(`${artists ? `${artists} - ` : ""}${track.title || "song"}`);
-    const link = h("a", { href: client.mediaUrl(variant.id), download: name, style: { display: "none" } });
+    const link = h("a", { class: "visually-hidden", href: client.mediaUrl(variant.id), download: name });
     document.body.appendChild(link);
     link.click();
     link.remove();
