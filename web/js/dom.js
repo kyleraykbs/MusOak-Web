@@ -188,13 +188,12 @@ export function render(parent, build) {
  * Escape and a backdrop click close it. Returns {close, node}.
  */
 export function dialog({ title, body, actions = [], onOpen, closeButton = false }) {
-  const backdrop = h("div", { class: "dialog-backdrop" });
-  // A new modal always replaces an older modal. This avoids stacked backdrops
-  // intercepting clicks while a shell refresh opens the sign-in dialog again.
-  document.querySelectorAll(".dialog-backdrop").forEach((node) => node.remove());
+  const backdrop = h("div", { class: "dialog-backdrop", role: "presentation" });
+  const opener = document.activeElement;
   const close = () => {
     document.removeEventListener("keydown", onKey);
     backdrop.remove();
+    if (opener?.isConnected && typeof opener.focus === "function") opener.focus();
   };
   const onKey = (event) => {
     if (event.key === "Escape") close();
