@@ -436,8 +436,8 @@ function buildLayout() {
     main: h("main", { class: "main" }),
     player: h("footer", { class: "player", "aria-label": "Player" }),
     content: h("div", { class: "content", role: "region", "aria-busy": "false" }),
-    bannerSlot: h("div", { class: "banner-slot" }),
-    title: h("h1", { text: "MusOak" }),
+    bannerSlot: h("div", { class: "banner-slot", role: "status", "aria-live": "polite" }),
+    title: h("h1", { text: "MusOak", tabindex: "-1" }),
     bell: iconButton("bell", { title: "Notifications", onclick: openNotifications }),
     brand: h("div", { class: "brand" }),
     nav: h("nav", { class: "nav", "aria-label": "Primary navigation" }),
@@ -604,9 +604,14 @@ function watchQueueFab() {
 
 function wireQueueDrawer() {
   if (typeof window === "undefined") return;
-  window.addEventListener("musoak:open-queue", () => toggleQueueDrawer());
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && layout?.drawer && !layout.drawer.hidden) toggleQueueDrawer(false);
+    const target = event.target;
+    const typing = target && (target.matches?.("input, textarea, select") || target.isContentEditable);
+    if (event.key === "q" && !typing && !event.ctrlKey && !event.metaKey && !event.altKey && !transportBlocked()) {
+      event.preventDefault();
+      toggleQueueDrawer();
+    }
   });
 }
 
@@ -1026,6 +1031,7 @@ function renderContent() {
       return null;
     }
   })();
+  if (view && container.isConnected) layout.title.focus?.({ preventScroll: true });
   // A view that fetches before it draws can fail later than this call: that
   // failure must reach only the current surface.
   Promise.resolve(rendered).finally(() => {
