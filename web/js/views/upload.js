@@ -336,12 +336,12 @@ function showDialog({
   let confirmButton = null;
   let art = { data: "", contentType: "", url: artworkPath ? client.artworkUrl(artworkPath) : "" };
 
-  const notice = h("div", { class: "banner", style: { margin: "0", display: "none" } });
+  const notice = h("div", { class: "banner upload-dialog-notice", role: "status", hidden: true });
 
   const say = (message, kind = "") => {
     notice.className = `banner ${kind}`.trim();
     notice.textContent = message;
-    notice.style.display = message ? "" : "none";
+    notice.hidden = !message;
   };
 
   // --- cover art ------------------------------------------------------------
