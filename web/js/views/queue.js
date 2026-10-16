@@ -400,7 +400,6 @@ function draw({ sheet, compact }, projection, room) {
           { class: "queue-drawer-controls" },
           h("button", {
             class: `tab queue-tab${drawerWholeRoom ? " active" : ""}`.trim(),
-            text: "Whole Room",
             title: "Show the room's play order — the fair mix everyone plays (read only)",
             "aria-pressed": drawerWholeRoom ? "true" : "false",
             onclick: () => {
