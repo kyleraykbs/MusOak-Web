@@ -757,6 +757,10 @@ img.art[data-loaded="true"] { opacity: 1; }
 .search-result-list .subtitle { overflow-wrap: anywhere; }
 .search-result-list .time { flex: none; }
 .friends-request-loading { border: 1px solid var(--bg1); border-radius: var(--radius); background: var(--bg0-s); overflow: hidden; }
+.source-row { display: flex; align-items: center; gap: 6px; }
+.source-row-main { flex: 1; min-width: 0; justify-content: flex-start; text-align: left; overflow: hidden; }
+.source-row-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.source-row-tag, .source-row-unplayable { margin-left: 8px; flex: none; }
 .room-now-playing-row > .grow { min-width: 0; }
 .room-transport { display: flex; gap: 6px; flex: none; }
 .rooms-section-header { display: flex; align-items: center; border: 0; padding: 0 0 8px; }

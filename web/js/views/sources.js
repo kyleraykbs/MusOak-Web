@@ -346,31 +346,25 @@ export function openSourcePicker(anchor, track, onChange = null, { playingVarian
     const inUse = Boolean(current && current.variantId === source.variantId);
     return h(
       "div",
-      { class: "menu-item", style: { gap: "6px" } },
+      { class: "source-row" },
       h(
         "button",
         {
-          class: "btn flat small",
-          style: {
-            flex: "1", minWidth: "0", justifyContent: "flex-start", textAlign: "left", overflow: "hidden",
-          },
+          class: "btn flat small source-row-main",
           title: source.title || "",
           onclick: () => pick(source),
         },
-        h("span", {
-          style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-          text: sourceLabel(source),
-        }),
-        inUse ? h("span", { class: "tag", style: { marginLeft: "8px", flex: "none" }, text: "default" }) : null,
+        h("span", { class: "source-row-label", text: sourceLabel(source) }),
+        inUse ? h("span", { class: "tag source-row-tag", text: "default" }) : null,
         // What is playing right now, which in a room is the room's rendition
         // and not necessarily this member's preference.
         String(source.variantId) === String(playingVariantId)
-          ? h("span", { class: "tag", style: { marginLeft: "8px", flex: "none" }, text: "playing" })
+          ? h("span", { class: "tag source-row-tag", text: "playing" })
           : null,
         // A source this server cannot fetch is still worth preferring - it is
         // where the song is, if the app ever has it - but it will not play.
         source.downloadable === false
-          ? h("span", { class: "subtitle", style: { marginLeft: "8px", flex: "none" }, text: "not playable" })
+          ? h("span", { class: "subtitle source-row-unplayable", text: "not playable" })
           : null
       ),
       voteButton(source, 1),
