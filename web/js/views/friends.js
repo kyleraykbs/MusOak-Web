@@ -178,7 +178,7 @@ async function loadRequests() {
   const client = currentClient();
   if (!bodyEl) return;
   const mine = ++generation;
-  mount(bodyEl, loading("Loading requests\u2026"));
+  mount(bodyEl, h("div", { class: "loading-panel friends-request-loading" }, skeletonRows(5), h("span", { class: "loading-caption", text: "Loading requests…" })));
   if (!client) {
     mount(bodyEl, emptyState("send", "No server", "Choose a backend to see your requests."));
     return;
