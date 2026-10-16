@@ -286,7 +286,7 @@ export function trackRow({ track, position, client, onActivate, menu = [] }) {
         onActivate?.();
       },
     },
-    h("span", { class: "time", style: { width: "24px" }, text: String(position + 1) }),
+    h("span", { class: "time playlist-track-number", text: String(position + 1) }),
     artworkTile(client, track.artworkUrl),
     h(
       "div",
