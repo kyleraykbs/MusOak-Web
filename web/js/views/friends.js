@@ -296,8 +296,8 @@ async function runSearch(force = false) {
   // An empty box asks for everybody. A server small enough to answer lists the
   // people on it, which is what finding somebody you have not met needs; a
   // larger one answers with nothing rather than a page that reads as empty.
-  searchStatus.textContent = wanted ? `Looking for \u201c${wanted}\u201d\u2026` : "Looking\u2026";
-  mount(searchResults);
+  searchStatus.textContent = wanted ? `Looking for \u201c${wanted}\u201d\u2026` : "Looking…";
+  mount(searchResults, h("div", { class: "loading-panel friends-search-loading" }, skeletonRows(4), h("span", { class: "loading-caption", text: "Searching people…" })));
   let users = [];
   let directory = false;
   try {

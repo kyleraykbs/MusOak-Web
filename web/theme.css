@@ -751,6 +751,7 @@ img.art[data-loaded="true"] { opacity: 1; }
 .room-queue-title { font-size: 15px; font-weight: 600; }
 .search-playlist-menu { display: flex; flex-direction: column; gap: 4px; max-height: min(50vh, 360px); overflow-y: auto; }
 .dialog-error { color: var(--red); }
+.friends-search-loading { border: 1px solid var(--bg1); border-radius: var(--radius); background: var(--bg0-s); overflow: hidden; }
 .room-now-playing-row > .grow { min-width: 0; }
 .room-transport { display: flex; gap: 6px; flex: none; }
 .rooms-section-header { display: flex; align-items: center; border: 0; padding: 0 0 8px; }
