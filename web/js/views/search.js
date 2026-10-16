@@ -306,7 +306,7 @@ function sectionNode(section) {
     h("div", { class: "section-title", text: section.title }),
     h(
       "div",
-      { class: "list" },
+      { class: "list search-result-list" },
       section.items.map((item) =>
         section.kind === "track" ? trackRow(item) : collectionRow(section.kind, item)
       )
