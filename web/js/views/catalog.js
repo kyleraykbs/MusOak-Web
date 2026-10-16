@@ -6,7 +6,7 @@
 //
 // Both are detail views reached from a result, so neither appears in the nav.
 
-import { h, mount, clear, iconButton, popover, toast, loadingState, artworkImage } from "../dom.js";
+import { h, mount, clear, iconButton, popover, toast, loadingState, artworkImage, skeletonRows } from "../dom.js";
 import { currentClient, navigate, registerView } from "../app.js";
 import { playOne, playTracks } from "./queue.js";
 import { emptyState, playButtons, trackCountLine, trackMenu, trackRow } from "./playlist.js";
@@ -124,7 +124,7 @@ function collectionPage(container, params, { icon, what, plural, loading }) {
     mount(sheet, emptyState(icon, `No ${what}`, `That link does not name an ${what}.`));
     return null;
   }
-  mount(sheet, loadingState(loading));
+  mount(sheet, h("div", { class: "loading-panel" }, skeletonRows(5), h("span", { class: "loading-caption", text: loading })));
   return { client, sheet };
 }
 
