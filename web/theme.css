@@ -808,6 +808,8 @@ img.art[data-loaded="true"] { opacity: 1; }
 .invite-dialog-fields { display: flex; flex-direction: column; gap: 10px; }
 .invite-dialog-fields .list { max-height: 46vh; overflow: auto; }
 .share-dialog-fields { display: flex; flex-direction: column; gap: 10px; }
+.share-song-results { max-height: min(42vh, 320px); overflow: auto; }
+.share-song-results .row { min-width: 0; }
 
 /* ---------- popovers (menus, source picker) ---------- */
 
