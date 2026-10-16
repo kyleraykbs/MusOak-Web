@@ -425,7 +425,7 @@ function draw({ sheet, compact }, projection, room) {
       sheet,
       h(
         "div",
-        { class: "row queue-tabs-row" },
+        { class: "queue-page-tabs" },
         tab(compact, "mine", "My songs", "The songs you queued", () => toggle("mine", sheet)),
         tab(compact, "room", "Whole Room", "The room's play order — the fair mix everyone plays (read only)", () => toggle("room", sheet)),
         clear

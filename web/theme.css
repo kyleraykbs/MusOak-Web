@@ -1670,7 +1670,7 @@ body:has(.drawer:not([hidden])) .player-bar > .btn[title="Open the room"] { disp
   .menu-item { padding: 11px 12px; }
   .find-source-toolbar { flex-wrap: wrap; }
   .find-source-toolbar .btn { flex: 1 0 96px; }
-  .source-row { max-width: 100%; }
+  .queue-page-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
   .source-row-main { min-width: 0; }
   .source-row .btn.small { flex: none; }
   .find-source-results { max-height: 42vh; }
