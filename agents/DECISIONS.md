@@ -142,3 +142,8 @@
 - Decision: views use one persistent page container, shared loading blocks, stable artwork tiles with asynchronous decoding and failure fallback, consistent focus outlines, and common panel/row spacing.
 - Why: navigation was visually jumpy because the shell was cleared before each view answered, loading states differed by view, and artwork implementations duplicated broken-image and lazy-loading behavior. The change improves cohesion without changing view contracts or backend calls.
 - Reversible: yes.
+
+## 2026-10-16 Navigation surfaces are isolated and mobile panels are bottom sheets
+- Decision: navigation keeps one shell but gives each route a fresh surface, so late async responses cannot paint into a later page. Mobile dialogs use bottom-sheet geometry and safe-area padding; room positions use shared icons instead of text glyphs.
+- Why: persistent view nodes made stale responses and page transitions visually inconsistent, while desktop-centered dialogs and glyph symbols were awkward on phones and dependent on font rendering.
+- Reversible: yes.
