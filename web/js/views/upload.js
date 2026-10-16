@@ -449,7 +449,7 @@ function showDialog({
   const runSearch = async () => {
     const text = query.value.trim();
     if (!text || searchPending) return;
-    if (activeQuery === text) return;
+    if (activeQuery === text && searchButton.textContent !== "Retry") return;
     activeQuery = text;
     searchPending = true;
     searchButton.disabled = true;
