@@ -355,7 +355,7 @@ export async function addToPlaylistDialog(tracks) {
 
 let sheet = null; // the piece of the page this view owns
 let activeId = ""; // and the playlist it drew
-let activeName = "";
+let loadGeneration = 0;
 
 function renderPlaylist(container, params = {}) {
   // A sheet of its own inside the container, so a fetch that finishes after the
@@ -368,7 +368,7 @@ function renderPlaylist(container, params = {}) {
 
 async function loadPlaylist() {
   const target = sheet;
-  if (!target || !target.isConnected) return;
+  const mine = ++loadGeneration;
   if (!isSignedIn()) {
     // A guest has no playlist to show: the same ask the playlists list makes.
     mount(
@@ -411,7 +411,7 @@ async function loadPlaylist() {
     mount(target, emptyState("note", "Could not load this playlist", error?.message || ""));
     return;
   }
-  if (!target.isConnected) return; // the view moved on while we fetched
+  if (mine !== loadGeneration || !target.isConnected) return;
 
   const playlist = detail.playlist || {};
   const tracks = detail.tracks || [];
