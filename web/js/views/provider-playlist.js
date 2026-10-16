@@ -63,7 +63,7 @@ function paint(container, params, client, answer) {
   sheet.appendChild(
     h(
       "div",
-      { class: "card row", style: { padding: "14px 16px" } },
+      { class: "card provider-playlist-header" },
       h("button", {
         class: "btn flat small",
         title: "Back",
@@ -72,7 +72,7 @@ function paint(container, params, client, answer) {
       h(
         "div",
         { class: "grow" },
-        h("div", { class: "title", style: { fontSize: "20px", color: "var(--fg0)" }, text: name }),
+        h("div", { class: "provider-playlist-title", text: name }),
         h("div", {
           class: "subtitle",
           text: [playlist.owner, playlist.provider, `${tracks.length} track(s)`].filter(Boolean).join(" \u00b7 "),
@@ -91,7 +91,7 @@ function paint(container, params, client, answer) {
   // what is drawn is a hundred at a time, with a button for the next hundred,
   // so the page stays a length somebody can scroll.
   const list = h("div", { class: "list" });
-  const more = h("button", { class: "btn", text: "", title: "Draw the next songs" });
+  const more = h("button", { class: "btn provider-playlist-more", text: "", title: "Draw the next songs" });
   let shown = 0;
   const draw = () => {
     for (const row of playlistRowChunk(client, tracks, shown)) list.appendChild(row);
@@ -114,14 +114,13 @@ function paint(container, params, client, answer) {
   if (counted > tracks.length) {
     sheet.appendChild(
       h("div", {
-        class: "subtitle",
-        style: { padding: "0 4px 6px" },
+        class: "subtitle provider-playlist-limit",
         text: `The provider listed ${tracks.length} of ${counted} songs. Importing brings in what it lists.`,
       })
     );
   }
   sheet.appendChild(list);
-  sheet.appendChild(h("div", { class: "row", style: { border: "0", justifyContent: "center" } }, more));
+  sheet.appendChild(h("div", { class: "provider-playlist-more-row" }, more));
 }
 
 /** The songs as rows: what the platform lists, in its order, with nothing to

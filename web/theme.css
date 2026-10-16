@@ -575,6 +575,10 @@ img.art[data-loaded="true"] { opacity: 1; }
 .queue-heading-title { font-size: 18px; font-weight: 600; }
 .queue-tab { padding: 4px 10px; }
 .queue-panel-title { font-size: 15px; font-weight: 600; }
+.provider-playlist-header { display: flex; align-items: center; gap: 12px; padding: 14px 16px; }
+.provider-playlist-title { font-size: 20px; color: var(--fg0); }
+.provider-playlist-limit { padding: 0 4px 6px; }
+.provider-playlist-more-row { display: flex; justify-content: center; }
 
 .form-row { display: flex; gap: 12px; align-items: flex-end; }
 .form-row .field { flex: 1; }
