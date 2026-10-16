@@ -90,6 +90,17 @@ export function loadingState(label = "Loading…") {
   );
 }
 
+/** A fixed-height skeleton list that reserves row geometry during slow reads. */
+export function skeletonRows(count = 4, { artwork = true } = {}) {
+  return h("div", { class: "skeleton-list", "aria-hidden": "true" },
+    Array.from({ length: Math.max(1, count) }, () => h("div", { class: "skeleton-row" },
+      artwork ? h("span", { class: "skeleton-art" }) : null,
+      h("span", { class: "skeleton-copy" }, h("span", { class: "skeleton-line wide" }), h("span", { class: "skeleton-line" })),
+      h("span", { class: "skeleton-time" })
+    ))
+  );
+}
+
 /**
  * One consistent artwork element. Keeping the tile in the DOM while an image
  * loads prevents rows and panels from jumping; lazy decoding avoids making a

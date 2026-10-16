@@ -4,7 +4,7 @@
 // shell's: this view only lists what the account starred, and offers to take
 // the star back.
 
-import { h, mount, loadingState } from "../dom.js";
+import { h, mount, skeletonRows, loadingState } from "../dom.js";
 import { currentClient, on, registerView, requireLogin } from "../app.js";
 import { isSignedIn, state } from "../state.js";
 import { playOne, reportError } from "./queue.js";
@@ -63,7 +63,7 @@ async function loadFavourites() {
 
   const client = currentClient();
   // A read that is on its way says so, so a slow server is not a blank page.
-  if (!tracks.length) mount(sheet, loadingState("Loading favourites…"));
+  if (!tracks.length) mount(sheet, skeletonRows(4));
   try {
     tracks = await client.favorites();
     loadFailed = "";
