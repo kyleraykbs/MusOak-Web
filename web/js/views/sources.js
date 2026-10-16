@@ -406,7 +406,7 @@ export function openSourcePicker(anchor, track, onChange = null, { playingVarian
             });
           },
         },
-        h("span", { style: { width: "18px", textAlign: "center" } }, icon("search", 14)),
+        h("span", { class: "source-action-icon" }, icon("search", 14)),
         "Find a source\u2026"
       )
     );
@@ -420,7 +420,7 @@ export function openSourcePicker(anchor, track, onChange = null, { playingVarian
             navigate("manage", { associateTrackId: track.id });
           },
         },
-        h("span", { style: { width: "18px", textAlign: "center" } }, icon("upload", 14)),
+        h("span", { class: "source-action-icon" }, icon("upload", 14)),
         "Upload a source\u2026"
       )
     );
