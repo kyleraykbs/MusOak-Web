@@ -447,6 +447,7 @@ button, input, select, textarea {
 @keyframes skeleton-pulse { from { opacity: .45; } to { opacity: .85; } }
 @media (prefers-reduced-motion: reduce) { .skeleton-art, .skeleton-line, .skeleton-time { animation: none; opacity: .62; } }
 .loading-panel { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+.search-loading { border: 1px solid var(--bg1); border-radius: var(--radius); background: var(--bg0-s); overflow: hidden; }
 .loading-caption { align-self: center; color: var(--fg4); font-size: .86rem; }
 .art { contain: paint; }
 img.art { display: block; transition: opacity 140ms ease; }

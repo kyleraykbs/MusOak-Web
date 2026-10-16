@@ -503,7 +503,7 @@ function render(container, params = {}) {
     return;
   }
   // Which tab to open on takes a round trip; the bar is drawn once it is known.
-  mount(container, loading("Loading\u2026"));
+  mount(container, h("div", { class: "loading-panel" }, skeletonRows(5), h("span", { class: "loading-caption", text: "Loading friends…" })));
   openingTab().then((tab) => {
     if (activeTab) return; // they picked one while we asked
     activeTab = tab;

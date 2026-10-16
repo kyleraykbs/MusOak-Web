@@ -5,7 +5,7 @@
 
 import {
   h, clear, mount, dialog, popover, prompt, debounce, fmtDuration, toast,
-  icon, iconOr, iconButton, artworkImage,
+  icon, iconOr, iconButton, artworkImage, skeletonRows,
 } from "../dom.js";
 import {
   registerView, banner, requireLogin, currentClient, navigate,
@@ -360,7 +360,7 @@ function chooseKind(kind) {
 }
 
 function searchingPlaceholder(query, kind) {
-  return emptyState(iconOr("search", 38), `Searching ${placeholderFor(kind).slice(7)}...`, `Looking for \u201c${query}\u201d.`);
+  return h("div", { class: "loading-panel search-loading" }, skeletonRows(4), h("span", { class: "loading-caption", text: `Searching ${placeholderFor(kind).slice(7)}…` }));
 }
 
 /** How each tab asks for its own kind of thing, and nothing else: four round
