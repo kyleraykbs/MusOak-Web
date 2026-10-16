@@ -227,7 +227,7 @@ export function pickSource(sources, preferredVariantId = "") {
 export function openSourcePicker(anchor, track, onChange = null, { playingVariantId = "" } = {}) {
   if (!anchor || !track?.id) return null;
 
-  const panel = h("div", { class: "popover", role: "menu", style: { visibility: "hidden" } });
+  const panel = h("div", { class: "popover source-popover-pending", role: "menu" });
   const data = { sources: [], preferredVariantId: "", notice: "" };
   let loadGeneration = 0;
   let closed = false;
@@ -260,7 +260,7 @@ export function openSourcePicker(anchor, track, onChange = null, { playingVarian
   };
 
   const place = () => {
-    panel.style.visibility = "";
+    panel.classList.remove("source-popover-pending");
     const view = viewport();
     const box = anchor.getBoundingClientRect();
     const size = panel.getBoundingClientRect();

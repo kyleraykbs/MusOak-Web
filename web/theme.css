@@ -823,6 +823,8 @@ img.art[data-loaded="true"] { opacity: 1; }
 .favourites-track-row { align-items: center; }
 .favourites-track-row > .subtitle { flex: none; white-space: nowrap; }
 
+ .source-popover-pending { visibility: hidden; }
+
 /* ---------- popovers (menus, source picker) ---------- */
 
 .popover {
