@@ -432,11 +432,11 @@ function showDialog({
   // The search panel: "Search…" is a door, not an answer, so the dropdown keeps
   // its old answer until a song is picked.
   const query = h("input", { class: "input", type: "search", placeholder: "Search for the song this is" });
-  const searchStatus = h("div", { style: { color: "var(--fg4)", fontSize: "12.5px" } });
-  const results = h("div", { class: "list" });
+  const searchStatus = h("div", { class: "search-status" });
+  const results = h("div", { class: "list upload-search-results" });
   const searchPanel = h(
     "div",
-    { style: { display: "none", flexDirection: "column", gap: "8px" } },
+    { class: "upload-search-panel" },
     query,
     searchStatus,
     results
@@ -802,8 +802,8 @@ export function openTrackPicker({ title = "Associate with a song" } = {}) {
       const text = query.value.trim();
       if (!text) return;
       generation += 1;
+      const mine = generation;
       status.textContent = "Searching…";
-      mount(results, loadingState("Searching…"));
       try {
         const { groups } = await client.search(text, 10);
         if (mine !== generation) return;

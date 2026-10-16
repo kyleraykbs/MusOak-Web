@@ -524,6 +524,9 @@ img.art[data-loaded="true"] { opacity: 1; }
 .btn, .nav-item, .menu-item { -webkit-tap-highlight-color: transparent; }
 .btn:focus-visible, .nav-item:focus-visible, .menu-item:focus-visible { box-shadow: 0 0 0 2px var(--bg0), 0 0 0 4px var(--blue); }
 .view-surface { min-height: 100%; contain: layout style; }
+.upload-search-panel { display: none; flex-direction: column; gap: 8px; }
+.search-status { color: var(--fg4); font-size: 12.5px; min-height: 16px; }
+.upload-search-results { min-height: 48px; }
 
 .art {
   width: 48px;
