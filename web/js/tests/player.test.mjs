@@ -2656,9 +2656,12 @@ test("when its copy lands mid-song the music moves onto it without a gap", async
   }
 });
 
-// A copy that never comes up on the second element falls back to moving the
-// element in hand onto it: a gap, but not silence.
-test("a copy that never becomes playable is moved onto the old way", async () => {
+// A copy that never comes up on the second element is not a reason to reset the
+// element in hand: that reset is the stream dropped and buffered again, and it is
+// the song stopping and loading again that a listener over a network hears. The
+// stream plays on, and a source that does come up is taken up then, at the
+// position the music has reached by that point.
+test("a copy that never becomes playable leaves the element in hand alone", async () => {
   const saved = {
     audio: player.audio,
     spare: player._spare,
@@ -2739,12 +2742,21 @@ test("a copy that never becomes playable is moved onto the old way", async () =>
     spare.fire("error");                       // the copy will not come up
     await tick(50);
 
-    assert.equal(player.audio, audio, "the element in hand is the one that takes it");
-    assert.equal(audio.src, "blob:a", "moved onto the copy");
-    assert.equal(player._pendingSeek, 42500, "at the exact position it had reached");
-    assert.deepEqual(played, [], "the play waits for the position to land");
-    audio.fire("loadedmetadata");
-    assert.deepEqual(played, ["blob:a"], "and carried on playing from there");
+    assert.equal(player.audio, audio, "the element in hand is still the one playing");
+    assert.equal(audio.src, "/media/v-a", "and it was not moved onto the copy");
+    assert.equal(audio.paused, false, "so the sound never stopped");
+    assert.deepEqual(played, [], "and nothing was started");
+
+    // A source that does come up later is still taken up, at the position the
+    // music has reached by then rather than at the moment the wait ran out.
+    spare.readyState = 4;
+    audio.currentTime = 51;
+    spare.fire("canplay");
+    await tick(120);
+
+    assert.equal(player.audio, spare, "the late copy is the element in hand");
+    assert.equal(spare.currentTime, 51, "at the position the music had reached");
+    assert.deepEqual(played, ["blob:a"], "started rather than reloaded");
   } finally {
     player.audio = saved.audio;
     player._spare = saved.spare;
@@ -3225,23 +3237,26 @@ test("what is still to be downloaded follows a shuffle", async () => {
       });
 
     player._prefetch();
-    assert.deepEqual(asked, ["a", "b"], "the eager window is fetched first");
-    release.get("a")();
+    assert.deepEqual(asked, ["b", "c"], "the eager window is fetched first");
     release.get("b")();
-    await tick(0);
     release.get("c")();
-    release.get("d")();
     await tick(0);
+    release.get("d")();
     release.get("e")();
     await tick(0);
-    assert.deepEqual(asked, ["a", "b", "c", "d", "e", "f"], "through the eager five and the first of the tail");
     release.get("f")();
     await tick(0);
+    assert.deepEqual(asked, ["b", "c", "d", "e", "f", "g"], "through the eager five and the first of the tail");
+    release.get("g")();
+    await tick(0);
 
-    // The queue is shuffled: different songs are now the ones still cold.
+    // The queue is shuffled: different songs are now the ones still cold. The
+    // song on the element is not one of the copies (see `_prefetch`), so it is
+    // not one of the songs that has to be fetched either.
     const beforeShuffle = asked.length;
     player.shuffleQueue();
-    const order = player.queue.map((entry) => entry.id);
+    const playing = String(player.current()?.id || "");
+    const order = player.queue.map((entry) => entry.id).filter((id) => id !== playing);
     const cold = (id) => player._offline.get(id)?.state !== "ready";
     const remaining = order.filter((id) => player._offline.get(id)?.state !== "ready");
     assert.ok(remaining.length >= 2, "there is still something to download");
@@ -3456,33 +3471,33 @@ test("the eager window is chased and the rest is fetched slowly", async () => {
       });
 
     player._prefetch();
-    assert.deepEqual(asked, ["a", "b"], "the eager window is chased, two at a time");
+    assert.deepEqual(asked, ["b", "c"], "the eager window is chased, two at a time");
 
-    release.get("a")();
     release.get("b")();
-    await tick(0);
-    assert.deepEqual(asked, ["a", "b", "c", "d"], "and the next eager songs take the slots");
-
     release.get("c")();
-    release.get("d")();
     await tick(0);
-    assert.deepEqual(asked, ["a", "b", "c", "d", "e"], "and then the last of the five");
+    assert.deepEqual(asked, ["b", "c", "d", "e"], "and the next eager songs take the slots");
 
-    // The eager window is done; the tail starts, but nothing follows it yet.
+    release.get("d")();
     release.get("e")();
     await tick(0);
-    assert.deepEqual(asked, ["a", "b", "c", "d", "e", "f"], "the tail starts once the eager window is fetched");
+    assert.deepEqual(asked, ["b", "c", "d", "e", "f"], "and then the last of the five");
 
+    // The eager window is done; the tail starts, but nothing follows it yet.
     release.get("f")();
     await tick(0);
-    assert.deepEqual(asked, ["a", "b", "c", "d", "e", "f"], "but the next tail song waits for the gap");
+    assert.deepEqual(asked, ["b", "c", "d", "e", "f", "g"], "the tail starts once the eager window is fetched");
+
+    release.get("g")();
+    await tick(0);
+    assert.deepEqual(asked, ["b", "c", "d", "e", "f", "g"], "but the next tail song waits for the gap");
     assert.equal(timers.length, 1, "a wake-up was left for it");
     assert.equal(timers[0].ms, OFFLINE_TAIL_GAP_MS, "for the whole gap, nothing having elapsed");
 
     // Only after the gap does the next one start - one, not two.
     now += OFFLINE_TAIL_GAP_MS;
     timers.shift().fn();
-    assert.deepEqual(asked, ["a", "b", "c", "d", "e", "f", "g"], "and then exactly one more");
+    assert.deepEqual(asked, ["b", "c", "d", "e", "f", "g", "h"], "and then exactly one more");
   } finally {
     player.queue = saved.queue;
     player._index = saved.index;

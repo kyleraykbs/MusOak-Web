@@ -847,10 +847,19 @@ class Player {
   }
 
   /** Where the element's own clock starts in the song: the position its stream
-   *  was requested from, or zero for a file, which begins at the beginning. */
+   *  was requested from, or zero for a whole source, which begins at the
+   *  beginning.
+   *
+   *  The recorded stream, not a comparison of the two `src` strings. The DOM
+   *  resolves what it is given, a redirect or a proxy can change what the
+   *  element ends up holding, and a mismatch used to read as "no offset at
+   *  all": every position derived from this - the one a hand-over switches at,
+   *  the one that is saved - collapsed to the element's own zero, which is the
+   *  song starting from the top for the next listener. What says the offset is
+   *  gone is `_dropStream`, and every replacement of the element's source
+   *  calls it. */
   _streamOffsetMs() {
-    const stream = this._streamingNow();
-    return stream ? Math.max(0, Math.round(Number(stream.startMs) || 0)) : 0;
+    return Math.max(0, Math.round(Number(this._stream?.startMs) || 0));
   }
 
   /** The length of this local audio source, or 0 before metadata arrives.
@@ -2117,8 +2126,17 @@ class Player {
       // the backend has just finished has nothing better to give.
       const kept = this._offline.get(String(this.current()?.id || ""));
       if (audio.src === this._elementUrl(url) || (kept?.state === "ready" && kept.url === audio.src)) return;
+      // The position is taken before the stream is let go, and left pending on
+      // the element: the element's own clock is short by the offset its stream
+      // was asked for, and the whole file that is handed over here carries no
+      // `?start=` for the server to honour. `_pendingSeek` may already have
+      // been spent on the stream's URL, so it is set again from where the music
+      // actually is - otherwise the file is loaded from the top and nothing
+      // seeks it, which is the song starting from the beginning.
+      const at = this.positionMs();
       this._dropStream();
       audio.src = url;
+      this._pendingSeek = at > 0 ? at : this._pendingSeek;
       if (!attempt.autoplay) return;
       this._wantResume(true);
       // The position the song was asked to start at, applied before any sound -
@@ -2170,7 +2188,18 @@ class Player {
     }
     // In a room the order offline play follows is the room's, and rooms-state
     // keeps it: this queue holds one song there, and would evict the room's.
-    if (!this._room) this.keepOffline(this.offlineWindow().filter((track) => !track?.localUrl));
+    //
+    // The song on the element is not one of the copies: it is already whole -
+    // the file the hand-over took up - or it is streaming, and either way a
+    // second copy of it is a whole song's transfer over the same link the
+    // listener is listening on, and one more source change when it lands. What
+    // the copies are for is the songs behind it, which have no file yet.
+    if (!this._room) {
+      const playing = String(this.current()?.id || "");
+      this.keepOffline(
+        this.offlineWindow().filter((track) => !track?.localUrl && String(track?.id || "") !== playing)
+      );
+    }
   }
 
   // --- songs kept in memory for offline play -------------------------------
@@ -2501,12 +2530,34 @@ class Player {
     // over in the meantime, or changed what it is playing: this one is done.
     if (id !== this._handOverId || from !== this.audio || String(from.src || "") !== leaving) return;
     if (!ready) {
-      // The new source never became playable on the second element. Moving the
-      // element in hand onto it is the gap this exists to avoid, but a gap is
-      // not silence, and it is the only thing left to play.
+      // The new source is not playable yet. With a network in the way that is
+      // ordinary rather than broken: a file is a transfer, and four seconds of
+      // one is nothing. Resetting the element in hand - which is what this used
+      // to do - drops the stream and buffers it again, and that is the song
+      // stopping and loading again that a remote listener hears. While the
+      // element in hand is still sounding it is left alone, and the source is
+      // taken up the moment it can be played. With nothing playing there is
+      // nothing to lose, and the old way is what is left.
+      if (from.paused === false && !from.ended) {
+        this._adoptLate(id, from, leaving, target, spare);
+        return;
+      }
       this._moveOntoTarget(target, wasPaused);
       return;
     }
+    return this._switchTo(id, from, leaving, target, spare, wasPaused);
+  }
+
+  /**
+   * The last half of a hand-over: the position, the play, and the element in
+   * hand.
+   *
+   * Split out because a source that arrives late is taken up here too (see
+   * `_adoptLate`): the same switch, at the position the music has reached by
+   * then rather than at the moment the wait ran out.
+   */
+  async _switchTo(id, from, leaving, target, spare, wasPaused) {
+    if (id !== this._handOverId || from !== this.audio || String(from.src || "") !== leaving) return;
     // Where the music is now, not where the new source landed.
     const at = this.positionMs();
     try {
@@ -2537,6 +2588,26 @@ class Player {
     // covers the new element's pipeline latency, and the two are at the same
     // position, so what is heard is one performance rather than a hole.
     setTimeout(() => this._fadeOut(from), HANDOVER_OVERLAP_MS);
+  }
+
+  /**
+   * Take up a source that only became playable after the wait ran out.
+   *
+   * Nothing is reset to do it: the element in hand is still playing, and the
+   * switch that would have happened on time happens here instead, at the
+   * position the music has reached. A source that never becomes playable costs
+   * nothing but the listeners, and the stream that is playing plays out.
+   */
+  _adoptLate(id, from, leaving, target, spare) {
+    const wanted = this._elementUrl(target.url);
+    const onCanPlay = () => {
+      spare.removeEventListener("error", onError);
+      if (spare.src !== wanted || spare.readyState < 3) return;
+      this._switchTo(id, from, leaving, target, spare, false);
+    };
+    const onError = () => spare.removeEventListener("canplay", onCanPlay);
+    spare.addEventListener("canplay", onCanPlay, { once: true });
+    spare.addEventListener("error", onError, { once: true });
   }
 
   /** The second element becomes the one in hand, and the old one the spare. */
