@@ -425,9 +425,10 @@ button, input, select, textarea {
 @media (prefers-reduced-motion: reduce) {
   .loading-spinner { animation: none; }
 }
-.art[data-failed="true"] { opacity: 0; }
 .art { contain: paint; }
-img.art { display: block; }
+img.art { display: block; transition: opacity 140ms ease; }
+img.art:not([data-loaded="true"]) { opacity: 0.72; }
+img.art[data-loaded="true"] { opacity: 1; }
 
 .page > .section-title,
 .page > .card,
@@ -443,6 +444,11 @@ img.art { display: block; }
 .section-title + .list,
 .section-title + .card { margin-top: 8px; }
 .card > .section-title { margin-bottom: 12px; }
+.panel-heading,
+.card > .row:first-child { min-height: 40px; }
+.card > .list { margin-top: 10px; }
+.section > .subtitle,
+.section-title + .subtitle { margin-bottom: 4px; }
 .list > .row { min-height: 58px; }
 .list > .row:focus-within { background: var(--bg1); outline: 1px solid var(--blue-dim); outline-offset: -1px; }
 .btn:focus-visible,
