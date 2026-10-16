@@ -137,3 +137,8 @@
 - Decision: the favorite star opens a 0.1-step 0.1–5.0 rating slider; a saved rating is shown numerically and as partially filled stars, and a room submits it once when its item starts. Auto-skip is a visible opt-in room checkbox. The device download selector also supports All, while the shared download queue enforces the selected limit.
 - Why: binary favorites lost useful preference information, automatic low-rating skips are disruptive unless requested, and displaying a concurrency setting without applying it made the server run more downloads than the user selected. Provider status polling now drives the visible progress label directly.
 - Reversible: yes.
+
+## 2026-10-16 Shared async states and artwork loading
+- Decision: views use one persistent page container, shared loading blocks, stable artwork tiles with asynchronous decoding and failure fallback, consistent focus outlines, and common panel/row spacing.
+- Why: navigation was visually jumpy because the shell was cleared before each view answered, loading states differed by view, and artwork implementations duplicated broken-image and lazy-loading behavior. The change improves cohesion without changing view contracts or backend calls.
+- Reversible: yes.
