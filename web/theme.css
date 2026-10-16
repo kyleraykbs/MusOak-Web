@@ -505,8 +505,9 @@ img.art[data-loaded="true"] { opacity: 1; }
     max-width: 100%;
     max-height: min(82dvh, 680px);
     border-radius: var(--radius) var(--radius) 0 0;
+  }
   .dialog .actions { flex-wrap: wrap; }
-  .dialog .actions .btn { flex: 1 1 120px; }
+  .dialog .actions .btn { flex: 1 1 120px; min-width: 0; }
   .card { padding: 13px; }
   .list > .row { min-height: 54px; padding-inline: 10px; }
 }

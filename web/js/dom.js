@@ -219,6 +219,7 @@ export function dialog({ title, body, actions = [], onOpen, closeButton = false 
       ? iconButton("cross", { title: "Close", class: "btn flat round dialog-close", onclick: () => close() })
       : null,
     title ? h("h2", { text: title, id: "dialog-title" }) : null,
+    body,
     h("div", { class: "actions" }, actions.map((action) => h("button", {
       type: "button",
       id: action.id || null,
