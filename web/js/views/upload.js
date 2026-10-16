@@ -486,8 +486,14 @@ function showDialog({
       query.focus();
       return;
     }
-    choice = Number(select.value);
-    searchPanel.style.display = "none";
+    generation += 1;
+    searchPending = false;
+    searchButton.disabled = false;
+    searchPanel.setAttribute("aria-busy", "false");
+    activeQuery = "";
+    searchStatus.textContent = "";
+    query.value = "";
+    mount(results, null);
   });
   const selectedTrackId = () => (choice === 0 ? pickedTrackId : "");
 
