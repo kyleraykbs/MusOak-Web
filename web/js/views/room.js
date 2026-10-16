@@ -3,7 +3,7 @@
 // This view reads the room from rooms-state.js, which applies the socket events
 // and keeps the shared player within two seconds of the room's position.
 
-import { h, mount, clear, popover, toast, fmtDuration, icon, iconButton, scheduleFrame } from "../dom.js";
+import { h, mount, clear, popover, toast, fmtDuration, icon, iconButton, scheduleFrame, panelHeading } from "../dom.js";
 import { registerView, navigate, banner, currentClient, on, requireLogin } from "../app.js";
 import { state, saveLocal } from "../state.js";
 import { player } from "../player.js";
@@ -463,7 +463,7 @@ function members(room) {
 }
 
 function sectionBlock(title, extra = "") {
-  return h("div", { class: `card ${extra}`.trim() }, h("div", { class: "section-title", text: title }));
+  return h("section", { class: `card ${extra}`.trim() }, panelHeading(title));
 }
 
 // --- the moving parts ------------------------------------------------------

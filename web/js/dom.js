@@ -101,6 +101,14 @@ export function skeletonRows(count = 4, { artwork = true } = {}) {
   );
 }
 
+/** A consistent panel heading for views that mix title, count, and actions. */
+export function panelHeading(title, subtitle = "", ...actions) {
+  return h("div", { class: "panel-heading" },
+    h("div", { class: "grow" }, h("div", { class: "section-title", text: title }), subtitle ? h("div", { class: "subtitle", text: subtitle }) : null),
+    actions
+  );
+}
+
 /**
  * One consistent artwork element. Keeping the tile in the DOM while an image
  * loads prevents rows and panels from jumping; lazy decoding avoids making a
