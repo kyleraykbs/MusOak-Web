@@ -358,7 +358,7 @@ function askPassword(room, { password = "", error = "" } = {}) {
       { class: "field" },
       h("p", { text: "This room has a password." }),
       input,
-      error ? h("span", { style: { color: "var(--red)" }, text: error }) : null
+      error ? h("span", { class: "dialog-error", role: "alert", text: error }) : null
     ),
     actions: [{ label: "Cancel" }, { label: "Join", class: "suggested", onClick: submit }],
     onOpen: () => input.focus(),
