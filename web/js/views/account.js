@@ -8,7 +8,7 @@
 // consults when it picks which source of a song plays.
 
 import {
-  h, clear, mount, dialog, toast, pickFile, fileToBase64, icon, loadingState, skeletonRows,
+  h, clear, mount, dialog, toast, pickFile, fileToBase64, icon, artworkImage, loadingState, skeletonRows,
 } from "../dom.js";
 import { state, saveLocal, isSignedIn, bumpIcon, iconVersion, userIdOf } from "../state.js";
 import { rejoinRoom } from "../rooms-state.js";

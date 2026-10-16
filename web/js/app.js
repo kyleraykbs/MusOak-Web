@@ -475,6 +475,7 @@ function buildLayout() {
     content: h("div", { class: "content", id: "app-content", role: "region", "aria-busy": "false" }),
     bannerSlot: h("div", { class: "banner-slot", role: "status", "aria-live": "polite" }),
     title: h("h1", { text: "MusOak", tabindex: "-1" }),
+    back: h("button", { class: "topbar-back btn flat small", title: "Go back", "aria-label": "Go back", onclick: () => history.length > 1 ? history.back() : navigate("search") }, icon("arrowLeft", 18)),
     bell: iconButton("bell", { title: "Notifications", onclick: openNotifications }),
     brand: h("div", { class: "brand" }),
     nav: h("nav", { class: "nav", "aria-label": "Primary navigation" }),
@@ -501,7 +502,7 @@ function buildLayout() {
   );
   layout.navWrap = h("div", { class: "nav-wrap" }, layout.nav, layout.navIndicator, layout.navLeft, layout.navRight);
 
-  const topbar = h("div", { class: "topbar" }, layout.title, layout.bell);
+  const topbar = h("div", { class: "topbar" }, layout.back, layout.title, layout.bell);
   mount(layout.main, topbar, layout.bannerSlot, layout.content);
   mount(layout.sidebar, layout.skip, layout.top, layout.navWrap);
   // The queue's own button floats above the bottom panels, clear of the bar:

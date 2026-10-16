@@ -533,12 +533,6 @@ function header(client, playlist, tracks) {
     h(
       "div",
       { class: "collection-header-row" },
-      h("button", {
-        class: "btn round",
-        title: "Back to playlists",
-        "aria-label": "Back to playlists",
-        onclick: () => navigate("playlists"),
-      }, icon("prev", 18)),
       artworkTile(client, playlist.artworkUrl, "big"),
       h(
         "div",
