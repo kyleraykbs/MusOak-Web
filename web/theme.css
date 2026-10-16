@@ -581,6 +581,12 @@ img.art[data-loaded="true"] { opacity: 1; }
 .provider-playlist-more-row { display: flex; justify-content: center; }
 .playlist-row-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .playlist-row-title .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.playlist-import-fields, .file-import-fields { display: flex; flex-direction: column; gap: 10px; min-width: min(420px, 80vw); }
+.playlist-import-search { display: flex; gap: 8px; }
+.playlist-import-search .input { min-width: 0; flex: 1; }
+.import-note { color: var(--fg4); font-size: 12.5px; min-height: 16px; }
+.import-report { max-height: 200px; overflow: auto; }
+.import-actions { display: flex; gap: 8px; }
 
 .form-row { display: flex; gap: 12px; align-items: flex-end; }
 .form-row .field { flex: 1; }

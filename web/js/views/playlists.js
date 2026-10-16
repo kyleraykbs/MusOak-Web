@@ -645,10 +645,10 @@ function importDialog() {
     title: "Import a playlist",
     body: h(
       "div",
-      { style: { display: "flex", flexDirection: "column", gap: "10px", minWidth: "min(420px, 80vw)" } },
+      { class: "playlist-import-fields" },
       platformRow,
       modeRow,
-      h("div", { style: { display: "flex", gap: "8px" } }, input, find),
+      h("div", { class: "playlist-import-search" }, input, find),
       results,
       status
     ),
@@ -676,9 +676,9 @@ function importFilesDialog() {
   let close = () => {};
 
   const line = h("div", { class: "login-status", role: "status" });
-  const note = h("div", { style: { color: "var(--fg4)", fontSize: "12.5px" } });
-  const report = h("div", { class: "list", style: { maxHeight: "200px", overflow: "auto" } });
-  const after = h("div", { style: { display: "flex", gap: "8px" } });
+  const note = h("div", { class: "import-note" });
+  const report = h("div", { class: "list import-report" });
+  const after = h("div", { class: "import-actions" });
 
   const folderButton = h("button", { class: "btn", text: "Choose a folder", onclick: () => void choose(true) });
   const fileButton = h("button", { class: "btn", text: "Choose files", onclick: () => void choose(false) });
@@ -812,11 +812,11 @@ function importFilesDialog() {
     title: "Import song files",
     body: h(
       "div",
-      { style: { display: "flex", flexDirection: "column", gap: "10px", minWidth: "min(420px, 80vw)" } },
+      { class: "file-import-fields" },
       h("div", {
         text: "Choose a folder of songs from this machine, or pick the files themselves. Only audio is imported, and the songs land in a playlist named after the folder.",
       }),
-      h("div", { style: { display: "flex", gap: "8px" } }, folderButton, fileButton),
+      h("div", { class: "import-actions" }, folderButton, fileButton),
       note,
       line,
       report,
