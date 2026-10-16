@@ -424,7 +424,7 @@ async function load() {
   if (!signedInSheet) sheet();
   const client = currentClient();
   if (!client || !listEl) return;
-  listEl.appendChild(loadingState("Loading playlists…"));
+  mount(listEl, loadingState("Loading playlists…"));
   // The server is asked first, as it always was - except on a page that already
   // knows it has none (`player.online()` false): there the ask can only fail,
   // and waiting for it to say so keeps somebody who has music on this machine
