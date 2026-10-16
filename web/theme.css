@@ -602,6 +602,8 @@ img.art[data-loaded="true"] { opacity: 1; }
  .account-device-note { padding: 0 4px 8px; }
  .account-icon-button { padding: 0; border: 0; background: transparent; }
  .account-action-button { flex: 1; min-width: 0; }
+.search-row-copy { min-width: 0; }
+.search-row-copy .subtitle { overflow-wrap: anywhere; }
 .form-row .field { flex: 1; }
 
 /* ---------- dialogs ---------- */

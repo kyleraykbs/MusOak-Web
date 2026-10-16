@@ -255,7 +255,7 @@ function trackRow(group) {
     artwork(track.artworkUrl),
     h(
       "div",
-      { class: "grow" },
+      { class: "grow search-row-copy" },
       h("div", { class: "title", text: track.title || "Untitled" }),
       // The artist is a way into their page; the provider names are not.
       artist || rest
@@ -287,7 +287,7 @@ function collectionRow(kind, item) {
     artwork(item.artworkUrl),
     h(
       "div",
-      { class: "grow" },
+      { class: "grow search-row-copy" },
       h("div", { class: "title", text: item.title || item.name || "Untitled" }),
       subtitle ? h("div", { class: "subtitle", text: subtitle }) : null
     ),
