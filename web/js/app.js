@@ -23,7 +23,7 @@ let notifyTimer = 0;
 let reachabilityTimer = 0;
 /** Friend requests waiting on an answer, for the Friends tab's badge. */
 let friendRequestCount = 0;
-
+const routeScroll = new Map();
 const VIEW_MODULES = [
   "./views/search.js",
   "./views/catalog.js",
@@ -55,6 +55,9 @@ export function currentClient() {
 export function currentUser() {
   return state.user;
 }
+function routeScrollKey(view = state.view, params = state.viewParams) {
+  return `${view}:${JSON.stringify(params || {})}`;
+}
 
 function routeState() {
   return { view: state.view, params: state.viewParams || {} };
@@ -76,8 +79,12 @@ function applyBrowserRoute(route) {
   renderNav();
   return true;
 }
+function saveContentScroll() {
+  if (layout?.content && state.view) routeScroll.set(routeScrollKey(), layout.content.scrollTop);
+}
 
 export function navigate(id, params = {}) {
+  saveContentScroll();
   const view = views.get(id);
   if (!view) {
     banner(`no such view: ${id}`, "error");
@@ -1066,6 +1073,8 @@ function renderContent() {
     }
   })();
   if (view && container.isConnected) layout.title.focus?.({ preventScroll: true });
+  const savedScroll = routeScroll.get(routeScrollKey());
+  if (savedScroll != null) requestAnimationFrame(() => { if (container.isConnected) layout.content.scrollTop = savedScroll; });
   // A view that fetches before it draws can fail later than this call: that
   // failure must reach only the current surface.
   Promise.resolve(rendered).finally(() => {
