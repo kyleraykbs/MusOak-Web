@@ -65,8 +65,11 @@ function routeState() {
 
 function syncBrowserRoute({ replace = false } = {}) {
   if (typeof history === "undefined") return;
+  const next = routeState();
+  const current = history.state;
+  if (!replace && current?.view === next.view && JSON.stringify(current.params || {}) === JSON.stringify(next.params || {})) return;
   const method = replace ? "replaceState" : "pushState";
-  history[method](routeState(), "", location.href);
+  history[method](next, "", location.href);
 }
 
 function applyBrowserRoute(route) {
