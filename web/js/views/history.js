@@ -42,7 +42,7 @@ export function playCountLabel(plays) {
 
 let sheet = null; // the piece of the page this view owns
 let recent = [];
-let top = [];
+let loadGeneration = 0;
 
 function onScreen() {
   return Boolean(sheet?.isConnected);
@@ -59,6 +59,7 @@ function render(container) {
 
 async function load() {
   if (!sheet || !sheet.isConnected) return;
+  const mine = ++loadGeneration;
 
   if (!isSignedIn()) {
     recent = [];
@@ -69,13 +70,17 @@ async function load() {
 
   const client = currentClient();
   try {
-    [recent, top] = await Promise.all([client.history(), client.topTracks()]);
+    const [nextRecent, nextTop] = await Promise.all([client.history(), client.topTracks()]);
+    if (mine !== loadGeneration || !sheet?.isConnected) return;
+    recent = nextRecent;
+    top = nextTop;
   } catch (error) {
+    if (mine !== loadGeneration || !sheet?.isConnected) return;
     reportError(error);
     recent = [];
     top = [];
   }
-  if (!sheet || !sheet.isConnected) return; // the view was replaced while we fetched
+  if (!sheet || !sheet.isConnected) return;
   paint();
 }
 
