@@ -89,6 +89,42 @@ DOWNLOAD_TEXT = re.compile(
 CONVERT_TEXT = re.compile(r"converting (\d+)%$")
 STORE_TEXT = re.compile(r"storing")
 
+#: Every paint of the bar's text line, recorded inside the page from before the
+#: click. The uncounted wording - "downloading…" with a sweep rather than a
+#: fraction - is a moment rather than a phase: the page paints it when the track
+#: is chosen and it is gone as soon as the first status names a total, which on a
+#: fast link is one round trip. A sampler reading over the wire every quarter
+#: second cannot be relied on to catch a state that lasts a round trip, and this
+#: assertion was caught by luck rather than by the sample it kept missing.
+RECORD_BAR_JS = """
+const bar = document.querySelector('.player-bar');
+const wrap = bar && bar.querySelector('.track-text .progress');
+const fill = wrap && wrap.querySelector('.bar');
+const seen = [];
+const read = () => {
+  const text = bar && bar.querySelector('.subtitle') ? bar.querySelector('.subtitle').textContent.trim() : '';
+  const width = fill ? (fill.style.width || '') : '';
+  const shown = !!(wrap && wrap.style.display !== 'none');
+  const last = seen[seen.length - 1];
+  if (!last || last.text !== text || last.width !== width || last.shown !== shown) {
+    seen.push({ text, width, shown });
+  }
+};
+window.__barPaints = seen;
+window.__barPaintsTimer = setInterval(read, 8);
+read();
+return true;
+"""
+
+
+def _stop_recording_bar(ui):
+    """What the bar painted while the recorder was running."""
+    raw = ui.js(
+        "clearInterval(window.__barPaintsTimer);"
+        "return JSON.stringify(window.__barPaints || []);"
+    )
+    return json.loads(raw or "[]")
+
 def _find_variant(backend, token):
     """The fake's rendition, as the API sees it: the id the page will download.
 
@@ -238,8 +274,10 @@ def test_the_bar_draws_the_download_the_provider_reports(ui, backend, signed_in)
     ui.wait_xpath(ROW, f"the {TITLE!r} search result")
 
     mark = ui.mark()
+    ui.js(RECORD_BAR_JS)
     ui.click_xpath(ROW, f"the {TITLE!r} search result")
     samples = _watch(ui, backend, token, variant_id)
+    paints = _stop_recording_bar(ui)
     print("\n--- the bar, and the status it is drawn from")
     print(_table(samples))
 
@@ -373,14 +411,21 @@ def test_the_bar_draws_the_download_the_provider_reports(ui, backend, signed_in)
 
     # While the bar cannot count - no report has named a stage and a total yet -
     # it must sweep rather than claim a fraction. A 0% fill over a download that
-    # is already moving is a number the page does not have.
-    uncounted = [s for s in samples if s["text"].endswith("downloading…")]
+    # is already moving is a number the page does not have. Read from the paints
+    # recorded in the page rather than from the samples: this is a moment, and
+    # the sample that used to have to catch it read the page once per quarter
+    # second over the wire.
+    uncounted = [
+        paint for paint in paints if paint["shown"] and paint["text"].endswith("downloading…")
+    ]
     assert uncounted, (
-        f"the bar never showed its uncounted wording, so nothing was checked there\n{_table(samples)}"
+        f"the bar never showed its uncounted wording, so nothing was checked there. "
+        f"The paints it did show: {[paint['text'] for paint in paints]}\n{_table(samples)}"
     )
-    for sample in uncounted:
-        assert sample["fill"] is None, _report(
-            f"the fill while the bar said {sample['text']!r}", f"{sample['fill']}%", "no fraction (a sweep)"
+    for paint in uncounted:
+        assert _percent(paint["width"]) is None, _report(
+            f"the fill while the bar said {paint['text']!r}", f"{_percent(paint['width'])}%",
+            "no fraction (a sweep)",
         )
 
     # --- the end of the story ----------------------------------------------
