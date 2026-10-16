@@ -6,8 +6,8 @@
 room). `player._spare` is a second, hidden element the hand-over brings the next
 source up on, so the switch is the spare's play rather than a source change on
 the element in hand. `data-e2e="audio"` / `"audio-spare"` follow them through
-`_adoptCopy`, so a test can read the one in hand. The suite (`test_streaming.py`,
-`test_playback.py`) reads it that way.
+`_adoptCopy`, so browser tests can read the one in hand. The suite's playback
+tests assert complete-file downloads; provider streaming is not part of playback.
 
 ## The playback e2e scenarios need a signed-in browser
 

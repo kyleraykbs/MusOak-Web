@@ -127,3 +127,8 @@
 - Note: one strong ETag still covers both representations (`agents/TODO.md`
   keeps that finding open). Changing it costs a re-download for any client whose
   `Accept-Encoding` changes, which is a worse trade than the theoretical risk.
+
+## 2026-10-15 Playback waits for a stored file, and an unsourced room song asks the listener
+- Decision: provider streaming is removed. The player resolves a variant, starts its download, waits for the file, then assigns the stored media URL and applies the in-file seek. If a room cannot resolve a source, the shell opens Find a source with the song prefilled; selecting a result associates it, retries immediately, and the dialogue closes when the room advances.
+- Why: the provider stream added an unknown-length, unseekable second path and competed with the download. A stored file is durable and seekable. A room with no source needs a human association rather than a five-second retry loop with no explanation.
+- Reversible: no for streaming; yes for the dialogue.

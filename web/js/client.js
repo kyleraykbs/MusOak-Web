@@ -96,11 +96,10 @@ export class Client {
         signal: controller.signal,
       });
     } catch (error) {
-      // Giving up on a slow request is not the server being unreachable, and
-      // saying it was is what took the app offline mid-song: a resolve searches
-      // providers and outlasts any timeout worth having, and an app that
-      // believed it was offline stopped streaming and played only what was
-      // already on the device.
+      // Giving up on a slow request is not the server being unreachable: a
+      // resolve searches providers and outlasts any timeout worth having, and
+      // an app that read it as unreachable stopped the download mid-playback
+      // and played only what was already on the device.
       if (error?.name === "AbortError") {
         throw new ServerError(0, `${path} took longer than ${Math.round(timeout / 1000)}s`, {
           timedOut: true,
@@ -672,36 +671,13 @@ export class Client {
   /**
    * A URL an audio element or an <img> can use: same origin, routed by query.
    *
-   * `startMs` names a position to begin the bytes at. The backend answers a
-   * variant it does not hold yet with a stream of the source - audio that has
-   * no length, so there is no range to ask for and the position has to be part
-   * of the request; the provider starts there and runs to the end of the song,
-   * which is what lets a listener join a song already playing and hear the rest
-   * of it rather than its head. A file the backend does hold answers the whole
-   * file, which the element seeks within itself, so the call with no position -
-   * every other caller in the app, and the URL a kept song is cached under -
-   * is unchanged.
+   * `startMs` names a position to begin the bytes at, for a file the backend
+   * holds: the answer is the whole file either way, and the position is left for
+   * the element to seek into. The call with no position - every other caller in
+   * the app, and the URL a kept song is cached under - is what a play uses.
    */
   mediaUrl(variantId, { startMs } = {}) {
     const path = `/api/v1/media/${encodeURIComponent(variantId)}`;
-    const start = Number(startMs);
-    if (!Number.isFinite(start) || start < 0) return routed(this.server, path);
-    return routed(this.server, `${path}?start=${Math.round(start)}`);
-  }
-
-  /**
-   * The same bytes as `mediaUrl`, asked for by song instead of by rendition.
-   *
-   * Nothing in a queue knows which variant a song will be played from, so a
-   * play that asked for the variant first paid the resolve round trip before
-   * the provider was even told to start. The server answers this URL with the
-   * variant it would have resolved to, streaming and `?start=` alike, so the
-   * provider's startup runs beside that resolve instead of behind it. The
-   * answer names the rendition it chose in `X-Musoak-Variant` for the callers
-   * that go on to wait for the file (see the SDK's `trackStreamInfo`).
-   */
-  trackStreamUrl(trackId, { startMs } = {}) {
-    const path = `/api/v1/tracks/${encodeURIComponent(trackId)}/stream`;
     const start = Number(startMs);
     if (!Number.isFinite(start) || start < 0) return routed(this.server, path);
     return routed(this.server, `${path}?start=${Math.round(start)}`);

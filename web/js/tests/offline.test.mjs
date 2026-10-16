@@ -157,7 +157,6 @@ test("what a kept playlist says when the browser has let it go", () => {
 /** A client that names its backend in the query, as the real one does. */
 const keptClient = (server = HERE) => ({
   mediaUrl: (variantId) => `/api/v1/media/${variantId}?ms=${encodeURIComponent(server)}`,
-  trackStreamUrl: (trackId) => `/track-stream/${trackId}`,
 });
 
 /** As much of Cache Storage as these rules touch: what is in it, and nothing

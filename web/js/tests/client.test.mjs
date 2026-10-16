@@ -45,26 +45,17 @@ test("a backend URL keeps its routing when it is handed to an element", () => {
   // cached under: it may not gain a parameter.
   assert.equal(new URLSearchParams(media.split("?")[1]).get("start"), null);
 
-  // A position, for the stream a file that is not here yet is played from: the
-  // backend begins the bytes there and runs to the end of the song.
+  // A position is a normal byte-range hint for the whole file. The server
+  // applies it only after the rendition has been downloaded.
   const from = client.mediaUrl("variant-1", { startMs: 45000 });
   const fromQuery = new URLSearchParams(from.split("?")[1]);
   assert.equal(fromQuery.get("start"), "45000");
   assert.equal(fromQuery.get("ms"), BACKEND, "and the backend is still named");
-  // Zero is a position like any other: it is the stream at the beginning.
+  // Zero is a position like any other and remains explicit.
   assert.equal(new URLSearchParams(client.mediaUrl("variant-1", { startMs: 0 }).split("?")[1]).get("start"), "0");
 
-  // The same bytes by song: a play that has not resolved a rendition asks for
-  // them this way, and the position has to travel with it exactly as it does
-  // above.
-  const byTrack = client.trackStreamUrl("track-1");
-  assert.match(byTrack, /^\/api\/v1\/tracks\/track-1\/stream\?ms=/);
-  assert.equal(new URLSearchParams(byTrack.split("?")[1]).get("start"), null);
-  const trackFrom = client.trackStreamUrl("track-1", { startMs: 45000 });
-  const trackFromQuery = new URLSearchParams(trackFrom.split("?")[1]);
-  assert.equal(trackFromQuery.get("start"), "45000");
-  assert.equal(trackFromQuery.get("ms"), BACKEND, "and the backend is still named");
-  assert.equal(new URLSearchParams(client.trackStreamUrl("track-1", { startMs: 0 }).split("?")[1]).get("start"), "0");
+  // There is no track-level streaming URL: playback resolves a rendition first.
+  assert.equal(typeof client.trackStreamUrl, "undefined");
 
   const art = client.artworkUrl("/api/v1/artwork/abc");
   assert.equal(new URLSearchParams(art.split("?")[1]).get("ms"), BACKEND);
