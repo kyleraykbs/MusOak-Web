@@ -385,7 +385,7 @@ function refresh() {
 registerView({
   id: "import",
   title: "Import",
-  icon: "\u2913",
+  icon: "download",
   order: 95,
   hidden: true,
   render,

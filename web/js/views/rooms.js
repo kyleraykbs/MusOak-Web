@@ -407,7 +407,7 @@ registerView({
   live: true,
   id: "rooms",
   title: "Rooms",
-  icon: "\u2302",
+  icon: "home",
   order: 70,
   render,
   refresh,

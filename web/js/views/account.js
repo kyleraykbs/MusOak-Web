@@ -558,7 +558,7 @@ function fail(error) {
 registerView({
   id: "account",
   title: "Account",
-  icon: "\u2699",
+  icon: "gear",
   order: 80,
   render,
   refresh,

@@ -32,7 +32,7 @@ import {
 registerView({
   id: "queue",
   title: "Queue",
-  icon: "\u266b",
+  icon: "note",
   order: 40,
   // The page and the playbar's drawer show the same list, from the same place.
   render: (container) => renderQueue(container),

@@ -558,7 +558,7 @@ export function refresh() {
 registerView({
   id: "manage",
   title: "Manage",
-  icon: "\u21a5",
+  icon: "upload",
   order: 50,
   render,
   refresh,

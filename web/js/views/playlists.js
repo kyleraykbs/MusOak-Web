@@ -875,7 +875,7 @@ function render(container) {
 const view = {
   id: "playlists",
   title: "Playlists",
-  icon: "\u2630",
+  icon: "list",
   order: 20,
   render,
   refresh: load,

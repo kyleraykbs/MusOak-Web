@@ -507,7 +507,7 @@ function refresh() {
 const view = {
   id: "search",
   title: "Search",
-  icon: "\u2315",
+  icon: "search",
   order: 10,
   render,
   refresh,

@@ -525,7 +525,7 @@ registerView({
   live: true,
   id: "friends",
   title: "Friends",
-  icon: "\u263a",
+  icon: "people",
   order: 60,
   render,
   refresh: () => reload?.(),

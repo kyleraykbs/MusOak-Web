@@ -14,7 +14,7 @@ import { favoriteRating } from "../app.js";
 registerView({
   id: "favourites",
   title: "Favourites",
-  icon: "\u2605",
+  icon: "star",
   order: 30,
   render: renderFavourites,
   refresh: loadFavourites,
