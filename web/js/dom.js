@@ -193,6 +193,7 @@ export function dialog({ title, body, actions = [], onOpen, closeButton = false 
   const close = () => {
     document.removeEventListener("keydown", onKey);
     backdrop.remove();
+    if (!document.querySelector(".dialog-backdrop")) document.body.classList.remove("modal-open");
     if (opener?.isConnected && typeof opener.focus === "function") opener.focus();
   };
   const onKey = (event) => {
@@ -200,7 +201,7 @@ export function dialog({ title, body, actions = [], onOpen, closeButton = false 
   };
   const panel = h(
     "div",
-    { class: "dialog", role: "dialog", "aria-modal": "true", tabindex: "-1" },
+    { class: "dialog", role: "dialog", "aria-modal": "true", "aria-labelledby": title ? "dialog-title" : null, tabindex: "-1" },
     closeButton
       ? iconButton("cross", { title: "Close", class: "btn flat round dialog-close", onclick: () => close() })
       : null,
@@ -220,6 +221,7 @@ export function dialog({ title, body, actions = [], onOpen, closeButton = false 
     if (event.target === backdrop) close();
   });
   document.addEventListener("keydown", onKey);
+  document.body.classList.add("modal-open");
   document.body.appendChild(backdrop);
   panel.focus?.();
   onOpen?.(panel, close);
