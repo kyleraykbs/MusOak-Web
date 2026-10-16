@@ -527,6 +527,7 @@ img.art[data-loaded="true"] { opacity: 1; }
 .upload-search-panel { display: none; flex-direction: column; gap: 8px; }
 .search-status { color: var(--fg4); font-size: 12.5px; min-height: 16px; }
 .upload-search-results { min-height: 48px; }
+.upload-picker-panel { display: flex; }
 
 .art {
   width: 48px;

@@ -794,8 +794,8 @@ export function openTrackPicker({ title = "Associate with a song" } = {}) {
     };
 
     const query = h("input", { class: "input", type: "search", placeholder: "Search for the song this is" });
-    const status = h("div", { style: { color: "var(--fg4)", fontSize: "12.5px" } });
-    const results = h("div", { class: "list" });
+    const status = h("div", { class: "search-status" });
+    const results = h("div", { class: "list upload-search-results" });
     let generation = 0;
 
     const runSearch = async () => {
@@ -804,6 +804,7 @@ export function openTrackPicker({ title = "Associate with a song" } = {}) {
       generation += 1;
       const mine = generation;
       status.textContent = "Searching…";
+      mount(results, loadingState("Searching…"));
       try {
         const { groups } = await client.search(text, 10);
         if (mine !== generation) return;
@@ -823,7 +824,7 @@ export function openTrackPicker({ title = "Associate with a song" } = {}) {
 
     const handle = dialog({
       title,
-      body: h("div", { style: { display: "flex", flexDirection: "column", gap: "8px" } }, query, status, results),
+      body: h("div", { class: "upload-search-panel upload-picker-panel" }, query, status, results),
       actions: [{ label: "Cancel", class: "flat", onClick: () => finish(null) }],
       onOpen: (panel, close) => {
         closeDialog = close;
