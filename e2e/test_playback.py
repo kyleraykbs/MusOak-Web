@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from urllib.parse import quote
 
@@ -69,7 +70,13 @@ def play_search(ui, title):
 
 def wait_file_sounding(ui, title, timeout=FIRST_SOUND_BUDGET):
     state = wait_sounding(ui, title, SONG_SECONDS, timeout=timeout)
-    assert "start=" not in (state.get("src") or ""), f"audio was handed a ranged/stream URL: {state!r}"
+    # The element is handed the page's own copy of the file and nothing else:
+    # the download every row of the queue shows is what plays, so a routed or
+    # ranged URL here would be a second transfer of the same song.
+    assert str(state.get("src") or "").startswith("blob:"), (
+        f"the element is not playing the page's own copy: {state!r}"
+    )
+    assert "start=" not in (state.get("src") or "")
     return state
 
 
@@ -98,7 +105,12 @@ def test_a_search_song_downloads_before_the_audio_element_plays(ui, backend, sig
     )
     wait_for_file(backend, signed_in.token, variant["id"])
     state = wait_file_sounding(ui, title)
-    assert f"/api/v1/media/{variant['id']}" in state["src"]
+    # One download: the file came from the backend once, and the element is
+    # running the copy of it this page holds.
+    assert ui.requests_matching(re.escape(f"/api/v1/media/{variant['id']}")), (
+        "the backend's file was never fetched"
+    )
+    assert str(state["src"]).startswith("blob:")
     ui.assert_no_errors("download-first playback")
 
 
@@ -113,8 +125,7 @@ def test_a_downloaded_song_replays_from_one_whole_file(ui, backend, signed_in):
 
     ui.click_tab("Search")
     ui.click_xpath(row_xpath(title), f"the already-downloaded {title!r} result")
-    state = wait_file_sounding(ui, title)
-    assert "start=" not in state["src"]
+    wait_file_sounding(ui, title)
     ui.assert_no_errors("replaying a downloaded song")
 
 
@@ -136,8 +147,7 @@ def test_a_restored_song_seeks_inside_the_downloaded_file(ui, backend, signed_in
     ui.reload()
     ui.wait(lambda: ui.now_playing() == title or None, f"{title!r} was not restored", timeout=30)
     ui.click(".player-bar button.play")
-    state = wait_file_sounding(ui, title)
-    assert "start=" not in state["src"]
+    wait_file_sounding(ui, title)
     assert_position(ui, POSITION_MS, "restored file")
     ui.assert_no_errors("restoring a downloaded song")
 
@@ -173,5 +183,4 @@ def test_a_guest_joining_a_downloaded_song_starts_at_the_room_position(host, gue
     room_ms = current["positionMs"] + (room["serverNowMs"] - current["atMs"])
     wait_file_sounding(guest, title, timeout=ROOM_FIRST_SOUND_BUDGET)
     assert_position(guest, room_ms, "guest joining downloaded room song")
-    assert "start=" not in (guest.player().get("src") or "")
     guest.assert_no_errors("guest joining a downloaded room song")

@@ -22,6 +22,22 @@ backend's own three are in the other repo's TODO.
 - [x] `internal/web/server.go`: a compressible asset is packed once per
       revision and served with its length.
 
+## The download pipeline, centralized (2026-10-16)
+
+One download per song, and its row in the queue is where it shows (see
+DECISIONS.md, same date). Left open by it:
+
+- [ ] `web/js/player.js`: `readMedia` has no fraction when the media response
+      states no `Content-Length`, so that song's mark sweeps for the whole
+      transfer. Everything this backend serves carries a length today.
+- [ ] `web/js/player.js`: the mark's fill restarts at the server-stage →
+      transfer boundary (`offlineProgress` reports one count at a time). A
+      blended count would need the two stages' totals to be comparable, which
+      they are not in general (the provider's source and the stored file differ).
+- [ ] `web/js/player.js`: `_awaitCopy` bounds its wait at `READY_TIMEOUT_MS`
+      (60 s) and reports a failure; the fetch it was waiting on keeps running
+      and is dropped by the entry identity check when the retry replaces it.
+
 ## Medium and low findings, not yet done
 
 - [ ] `web/js/app.js`: the current view is refetched every 30 s whether the

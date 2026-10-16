@@ -21,6 +21,7 @@ pick plays the song, and the question comes down when the room moves on.
 
 from __future__ import annotations
 
+import re
 from urllib.parse import quote
 
 import pytest
@@ -97,8 +98,11 @@ def test_a_song_with_no_source_is_asked_about_and_the_answer_plays_it(
         "the song the source was attached to never played",
         timeout=60.0,
     )
-    assert "/api/v1/media/" in state["src"], (
-        f"the element is not running a stored rendition of the answer: {state['src']!r}"
+    assert str(state["src"]).startswith("blob:"), (
+        f"the element is not running the page's own copy of the rendition: {state['src']!r}"
+    )
+    assert host.requests_matching(re.escape("/api/v1/media/")), (
+        "the backend's file was never fetched for it"
     )
     room = api_room(backend, scene.room_id, scene.host_member.token)
     assert current_item(room)["trackId"] == ghost["id"], (

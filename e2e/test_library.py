@@ -11,8 +11,8 @@ Two things this file measures rather than assumes:
 
 * how long a press of Next takes to make a sound. The app warms the songs ahead
   of the playhead (and keeps the first few on this device), so the next song is
-  a hand-over, not a download - the user's "songs take a while to load" is that
-  hand-over failing, and the number is printed and bounded;
+  already in memory, not a download - the user's "songs take a while to load" is
+  that warm failing, and the number is printed and bounded;
 * how many media requests a second play of the same song costs. A repeated load
   that clears the element's source is a reload storm, and the count is the
   evidence.
@@ -315,7 +315,7 @@ def test_next_starts_the_warmed_song_and_the_wait_is_measured(ui, backend, media
     queue_from_manage(ui, titles[1])
     queue_from_manage(ui, titles[2])
     # The warm-ahead is a burst of its own: let it settle, so what is measured
-    # is the hand-over to a song that is already here.
+    # is the advance to a song that is already here.
     ui.wait_quiet(quiet_for=0.4, timeout=10)
 
     variant_b = uploads[1]["variantId"]
@@ -341,7 +341,7 @@ def test_next_starts_the_warmed_song_and_the_wait_is_measured(ui, backend, media
     assert_clock_moves(ui, "the next song")
     assert elapsed < 5.0, (
         f"pressing Next took {elapsed:.2f}s to make sound, and every song here is a local "
-        f"file the app was told to warm ahead; a hand-over this slow is a load that waited"
+        f"file the app was told to warm ahead; an advance this slow is a load that waited"
     )
     ui.assert_no_errors("advancing to the next song")
 

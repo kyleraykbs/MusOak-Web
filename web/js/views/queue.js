@@ -330,6 +330,11 @@ export function renderQueue(container, { compact = false } = {}) {
     player.on("queue-changed", repaint);
     player.on("track-changed", repaint);
     player.on("offline-changed", repaint);
+    // A download's own count moves many times per song, and rebuilding every row
+    // of every sheet for each of those is work no one sees: the marks already in
+    // the page are filled where they stand instead. A mark that arrives, or a
+    // song's state that changes, is the `offline-changed` repaint above.
+    player.on("download-progress", fillMarks);
     // Whether the server is there decides what the line above the list says.
     on("online-changed", repaint);
     subscribe(repaint);
@@ -338,6 +343,19 @@ export function renderQueue(container, { compact = false } = {}) {
 }
 
 const repaint = scheduleFrame(() => paint());
+
+/** Fill the download marks already on screen, in place.
+ *
+ *  Each is one custom property on one node: no rows are rebuilt, no artwork is
+ *  re-asked for, and a queue of fifty songs costs the same as a queue of one. */
+function fillMarks() {
+  for (const entry of sheets) {
+    if (hiddenSheet(entry.sheet)) continue;
+    for (const mark of entry.sheet.querySelectorAll?.(".held.pending .dl") || []) {
+      setDownloadFill(mark, player.offlineProgress?.(mark.closest(".held")?.dataset.track || ""));
+    }
+  }
+}
 
 /** Redraw every sheet still in the page. One that a later render replaced is
  *  dropped, which is what keeps a repaint out of a view that is not this one.
@@ -592,26 +610,61 @@ export function titleClass(roomOrder, own) {
 }
 
 /**
- * What this device holds of a song, as the mark both queues put on a row: a
- * cloud when the copy is here, a download while it is on its way, and nothing
- * at all when there is nothing to say.
+ * What this device holds of a song, as the mark both queues put on a row: the
+ * green diamond when the copy is here, the download arrow while it is on its
+ * way - filled with yellow from the bottom up as the bytes arrive, and sweeping
+ * when nobody can count them - and nothing at all when there is nothing to say.
  *
  * Shared, because the room page's own queue says the same thing as the player's
- * queue, and two lists deciding it separately is how they come to disagree.
+ * queue, and two lists deciding it separately is how they come to disagree. The
+ * song being played is one of these rows too: its copy is what plays, so the
+ * mark that is filling is the mark on the row of the song somebody is waiting
+ * to hear, and it becomes the diamond when the sound begins.
  */
 export function heldBadge(trackId) {
-  const held = player.offlineState?.(String(trackId || "")) || "none";
+  const id = String(trackId || "");
+  const held = player.offlineState?.(id) || "none";
   if (held !== "ready" && held !== "pending") return null;
   const kept = held === "ready";
   return h(
     "span",
     {
       class: `held ${held}`,
+      dataset: { track: id },
       title: kept ? "In memory, on device" : "Downloading to this device",
       "aria-label": kept ? "in memory, on device" : "downloading to this device",
     },
-    icon(kept ? "cloud" : "download", 14)
+    kept ? icon("diamond", 14) : downloadMark(player.offlineProgress?.(id))
   );
+}
+
+/**
+ * The download arrow, with the ink that fills it: two of the one glyph, the
+ * second clipped to how far the download has got, so the mark fills the way a
+ * bar fills without being a second thing to read. `null` is "nobody can count
+ * this", which sweeps rather than pretending to a fraction.
+ */
+function downloadMark(fraction = null) {
+  const mark = h("span", { class: "dl" }, icon("download", 14), h("span", { class: "ink" }, icon("download", 14)));
+  setDownloadFill(mark, fraction);
+  return mark;
+}
+
+/** How full that mark is, in place: one style write per progress report. */
+function setDownloadFill(mark, fraction) {
+  if (!mark) return;
+  // `null` is "nobody can count this", which is not the same as zero: Number()
+  // would read it as one, and a download pinned at nothing looks like one that
+  // is not happening at all.
+  const value = fraction === null || fraction === undefined ? NaN : Number(fraction);
+  if (!Number.isFinite(value)) {
+    mark.classList.add("unknown");
+    mark.style.removeProperty("--fill");
+    return;
+  }
+  mark.classList.remove("unknown");
+  const share = Math.min(1, Math.max(0, value));
+  mark.style.setProperty("--fill", `${Math.round(share * 100)}%`);
 }
 
 /**

@@ -96,9 +96,10 @@ Rules the suite keeps, and a new test should keep:
 ## The `e2e` build tag
 
 `internal/provider/extras_e2e.go`: a fake provider whose download fetches nothing,
-takes a few seconds and reports its own bytes, so the tests can watch a loading bar
-move rather than assert that a fake status struct holds the right number. Playback
-tests wait for the complete file before the audio element receives its URL; the
+takes a few seconds and reports its own bytes, so the tests can watch the queue's
+mark on a song's row fill rather than assert that a fake status struct holds the
+right number. Playback starts when this page's own copy is in memory: the element
+is handed that copy and nothing else, so nothing is streamed beside it. The
 released binary has none of this (`provider.Extras()` is empty without the tag),
 and the run prints the tag it built with.
 

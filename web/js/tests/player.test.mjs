@@ -404,7 +404,7 @@ test("the room's clock is the playbar's clock for whoever is playing here", asyn
 // --- songs kept in memory for offline play ---------------------------------
 
 /** Lets the player's fetches settle: they are promises, not timers. */
-async function settle(times = 8) {
+async function settle(times = 12) {
   for (let i = 0; i < times; i += 1) await Promise.resolve();
 }
 
@@ -555,7 +555,7 @@ test("a room that reorders its queue reorders what this page fetches", async () 
     player._offline = new Map();
     player._offlineOrder = [];
     player._offlineWanted = [];
-    player._offlineInFlight = new Set();
+    player._offlineInFlight = new Map();
     player._offlineActive = 0;
     player._offlineBytes = 0;
     player._variantFor = async (entry) => ({ variantId: `v-${entry.id}` });
@@ -1147,7 +1147,7 @@ test("a file that will not arrive is tried from another source, then the queue m
     index: player._index,
     sources: player._sources,
     variant: player._variant,
-    ready: player._ready,
+    warm: player._warm,
     variantFor: player._variantFor,
     resolveFixed: player._resolveFixed,
     client: player._client,
@@ -1157,6 +1157,13 @@ test("a file that will not arrive is tried from another source, then the queue m
     room: player._room,
     retriedFor: player._retriedFor,
     failedVariant: player._failedVariant,
+    offline: player._offline,
+    offlineOrder: player._offlineOrder,
+    offlineWanted: player._offlineWanted,
+    offlineInFlight: player._offlineInFlight,
+    offlineActive: player._offlineActive,
+    offlineBytes: player._offlineBytes,
+    fetch: globalThis.fetch,
   };
   const asked = [];
   const audio = {
@@ -1196,12 +1203,15 @@ test("a file that will not arrive is tried from another source, then the queue m
     player.online = () => true;
     player._report = (error) => asked.push(`report:${error.message}`);
     player._reportListen = () => {};
-    // The song that is not the point of the test lands, so the queue moving on
-    // can be seen to work; every attempt at the broken one fails.
-    player._ready = async (variantId) =>
-      String(variantId) === "v-b"
-        ? { state: "ready", path: "/media/v-b" }
-        : { state: "failed", error: "that file could not be downloaded" };
+    player._offline = new Map();
+    player._offlineOrder = [];
+    player._offlineWanted = [];
+    player._offlineInFlight = new Map();
+    player._offlineActive = 0;
+    player._offlineBytes = 0;
+    // Every attempt at the broken song fails; the song behind it arrives.
+    player._warm = async (variantId) => String(variantId) !== "v-a";
+    globalThis.fetch = async () => ({ ok: true, blob: async () => ({ size: 1 }) });
     player._variantFor = async (entry) => resolution(String(entry.id) === "a" ? "v-a" : "v-b");
     player._resolveFixed = async (entry, variantId) => {
       asked.push(`fixed:${variantId}`);
@@ -1210,33 +1220,12 @@ test("a file that will not arrive is tried from another source, then the queue m
     player._client = () => ({
       mediaUrl: (variantId) => `/media/${variantId}`,
       startDownload: async () => ({}),
-      // The fetch path names a rendition, and the retry names the other source,
-      // so a failed attempt shows up as the variant it asked for.
-      rendition: async (trackId) => {
-        asked.push(`rendition:${trackId}`);
-        throw new Error("the provider said no");
-      },
-      rendition_for_variant: async (variantId) => {
-        asked.push(`for_variant:${variantId}`);
-        return { trackId: "a", variantId, path: `/tmp/${variantId}.opus`, durationMs: 1000 };
-      },
-      variants: async () => [
-        { id: "v-a", variantId: "v-a", provider: "one", downloadable: true },
-        { id: "v-a2", variantId: "v-a2", provider: "two", downloadable: true },
-      ],
-      pick_variant: (list) => list[0],
-      sources: async () => ({
-        sources: [
-          { variantId: "v-a", downloadable: true },
-          { variantId: "v-a2", downloadable: true },
-        ],
-        preferredVariantId: "",
-      }),
+      sources: async () => ({ sources: resolution("v-a").sources, preferredVariantId: "" }),
     });
 
     // The file the element was given could not be fetched. The retry starts at
     // once, and the red line it leaves is what the next song must not inherit.
-    await player._waitForFile({ variantId: "v-a", token: player._token, autoplay: false });
+    await player._awaitCopy({ variantId: "v-a", token: player._token, autoplay: false });
     assert.equal(player._retriedFor, "a", "the failed song is the one being retried");
     await tick(50);
     // The retry ran (the song is the one being retried) and, with every fetch in
@@ -1244,7 +1233,7 @@ test("a file that will not arrive is tried from another source, then the queue m
     assert.ok(player._retriedFor, "a retry was attempted before anything was skipped");
 
     // And when that one fails too, the queue moves on rather than stopping.
-    await player._waitForFile({ variantId: "v-a2", token: player._token, autoplay: false });
+    await player._awaitCopy({ variantId: "v-a2", token: player._token, autoplay: false });
     await tick(50);
     // Where it lands is the queue's business (this stub fails every fetch, so
     // every song in it is retried and then left); what this test is about is
@@ -1257,7 +1246,7 @@ test("a file that will not arrive is tried from another source, then the queue m
     player._index = saved.index;
     player._sources = saved.sources;
     player._variant = saved.variant;
-    player._ready = saved.ready;
+    player._warm = saved.warm;
     player._variantFor = saved.variantFor;
     player._resolveFixed = saved.resolveFixed;
     player._client = saved.client;
@@ -1267,6 +1256,13 @@ test("a file that will not arrive is tried from another source, then the queue m
     player.setRoom(saved.room);
     player._retriedFor = saved.retriedFor;
     player._failedVariant = saved.failedVariant;
+    player._offline = saved.offline;
+    player._offlineOrder = saved.offlineOrder;
+    player._offlineWanted = saved.offlineWanted;
+    player._offlineInFlight = saved.offlineInFlight;
+    player._offlineActive = saved.offlineActive;
+    player._offlineBytes = saved.offlineBytes;
+    globalThis.fetch = saved.fetch;
     clearInterval(player._resumeTimer);
     player._resumeTimer = null;
     clearTimeout(player._saveTimer);
@@ -1288,6 +1284,14 @@ test("a resolution that failed is asked again before anything is skipped", async
     report: player._report,
     room: player._room,
     retriedFor: player._retriedFor,
+    failedVariant: player._failedVariant,
+    offline: player._offline,
+    offlineOrder: player._offlineOrder,
+    offlineWanted: player._offlineWanted,
+    offlineInFlight: player._offlineInFlight,
+    offlineActive: player._offlineActive,
+    offlineBytes: player._offlineBytes,
+    fetch: globalThis.fetch,
   };
   const asked = [];
   const audio = {
@@ -1312,8 +1316,15 @@ test("a resolution that failed is asked again before anything is skipped", async
     player._index = 0;
     player.online = () => true;
     player._report = (error) => asked.push(`report:${error.message}`);
+    player._offline = new Map();
+    player._offlineOrder = [];
+    player._offlineWanted = [];
+    player._offlineInFlight = new Map();
+    player._offlineActive = 0;
+    player._offlineBytes = 0;
+    player._failedVariant = "";
     player._warm = async () => true;
-    player._ready = async () => true;
+    globalThis.fetch = async () => ({ ok: true, blob: async () => new Blob([new Uint8Array(16)]) });
     player._variantFor = async (entry) => {
       asked.push(`resolve:${entry.id}`);
       if (asked.filter((each) => each === `resolve:${entry.id}`).length === 1) {
@@ -1323,6 +1334,7 @@ test("a resolution that failed is asked again before anything is skipped", async
     };
     player._client = () => ({
       mediaUrl: (variantId) => `/media/${variantId}`,
+      startDownload: async () => ({}),
       sources: async () => ({ sources: [] }),
     });
 
@@ -1345,6 +1357,14 @@ test("a resolution that failed is asked again before anything is skipped", async
     player._report = saved.report;
     player.setRoom(saved.room);
     player._retriedFor = saved.retriedFor;
+    player._failedVariant = saved.failedVariant;
+    player._offline = saved.offline;
+    player._offlineOrder = saved.offlineOrder;
+    player._offlineWanted = saved.offlineWanted;
+    player._offlineInFlight = saved.offlineInFlight;
+    player._offlineActive = saved.offlineActive;
+    player._offlineBytes = saved.offlineBytes;
+    globalThis.fetch = saved.fetch;
     clearInterval(player._resumeTimer);
     player._resumeTimer = null;
     clearTimeout(player._saveTimer);
@@ -1389,7 +1409,7 @@ test("what is still to be downloaded follows a shuffle", async () => {
     player._offlineBytes = 0;
     player._offlineOrder = [];
     player._offlineWanted = [];
-    player._offlineInFlight = new Set();
+    player._offlineInFlight = new Map();
     player._offlineActive = 0;
     player._offlineAbort = new Map();
     player.warm = () => {};
@@ -1404,28 +1424,27 @@ test("what is still to be downloaded follows a shuffle", async () => {
       });
 
     player._prefetch();
-    assert.deepEqual(asked, ["b", "c"], "the eager window is fetched first");
+    assert.deepEqual(asked, ["a", "b"], "the eager window is fetched first, from the song playing");
+    release.get("a")();
     release.get("b")();
-    release.get("c")();
     await tick(0);
+    release.get("c")();
     release.get("d")();
+    await tick(0);
     release.get("e")();
     await tick(0);
+    assert.deepEqual(asked, ["a", "b", "c", "d", "e", "f"], "through the eager five and the first of the tail");
     release.get("f")();
     await tick(0);
-    assert.deepEqual(asked, ["b", "c", "d", "e", "f", "g"], "through the eager five and the first of the tail");
-    release.get("g")();
-    await tick(0);
 
-    // The queue is shuffled: different songs are now the ones still cold. The
-    // song on the element is not one of the copies (see `_prefetch`), so it is
-    // not one of the songs that has to be fetched either.
+    // The queue is shuffled: different songs are the ones still cold now, and
+    // what the pump starts next has to be the queue's new order. The playing
+    // song is one of the copies like any other, so it is in that order too.
     const beforeShuffle = asked.length;
     player.shuffleQueue();
-    const playing = String(player.current()?.id || "");
-    const order = player.queue.map((entry) => entry.id).filter((id) => id !== playing);
+    const order = player.queue.map((entry) => entry.id);
     const cold = (id) => player._offline.get(id)?.state !== "ready";
-    const remaining = order.filter((id) => player._offline.get(id)?.state !== "ready");
+    const remaining = order.filter(cold);
     assert.ok(remaining.length >= 2, "there is still something to download");
 
     // The tail is paced, so the pump is driven past each gap until the songs
@@ -1439,7 +1458,7 @@ test("what is still to be downloaded follows a shuffle", async () => {
       player._tailTimer = 0;
       player._tailAt = 0;
       player._pumpOffline();
-      for (const id of [...player._offlineInFlight]) release.get(id)?.();
+      for (const id of [...player._offlineInFlight.keys()]) release.get(id)?.();
       await tick(0);
     }
     assert.deepEqual(
@@ -1504,7 +1523,7 @@ test("a fetch still in the window keeps its slot when the order moves", async ()
     player._offlineBytes = 0;
     player._offlineOrder = [];
     player._offlineWanted = ["a", "b", "c", "d"];
-    player._offlineInFlight = new Set();
+    player._offlineInFlight = new Map();
     player._offlineActive = 0;
     player._offlineAbort = new Map();
     // Each fetch holds until it is released; letting it go leaves it pending.
@@ -1606,7 +1625,7 @@ test("the eager window is chased and the rest is fetched slowly", async () => {
     player._offlineBytes = 0;
     player._offlineOrder = [];
     player._offlineWanted = [];
-    player._offlineInFlight = new Set();
+    player._offlineInFlight = new Map();
     player._offlineActive = 0;
     player._offlineAbort = new Map();
     player._tailAt = 0;
@@ -1638,33 +1657,33 @@ test("the eager window is chased and the rest is fetched slowly", async () => {
       });
 
     player._prefetch();
-    assert.deepEqual(asked, ["b", "c"], "the eager window is chased, two at a time");
+    assert.deepEqual(asked, ["a", "b"], "the eager window is chased, two at a time");
 
+    release.get("a")();
     release.get("b")();
-    release.get("c")();
     await tick(0);
-    assert.deepEqual(asked, ["b", "c", "d", "e"], "and the next eager songs take the slots");
+    assert.deepEqual(asked, ["a", "b", "c", "d"], "and the next eager songs take the slots");
 
+    release.get("c")();
     release.get("d")();
-    release.get("e")();
     await tick(0);
-    assert.deepEqual(asked, ["b", "c", "d", "e", "f"], "and then the last of the five");
+    assert.deepEqual(asked, ["a", "b", "c", "d", "e"], "and then the last of the five");
 
     // The eager window is done; the tail starts, but nothing follows it yet.
+    release.get("e")();
+    await tick(0);
+    assert.deepEqual(asked, ["a", "b", "c", "d", "e", "f"], "the tail starts once the eager window is fetched");
+
     release.get("f")();
     await tick(0);
-    assert.deepEqual(asked, ["b", "c", "d", "e", "f", "g"], "the tail starts once the eager window is fetched");
-
-    release.get("g")();
-    await tick(0);
-    assert.deepEqual(asked, ["b", "c", "d", "e", "f", "g"], "but the next tail song waits for the gap");
+    assert.deepEqual(asked, ["a", "b", "c", "d", "e", "f"], "but the next tail song waits for the gap");
     assert.equal(timers.length, 1, "a wake-up was left for it");
     assert.equal(timers[0].ms, OFFLINE_TAIL_GAP_MS, "for the whole gap, nothing having elapsed");
 
     // Only after the gap does the next one start - one, not two.
     now += OFFLINE_TAIL_GAP_MS;
     timers.shift().fn();
-    assert.deepEqual(asked, ["b", "c", "d", "e", "f", "g", "h"], "and then exactly one more");
+    assert.deepEqual(asked, ["a", "b", "c", "d", "e", "f", "g"], "and then exactly one more");
   } finally {
     player.queue = saved.queue;
     player._index = saved.index;
@@ -1715,7 +1734,7 @@ test("the play path pre-empts the tail", () => {
     player._offline.set("f", { state: "pending", variantId: "", url: "", bytes: 0, at: 0 });
     player._offline.set("g", { state: "pending", variantId: "", url: "", bytes: 0, at: 0 });
     player._offlineBytes = 0;
-    player._offlineInFlight = new Set();
+    player._offlineInFlight = new Map();
     player._offlineActive = 0;
     player._offlineAbort = new Map();
     player._fetchOffline = (id) => {
@@ -1838,6 +1857,14 @@ test("a room's song is fetched without waiting for its sources", async () => {
     room: player._room,
     started: player._started,
     status: player._status,
+    offline: player._offline,
+    offlineOrder: player._offlineOrder,
+    offlineWanted: player._offlineWanted,
+    offlineInFlight: player._offlineInFlight,
+    offlineActive: player._offlineActive,
+    offlineBytes: player._offlineBytes,
+    warm: player._warm,
+    fetch: globalThis.fetch,
   };
   const audio = {
     src: "",
@@ -1861,8 +1888,16 @@ test("a room's song is fetched without waiting for its sources", async () => {
     player._loading = true;
     player._started = new Set();
     player._status = new Map();
-    // The file is what plays, so the wait has to answer for this to get that far.
-    player._ready = async () => true;
+    player._offline = new Map();
+    player._offlineOrder = [];
+    player._offlineWanted = [];
+    player._offlineInFlight = new Map();
+    player._offlineActive = 0;
+    player._offlineBytes = 0;
+    // Nothing about the file waits on the sources: the backend has the file, it
+    // is fetched, and the sources are only there to name it in the bar.
+    player._warm = async () => true;
+    globalThis.fetch = async () => ({ ok: true, blob: async () => new Blob([new Uint8Array(16)]) });
     player._client = () => ({
       mediaUrl: (variantId) => `/media/${variantId}`,
       startDownload: async () => ({}),
@@ -1874,9 +1909,12 @@ test("a room's song is fetched without waiting for its sources", async () => {
     });
 
     await player._load(0, { autoplay: false, variantId: "v-room" });
+    await settle();
 
     assert.equal(sourcesAsked, true, "the sources are asked for, for the bar's pill");
     assert.equal(player._variant, "v-room", "and the rendition the room named is the one being fetched");
+    assert.equal(player.readyState(), "ready", "the room's file is here, sources or no sources");
+    assert.equal(String(audio.src).startsWith("blob:"), true, `the element holds the copy of it: ${audio.src}`);
   } finally {
     player.audio = saved.audio;
     player.ensureAudio = saved.ensureAudio;
@@ -1889,8 +1927,14 @@ test("a room's song is fetched without waiting for its sources", async () => {
     player.setRoom(saved.room);
     player._started = saved.started;
     player._status = saved.status;
-    player._variants = saved.variants;
-    player.online = saved.online;
+    player._offline = saved.offline;
+    player._offlineOrder = saved.offlineOrder;
+    player._offlineWanted = saved.offlineWanted;
+    player._offlineInFlight = saved.offlineInFlight;
+    player._offlineActive = saved.offlineActive;
+    player._offlineBytes = saved.offlineBytes;
+    player._warm = saved.warm;
+    globalThis.fetch = saved.fetch;
   }
 });
 
@@ -1916,8 +1960,13 @@ test("a room that asks for one item again does not restart its load", async () =
     pendingSeek: player._pendingSeek,
     playingWanted: player._playingWanted,
     offline: player._offline,
+    offlineWanted: player._offlineWanted,
+    offlineOrder: player._offlineOrder,
+    offlineInFlight: player._offlineInFlight,
+    offlineActive: player._offlineActive,
+    offlineBytes: player._offlineBytes,
     resolveFixed: player._resolveFixed,
-    ready: player._ready,
+    startOffline: player._startOffline,
     startDownload: player._startDownload,
     prefetch: player._prefetch,
     resume: player._resumeWanted,
@@ -1928,7 +1977,7 @@ test("a room that asks for one item again does not restart its load", async () =
   let clears = 0;
   let finish = null;
   const starts = [];
-  const polls = [];
+  const fetches = [];
   const audio = {
     src: "/media/v-old",
     currentTime: 0,
@@ -1972,15 +2021,31 @@ test("a room that asks for one item again does not restart its load", async () =
     player._pendingSeek = null;
     player._playingWanted = false;
     player._offline = new Map();
+    player._offlineWanted = [];
+    player._offlineOrder = [];
+    player._offlineInFlight = new Map();
+    player._offlineActive = 0;
+    player._offlineBytes = 0;
     player._resolveFixed = () => ({ sources: [], preferredVariantId: "", variantId: "v-a", source: null });
     player._startDownload = (variantId) => {
       starts.push(variantId);
     };
     player._prefetch = () => {};
-    player._ready = (variantId) => {
-      polls.push(variantId);
+    // The song's own download, held open until this test releases it: what the
+    // room's second ask must not do is start another one.
+    player._startOffline = (trackId) => {
+      fetches.push(trackId);
       return new Promise((resolve) => {
-        finish = resolve;
+        finish = () => {
+          const entry = player._offline.get(trackId);
+          if (entry) {
+            entry.state = "ready";
+            entry.variantId = "v-a";
+            entry.url = "blob:copy";
+            entry.bytes = 1;
+          }
+          resolve(entry);
+        };
       });
     };
     player._client = () => ({ mediaUrl: (variantId) => `/media/${variantId}` });
@@ -1993,16 +2058,16 @@ test("a room that asks for one item again does not restart its load", async () =
     player.playVariant(item, "v-a", { positionMs: 4000 });
     await tick(0);
 
-    assert.deepEqual(starts, [], "the stubbed ready path owns the backend request")
-    assert.deepEqual(polls, ["v-a"], "the wait for the file was started once");
+    assert.deepEqual(starts, ["v-a"], "the backend was asked for the file once");
+    assert.deepEqual(fetches, ["a"], "and the song's own download was started once");
     assert.equal(clears, 1, "the element was not stopped and cleared again");
     assert.equal(player._pendingSeek, 4000, "the position taken is the room's, the later one");
 
     // The one load carries on: it still reaches a playable element.
-    finish({ state: "ready" });
+    finish();
     await tick(0);
     assert.equal(player._loading, false, "the load finishes");
-    assert.equal(audio.src, "/media/v-a", "and the element is given the file");
+    assert.equal(audio.src, "blob:copy", "and the element is given the copy of the file");
     audio.fire("loadedmetadata");
     assert.equal(audio.paused, false, "and it plays");
   } finally {
@@ -2017,8 +2082,13 @@ test("a room that asks for one item again does not restart its load", async () =
     player._pendingSeek = saved.pendingSeek;
     player._playingWanted = saved.playingWanted;
     player._offline = saved.offline;
+    player._offlineWanted = saved.offlineWanted;
+    player._offlineOrder = saved.offlineOrder;
+    player._offlineInFlight = saved.offlineInFlight;
+    player._offlineActive = saved.offlineActive;
+    player._offlineBytes = saved.offlineBytes;
     player._resolveFixed = saved.resolveFixed;
-    player._ready = saved.ready;
+    player._startOffline = saved.startOffline;
     player._startDownload = saved.startDownload;
     player._prefetch = saved.prefetch;
     player._client = saved.client;
@@ -2026,6 +2096,83 @@ test("a room that asks for one item again does not restart its load", async () =
     clearInterval(player._resumeTimer);
     player._resumeTimer = saved.resumeTimer;
     player.setRoom(saved.room);
+  }
+});
+
+// The song's own copy is what plays, and a load that finds it already on the
+// element must not assign it again: setting the same source restarts the element
+// at zero, which is the position a restore came back to thrown away. The restore
+// path really does load twice (the boot and the session both pick the queue up),
+// so this is the shape it takes.
+test("a load of the song already on the element keeps its copy and its place", () => {
+  const saved = {
+    audio: player.audio,
+    ensureAudio: player.ensureAudio,
+    queue: player.queue,
+    index: player._index,
+    loading: player._loading,
+    pendingSeek: player._pendingSeek,
+    playingWanted: player._playingWanted,
+    offline: player._offline,
+    saveTimer: player._saveTimer,
+  };
+  const audio = {
+    currentTime: 12,
+    duration: 30,
+    paused: true,
+    readyState: 4,
+    removeAttribute() {
+      this.src = "";
+    },
+    load() {
+      this.loads = (this.loads || 0) + 1;
+    },
+    pause() {
+      this.paused = true;
+    },
+    play() {
+      this.paused = false;
+      return { catch() {} };
+    },
+  };
+  // A source change is what the element restarts on: its clock goes back to zero
+  // and the position it was at is gone. Modelled, because that is the whole of
+  // what this test is about.
+  let src = "blob:copy";
+  Object.defineProperty(audio, "src", {
+    get: () => src,
+    set(value) {
+      src = value;
+      audio.currentTime = 0;
+    },
+  });
+  try {
+    player.audio = audio;
+    player.ensureAudio = () => audio;
+    player.queue = [track("a")];
+    player._index = 0;
+    player._loading = true;
+    player._playingWanted = false;
+    player._pendingSeek = 12_000;
+    player._offline = new Map([["a", { state: "ready", variantId: "v-a", url: "blob:copy", bytes: 1, at: 0 }]]);
+
+    player._handCopyToElement(player._offline.get("a"), { variantId: "v-a", token: player._token, autoplay: false });
+
+    assert.equal(audio.src, "blob:copy", "the copy already on the element was not assigned again");
+    assert.equal(audio.loads, undefined, "nothing was reloaded");
+    assert.equal(audio.currentTime, 12, "and the position the load asked for is where the element is");
+    assert.equal(player._pendingSeek, null, "which is where it should be, so it is not applied twice");
+  } finally {
+    player.audio = saved.audio;
+    player.ensureAudio = saved.ensureAudio;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._loading = saved.loading;
+    player._pendingSeek = saved.pendingSeek;
+    player._playingWanted = saved.playingWanted;
+    player._offline = saved.offline;
+    clearTimeout(player._saveTimer);
+    player._saveTimer = saved.saveTimer;
   }
 });
 
@@ -2166,11 +2313,14 @@ test("the same rendition is warmed once while its fetch is running", async () =>
 
 // --- how the download is drawn ---------------------------------------------
 //
-// The rest of this file is a function of its arguments, but the bar is DOM. So
-// these few tests stand a document up that is only as much as building and
-// drawing the bar touches, and take it away again. What they hold to: the fill
-// is the server's own fraction, -1 is a sweep rather than a made-up number, the
-// text names the stage, and a stage change starts its count over.
+// A download is drawn in one place: the queue's mark on the song's own row, and
+// the count it fills by is the song's entry in the player. So these tests hold
+// to the count itself - the server's own fraction while the backend fetches,
+// this page's transfer of the file afterwards, a stage that starts its count
+// over, and -1 as "nobody can count this" rather than a made-up zero - and to
+// the bar having no download of its own to draw at all. The mark's own drawing
+// is the view's business (`views.test.mjs`); this is where the number it draws
+// is decided.
 
 function fakeStyle() {
   const style = {};
@@ -2257,75 +2407,96 @@ function barShowing(status) {
   player._variant = "v-a";
   player._error = "";
   player._buffering = false;
-  player._progress = -1;
-  player._stage = "";
   player._status = status ? new Map([["v-a", status]]) : new Map();
-  player._setProgress(player._status.get("v-a"));
   return player._bar;
 }
 
-test("a song being waited on sweeps its bar whatever the server reports", () => {
+/** A song's own entry in the download pipeline, with one status put through it. */
+function entryShowing(status, { variantId = "v-a", trackId = "t1" } = {}) {
+  player._offline = new Map([[trackId, { state: "pending", variantId, url: "", bytes: 0, at: 0 }]]);
+  player._setProgress(variantId, status);
+  return player._offline.get(trackId);
+}
+
+test("the bar says the wait in one word, and has no download of its own", () => {
   withDom(() => {
-    // The wait for a song is one loader, and it does not fill: the fraction a
-    // provider reports is not a fraction of the wait a listener is in, and a
-    // bar that fills to 42% and then sits there is a number made up on this
-    // side of the link. What the server does know is still said in words.
     const bar = barShowing({ state: "downloading", stage: "download", progress: 0.42, bytes: 3_250_000, totalBytes: 8_800_000 });
+    // The bar no longer draws a loader: the queue's own mark on this song's row
+    // is where a download is drawn, and there is exactly one of them.
+    assert.equal(bar.progress, undefined, "the bar has no download bar of its own");
+    assert.equal(bar.progressFill, undefined);
+
     player._loading = true;
     player.renderBar();
-    assert.equal(bar.progress.style.display, "", "the bar is shown while the file is on its way");
-    assert.equal(bar.progress.classList.contains("indeterminate"), true, "and it sweeps");
-    assert.equal(bar.progressFill.style.width, "", "with no fill at all");
-    assert.match(bar.subtitle.textContent, /downloading 3\.1 of 8\.4 MB/, "with the numbers the server sent");
+    assert.match(bar.subtitle.textContent, /downloading…$/, "the wait is still said in words");
+    assert.doesNotMatch(bar.subtitle.textContent, /MB|converting/, "and never in the download's numbers");
+
+    // The file is here and the sound is not yet: its own word for its own state.
+    player._loading = false;
+    player._buffering = true;
+    player.renderBar();
+    assert.match(bar.subtitle.textContent, /loading…$/);
   });
 });
 
-test("a transition into loading keeps the sweep, and the label follows the stage", () => {
-  withDom(() => {
-    const bar = barShowing({ state: "downloading", stage: "download", progress: 0.9, bytes: 9_000_000, totalBytes: 10_000_000 });
-    player._loading = true;
-    player.renderBar();
-    assert.equal(bar.progress.classList.contains("indeterminate"), true);
-    assert.equal(bar.progressFill.style.width, "", "the fetch's own count never becomes a fill");
+test("a download's count is its own stage's, and never goes backwards", () => {
+  const saved = player._offline;
+  try {
+    const download = { state: "downloading", stage: "download", progress: 0.9, bytes: 9_000_000, totalBytes: 10_000_000 };
+    const entry = entryShowing(download);
+    assert.equal(entry.stageProgress, 0.9);
+    assert.equal(player.offlineProgress("t1"), 0.9, "the mark fills by the count the server sent");
 
-    // The fetch hands over to the conversion: the words say where the wait is,
-    // which is the only count the bar has ever promised.
-    const convert = { state: "downloading", stage: "convert", progress: 0.05 };
-    player._status = new Map([["v-a", convert]]);
-    player._setProgress(convert);
-    player.renderBar();
-    assert.equal(bar.progress.classList.contains("indeterminate"), true, "still one sweep");
-    assert.equal(bar.progressFill.style.width, "");
-    assert.match(bar.subtitle.textContent, /converting 5%/);
-  });
+    // The same stage never goes backwards, whatever order two polls land in.
+    player._setProgress("v-a", { ...download, progress: 0.4 });
+    assert.equal(player.offlineProgress("t1"), 0.9);
+
+    // The fetch hands over to the conversion: its own count, from zero, and not
+    // left sitting at the fraction the fetch finished on.
+    player._setProgress("v-a", { state: "downloading", stage: "convert", progress: 0.05 });
+    assert.equal(player.offlineProgress("t1"), 0.05, "a new stage starts its own count");
+  } finally {
+    player._offline = saved;
+  }
 });
 
-test("a stage that reports no length says so rather than keeping the last fraction", () => {
-  withDom(() => {
-    const unknown = { state: "downloading", stage: "download", progress: -1, bytes: 12_000, totalBytes: 0 };
-    const bar = barShowing(unknown);
-    player._loading = true;
-    player.renderBar();
-    assert.equal(bar.progressFill.style.width, "", "no fill");
-    assert.equal(bar.progress.classList.contains("indeterminate"), true, "the sweep again");
-    assert.equal(bar.progress.style.display, "");
-    assert.match(bar.subtitle.textContent, /downloading…/);
-  });
-});
+test("a count nobody has sweeps rather than reading as zero", () => {
+  const saved = player._offline;
+  try {
+    // No length yet: the state's own name, which is what the server means by -1.
+    entryShowing({ state: "downloading", stage: "download", progress: -1, bytes: 12_000, totalBytes: 0 });
+    assert.equal(player.offlineProgress("t1"), null, "nothing countable: the mark sweeps");
 
-test("a status that names no stage is not read as zero progress", () => {
-  withDom(() => {
     // The first answer for a rendition nothing is known about yet: state
     // "none", no stage, and Go's zero progress. Reading that zero as a count is
-    // what would pin the bar at 0% before the first real report; sweeping until
-    // one names a stage is the honest drawing.
-    const bar = barShowing({ state: "none", stage: "", progress: 0 });
-    player._loading = true;
-    player.renderBar();
-    assert.equal(bar.progressFill.style.width, "", "no fill");
-    assert.equal(bar.progress.classList.contains("indeterminate"), true, "a sweep instead");
-    assert.match(bar.subtitle.textContent, /downloading…/);
-  });
+    // what would pin the mark at nothing before the first real report.
+    player._offline = new Map([["t1", { state: "pending", variantId: "v-a", url: "", bytes: 0, at: 0 }]]);
+    player._setProgress("v-a", { state: "none", stage: "", progress: 0 });
+    assert.equal(player.offlineProgress("t1"), null, "a bare status is not a fraction");
+
+    // And a song that is already here is full, whatever it last reported.
+    player._offline.get("t1").state = "ready";
+    assert.equal(player.offlineProgress("t1"), 1);
+  } finally {
+    player._offline = saved;
+  }
+});
+
+test("this page's own transfer is the count the mark shows while it arrives", () => {
+  const saved = player._offline;
+  try {
+    // The backend's stage is done and the file is on its way here: the count
+    // that matters now is the one this page can see, and it wins over the
+    // stage's finished fraction.
+    entryShowing({ state: "ready", stage: "store", progress: -1 });
+    player._offline.get("t1").state = "pending";
+    player._noteTransfer("t1", 1_250_000, 5_000_000);
+    assert.equal(player.offlineProgress("t1"), 0.25);
+    player._noteTransfer("t1", 5_000_000, 5_000_000);
+    assert.equal(player.offlineProgress("t1"), 1);
+  } finally {
+    player._offline = saved;
+  }
 });
 
 test("the label names the stage and that stage's own numbers", () => {
@@ -2341,42 +2512,24 @@ test("the label names the stage and that stage's own numbers", () => {
   assert.equal(mediaProgressLabel(undefined), "");
 });
 
-test("a stage's count never goes backwards, and a new stage starts its own", () => {
-  withDom(() => {
-    // The count is still kept - the words use it, and the queue's own panel
-    // says how far a song is - so its own invariant is tested where it lives.
-    const download = { state: "downloading", stage: "download", progress: 0.9, bytes: 9_000_000, totalBytes: 10_000_000 };
-    barShowing(download);
-    assert.equal(player._progress, 0.9);
+test("a status for a song nothing is downloading is not a count at all", () => {
+  const saved = player._offline;
+  try {
+    // Statuses arrive for renditions this page is only naming - a warm ahead,
+    // a room's own song - and a song with no entry has no mark to fill.
+    player._offline = new Map();
+    player._setProgress("v-a", { state: "downloading", stage: "download", progress: 0.5 });
+    assert.equal(player.offlineProgress("t1"), null);
 
-    // The same stage never goes backwards, whatever order two polls land in.
-    player._setProgress({ ...download, progress: 0.4 });
-    assert.equal(player._progress, 0.9);
-
-    // The fetch hands over to the conversion: its own count, from zero, and
-    // not left sitting at the fraction the fetch finished on.
-    const convert = { state: "downloading", stage: "convert", progress: 0.05 };
-    player._status = new Map([["v-a", convert]]);
-    player._setProgress(convert);
-    assert.equal(player._progress, 0.05);
-    player._loading = true;
-    player.renderBar();
-    assert.match(player._bar.subtitle.textContent, /converting 5%/);
-  });
-});
-
-test("a download that is ready shows no fill, and the timeline again", () => {
-  withDom(() => {
-    const bar = barShowing({ state: "ready", stage: "store", progress: -1 });
-    // Even on the poll that reports ready while the load is still unwinding,
-    // the bar must not flash a fill: ready means the count is over.
-    player._loading = true;
-    player.renderBar();
-    assert.equal(bar.progress.style.display, "none");
-    assert.equal(bar.progress.classList.contains("indeterminate"), false);
-
-    player._loading = false;
-    player.renderBar();
-    assert.equal(bar.progress.style.display, "none", "hidden, as a finished download always was");
-  });
+    // A song whose copy is already here is full; a failed one has no count.
+    player._offline = new Map([
+      ["done", { state: "ready", variantId: "v-a", url: "blob:done", bytes: 1, at: 0 }],
+      ["gone", { state: "failed", variantId: "v-a", url: "", bytes: 0, at: 0, error: "no" }],
+    ]);
+    player._setProgress("v-a", { state: "downloading", stage: "download", progress: 0.5 });
+    assert.equal(player.offlineProgress("done"), 1);
+    assert.equal(player.offlineProgress("gone"), null, "a failure has nothing to fill");
+  } finally {
+    player._offline = saved;
+  }
 });

@@ -100,27 +100,57 @@ const SAVE_SETTLE_MS = 400;
 const VOLUME_STEP = 0.05;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** A promise that answers when a wait has run out, and a way to call it off.
+ *
+ *  A race against a bare timer leaves the timer behind: it holds the page (or a
+ *  test process) open for the rest of its span after the thing being waited for
+ *  has long since arrived. */
+function deadline(ms) {
+  let timer = 0;
+  const promise = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(null), ms);
+  });
+  return { promise, cancel: () => clearTimeout(timer) };
+}
+
+/** A response read into a Blob, one piece at a time, with its own count.
+ *
+ *  Read rather than asked for whole, because this transfer is the wait a
+ *  listener is in and its row says how far along it is; the length the server
+ *  states is the denominator, and a response that states none is counted as
+ *  unknown rather than as done. */
+async function readMedia(response, onProgress) {
+  const total = Number(response.headers?.get?.("content-length")) || 0;
+  const body = response.body;
+  if (!body || typeof body.getReader !== "function") {
+    const blob = await response.blob();
+    onProgress(blob.size, total || blob.size);
+    return blob;
+  }
+  const reader = body.getReader();
+  const chunks = [];
+  let received = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      chunks.push(value);
+      received += value.byteLength;
+      onProgress(received, total);
+    }
+  }
+  return new Blob(chunks, { type: response.headers?.get?.("content-type") || "" });
+}
+
 // How long a failed fetch waits before the one retry: long enough for a blip,
 // short enough that nobody reaches for the skip button.
 const FETCH_RETRY_PAUSE_MS = 700;
-// How long the copy is given to become playable on the second element before
-// the element in hand is moved onto it the old way.
-const COPY_READY_TIMEOUT_MS = 2000;
 // How long a start waits for the element to learn a file's length before the
 // play it was holding is let go. Nothing this page holds takes that long -
 // metadata follows the src almost at once - so the bound is only so a broken
 // element cannot leave the start behind to fire on whatever loads next.
 const METADATA_TIMEOUT_MS = 10000;
-// The overlap the element being left is faded out over: short enough not to be
-// heard as two of anything, long enough that the pause lands in silence.
-const HANDOVER_FADE_MS = 40;
-const HANDOVER_STEP_MS = 10;
-// How long both elements play before the one being left is faded out. `play()`
-// resolving is not the same as sound arriving - the new element's first samples
-// are behind the pipeline's own latency - and a fade that starts any earlier
-// ends in the hole it was meant to cover. Measured at ~120ms of silence on a
-// machine where the swap was otherwise seamless.
-const HANDOVER_OVERLAP_MS = 180;
 const clamp01 = (value) => Math.min(1, Math.max(0, value));
 
 // The bar is repainted from the audio element's own events, several times a
@@ -406,12 +436,15 @@ class Player {
 
     // Songs held in this page for offline play, by track id: {state, variantId,
     // url, bytes, at}. "pending" until the bytes are here, then "ready", or
-    // "failed" with the time it failed at so it can be tried again later.
+    // "failed" with the error and the time it failed at so it can be tried
+    // again later. The copy is also what plays: the element is handed a song's
+    // own entry and nothing else (see `_awaitCopy`).
     this._offline = new Map();
     this._offlineOrder = [];      // track ids waiting for a fetch slot
-    this._offlineAbort = new Map();  // track id -> the controller of its fetch
     this._offlineWanted = [];     // the window's order now: what a free slot is for
-    this._offlineInFlight = new Set();  // fetches under way: never re-queued, never cancelled
+    // Fetches under way, by track id: never re-queued, never cancelled, and the
+    // thing a load that wants the same song waits on.
+    this._offlineInFlight = new Map();
     this._offlineActive = 0;      // fetches in flight
     this._offlineBytes = 0;
     this._tailAt = 0;             // when the last song after the eager window was started
@@ -420,14 +453,7 @@ class Player {
     this._token = 0;              // which track the async work is still for
     this._loading = false;
     this._loadFor = "";           // the "track|variant" the load under way is for
-    // Which hand-over is the current one. Two can be in flight for the same song
-    // - the file the download finished and the page's own copy of it, both
-    // wanting the one spare element - and only the newest may touch anything
-    // (see `_handOverTo`).
-    this._handOverId = 0;
     this._buffering = false;      // the file is here, the sound is not yet
-    this._progress = -1;          // this stage's share, or -1 while nothing is countable
-    this._stage = "";             // which stage that share belongs to
     this._error = "";
     this._blocked = false;
     // null is "nothing to seek"; a number is where to put the file, and zero
@@ -563,8 +589,6 @@ class Player {
     this._source = null;
     this._sources = { sources: [], preferredVariantId: "" };
     this._loading = false;
-    this._progress = -1;
-    this._stage = "";
     this._error = "";
     this._pendingSeek = null;
     this._stopAudio();
@@ -641,10 +665,12 @@ class Player {
     return true;
   }
 
-  /** Where the current track's file is: "none", "downloading", "ready", "failed". */
+  /** Where the current track's file is: "none", "pending", "ready" or "failed".
+   *
+   *  The same answer the queue's mark on that song's row is drawn from, since
+   *  there is one download per song and this is it. */
   readyState() {
-    if (!this._variant) return "none";
-    return this._mediaState() || "none";
+    return this.offlineState(this.current()?.id || "");
   }
 
   /** The host advances its ordinary mixed queue locally; followers ask the
@@ -720,7 +746,7 @@ class Player {
    *  Every source the element is given is a whole file, and a file is seeked
    *  within: `currentTime` is the whole of it. Before the file is here there is
    *  nothing to seek, so the position is held on `_pendingSeek` and applied when
-   *  the file lands (see `_waitForFile`). */
+   *  the file lands (see `_awaitCopy`). */
   seek(ms) {
     const target = Math.max(0, Math.round(Number(ms) || 0));
     const audio = this.audio;
@@ -745,25 +771,6 @@ class Player {
     const audio = this.audio;
     if (!audio || !Number.isFinite(audio.currentTime)) return 0;
     return Math.round(audio.currentTime * 1000);
-  }
-
-  /** A media URL as the element will hold it.
-   *
-   *  The client builds a relative path (`/api/v1/media/...`), and the DOM
-   *  resolves what it is given against the document: the element's own `src` is
-   *  absolute, so a relative path is never equal to it. Everything that compares
-   *  the two - is this the file I set, has the element already got it - has to
-   *  resolve the same way the element does.
-   */
-  _elementUrl(url) {
-    const value = String(url || "");
-    if (!value) return value;
-    if (typeof document === "undefined" || !document.baseURI) return value;
-    try {
-      return new URL(value, document.baseURI).href;
-    } catch {
-      return value;
-    }
   }
 
   /** The length of this local audio source, or 0 before metadata arrives.
@@ -1119,8 +1126,10 @@ class Player {
       setText(bar.title, track.title || "unknown track");
       let subtitle = artistLine(track) || String(track.album || "");
       if (this._loading) {
-        const label = this.downloadLabel() || "downloading…";
-        subtitle = subtitle ? `${subtitle} · ${label}` : label;
+        // The download itself is shown where it belongs: the queue's own row
+        // for this song, filling as the bytes arrive. The bar says the one thing
+        // the bar is for - that this song is not sounding yet.
+        subtitle = subtitle ? `${subtitle} · downloading…` : "downloading…";
       } else if (this._buffering) {
         // Here, and not making a sound yet: the bar says so rather than showing
         // a pause button over silence.
@@ -1221,24 +1230,6 @@ class Player {
       bar.position.style.setProperty("--fill", `${Math.round(clamp01(position / duration) * 100)}%`);
     }
 
-    // --- how the download is going --------------------------------------
-    // A count is only honest while the file is on its way: once it is ready the
-    // element hides and the timeline is the position again.
-    const arriving = this._loading && !this._error && this._mediaState() !== "ready";
-    if (arriving || (this._buffering && !this._error)) {
-      // One loader, and an honest one: the wait for a song is a whole file
-      // arriving, and a bar that fills by a percentage of a fetch that cannot
-      // be seen from here is a number made up on this side of the link. It
-      // sweeps until the sound starts instead.
-      bar.progress.style.display = "";
-      bar.progressFill.style.width = "";
-      bar.progress.classList.add("indeterminate");
-    } else {
-      bar.progress.style.display = "none";
-      bar.progressFill.style.width = "";
-      bar.progress.classList.remove("indeterminate");
-    }
-
     // --- volume ----------------------------------------------------------
     if (Math.abs(Number(bar.volume.value) - this._volume) > 0.001) bar.volume.value = String(this._volume);
     // How far the filled part of the track reaches, for the theme to paint:
@@ -1293,10 +1284,6 @@ class Player {
     if (typeof document !== "undefined") {
       document.addEventListener("visibilitychange", () => {
         this._retryWanted();
-        // A copy that arrived while this page was hidden takes over now, while
-        // somebody is looking at it and the browser will let it start.
-        const track = this.current();
-        if (track && !this._hidden()) this._swapToOffline(String(track.id || ""));
       });
       // A page that has not been touched cannot start audio. Rather than make
       // somebody find the play button, the first touch anywhere tries again.
@@ -1347,8 +1334,6 @@ class Player {
     this._error = "";
     this._loading = Boolean(track);
     this._loadFor = target;
-    this._progress = -1;
-    this._stage = "";
     this._variant = "";
     this._source = null;
     this._sources = { sources: [], preferredVariantId: "" };
@@ -1456,7 +1441,7 @@ class Player {
       // The copy is already here: nothing to fetch and nothing to wait for.
       audio.src = localUrl;
     } else {
-      // The song is fetched first and played from the file: the server holds
+      // The song is downloaded first and played from that: the server holds
       // only files, and a rendition it does not hold is refused rather than
       // streamed, so there is nothing to play until the download lands. Primary:
       // this is the song the bar is naming and a person is waiting for, so the
@@ -1464,16 +1449,15 @@ class Player {
       // songs are cancelled for it, and it starts as fast as the provider can
       // go. The songs after this one are asked for below, which is why they are
       // not primary: they are for later.
-      // `_ready` starts the transfer behind the shared device slot queue.
       // The songs after this one are asked for now, while this one downloads:
       // the page holds them by the time they are reached, and outside a room
       // it keeps its own copies of the window ahead as it always did. This is
       // the line the early return below used to skip.
       this._prefetch();
       // The wait for the file is the whole of the play now: the element is
-      // handed nothing until the file is here, and then it is handed the file
-      // itself at the position this load asked for.
-      this._waitForFile({
+      // handed nothing until the queue's own download of it is in memory, and
+      // then it is handed that copy at the position this load asked for.
+      this._awaitCopy({
         variantId: resolved.variantId,
         token,
         autoplay: Boolean(autoplay),
@@ -1700,78 +1684,54 @@ class Player {
     };
   }
 
-  /** Wait until the backend has the file, showing how far along it is. A wait
-   *  for the song a person is waiting to hear is primary; a warm-ahead is not,
-   *  so that one queues behind whatever is being listened to. */
-  async _ready(variantId, token, primary = false) {
-    return withDownloadSlot(() => this._readySlot(variantId, token, primary));
-  }
-
-  async _readySlot(variantId, token, primary = false) {
-    const ready = this._status.get(variantId);
-    if (ready?.state === "ready") return ready;
-    const client = this._client();
-    this._loading = true;
-    this._startDownload(variantId, client, primary);
-    const deadline = Date.now() + READY_TIMEOUT_MS;
-    for (;;) {
-      let status;
-      try {
-        status = await client.mediaStatus(variantId);
-      } catch (error) {
-        if (token !== this._token) return null;
-        this._error = error?.message || "could not fetch that track";
-        this._report(error);
-        return { state: "failed", error: this._error };
-      }
-      this._status.set(variantId, status);
-      this._boundCache(this._status);
-      if (token !== this._token) return null;
-      if (variantId === this._variant) {
-        this._setProgress(status);
-        this.renderBar();
-      }
-      if (status.state === "ready" || status.state === "failed") return status;
-      // Status is also requested by the download starter, but this loop owns
-      // the visible wait. Repaint immediately on every provider report so the
-      // bar cannot remain on its generic fallback between timer ticks.
-      this.renderBar();
-      if (Date.now() >= deadline) {
-        // Stuck rather than failed. Saying so is what lets the room move on
-        // and this member sit the track out, instead of both waiting for ever.
-        return { state: "failed", error: "that file did not arrive" };
-      }
-      await sleep(POLL_MS);
-      if (token !== this._token) return null;
-    }
-  }
-
   /**
-   * Wait for the file the load is for, then give the element that file.
+   * The song's own download, waited on, then handed to the element.
    *
-   * The song is not played until the server holds it: a rendition it does not
-   * hold is refused rather than streamed, so there is nothing to give the
-   * element until the download lands. When it does, the element is handed the
-   * file itself, with the position this load asked for left pending on it and
-   * applied with the metadata - a file is seeked within, so that is a seek and
-   * not a `?start=` the server ignores.
+   * There is one download per song, and this is the one a listener waits for:
+   * the entry in the queue's own pipeline, at play priority, for the rendition
+   * this load chose. Playback begins when those bytes are in memory and the
+   * element is given the copy itself - so a song is never fetched twice, with
+   * the element streaming one file while the page downloads another, and the
+   * row that shows a download is the row that is playing. The position the load
+   * asked for is left pending on the element and applied with the metadata; a
+   * whole file is seeked within, so that is a seek and not a `?start=` the
+   * server ignores.
    *
    * A download that fails is a song that cannot be played: the load takes the
    * road it would for a file that will not play - one more attempt from another
    * source of the song, then the queue carries on.
    */
-  async _waitForFile(attempt) {
-    // Primary: the player is holding a load on this file, so it owns the pipe
-    // until it is here.
-    const status = await this._ready(attempt.variantId, attempt.token, true);
-    if (attempt.token !== this._token || status === null) return;
+  async _awaitCopy(attempt) {
+    const trackId = String(this.current()?.id || "");
+    if (!trackId) return;
+    // The entry first, so the queue's row for this song says "downloading" from
+    // the moment the song is chosen, and the backend is told right after that
+    // somebody is waiting on this rendition rather than fetching it ahead.
+    const entry = this._claimOffline(trackId, attempt.variantId);
+    this._startDownload(attempt.variantId, null, true);
+    if (entry.state === "ready") {
+      this._loading = false;
+      this._handCopyToElement(entry, attempt);
+      return;
+    }
+    const running = this._startOffline(trackId);
+    // A download that stops moving is a song nobody can play: the wait is
+    // bounded, and what it was waiting for is said below.
+    const timeout = deadline(READY_TIMEOUT_MS);
+    try {
+      await Promise.race([running || Promise.resolve(null), timeout.promise]);
+    } finally {
+      timeout.cancel();
+    }
+    if (attempt.token !== this._token) return;
+    const settled = this._offline.get(trackId);
     this._loading = false;
     // The song that was being waited on is here: the songs behind it start now.
     // They were held for the whole of that wait, which is what keeps one pipe
     // for the song somebody is listening for.
     this._prefetch();
-    if (status.state === "failed") {
-      this._error = status.error || "that file could not be downloaded";
+    if (!settled || settled.state !== "ready" || !settled.url) {
+      this._error = settled?.error || "that file did not arrive";
       this._stateEvent();
       if (!this.online()) {
         this._skipUnavailable();
@@ -1783,17 +1743,27 @@ class Player {
       this._recoverFromFailure();
       return;
     }
+    this._handCopyToElement(settled, attempt);
+  }
+
+  /** The copy is here: the element is given it, and started where the load asked. */
+  _handCopyToElement(entry, attempt) {
     const audio = this.audio;
     if (!audio) return;
-    const url = this._client().mediaUrl(attempt.variantId);
-    this._stateEvent();
-    this.renderBar();
-    // The page's own copy of this rendition may have taken the element while
-    // the file was fetched: that is the same rendition already in memory, and
-    // the file the backend has just finished has nothing better to give.
-    const kept = this._offline.get(String(this.current()?.id || ""));
-    if (audio.src === this._elementUrl(url) || (kept?.state === "ready" && kept.url === audio.src)) return;
-    audio.src = url;
+    // The element may already hold this very copy: a restore that ran twice, a
+    // load asking for the song that is already on. Assigning the same source
+    // again starts the element over from zero and takes the position this load
+    // asked for with it, so what is there is kept and the position is applied to
+    // it instead.
+    if (audio.src !== entry.url) {
+      this._stateEvent();
+      this.renderBar();
+      audio.src = entry.url;
+    } else if (this._pendingSeek !== null) {
+      const at = this._pendingSeek;
+      this._pendingSeek = null;
+      this.seek(at);
+    }
     if (!attempt.autoplay) {
       // The bar shows a stopped player for a song nobody has started yet; the
       // position stays pending and lands with the metadata.
@@ -1805,6 +1775,33 @@ class Player {
     // the file is whole here, and a seek into it is free.
     this._startAudio(this._pendingSeek);
     this._setBuffering(audio.readyState < 3);
+  }
+
+  /**
+   * This load's entry in the queue's own download pipeline, claimed.
+   *
+   * A copy that is here, or on its way, of the rendition this load is for is
+   * the load's own download and is used as it stands. Anything else - nothing,
+   * another rendition of the same song, a failure past its retry - is replaced
+   * by this load's own entry, and whatever was fetching the old one is let go:
+   * two renditions of one song racing into one map is how the wrong file comes
+   * back from what looked like a cache hit.
+   */
+  _claimOffline(trackId, variantId = "") {
+    const id = String(trackId || "");
+    const wanted = String(variantId || "");
+    const known = this._offline.get(id);
+    const sameFile = Boolean(known) && (!wanted || !known.variantId || known.variantId === wanted);
+    if (sameFile && (known.state === "ready" || known.state === "pending")) {
+      if (wanted && !known.variantId) known.variantId = wanted;
+      return known;
+    }
+    this._abortOffline(id);
+    if (known?.url && typeof URL !== "undefined" && URL.revokeObjectURL) URL.revokeObjectURL(known.url);
+    if (known) this._offlineBytes -= Number(known.bytes) || 0;
+    const entry = { state: "pending", variantId: wanted, url: "", bytes: 0, at: Date.now() };
+    this._offline.set(id, entry);
+    return entry;
   }
 
   /** Ask the backend for a file, once - twice if this is the song being waited
@@ -1846,16 +1843,11 @@ class Player {
     // In a room the order offline play follows is the room's, and rooms-state
     // keeps it: this queue holds one song there, and would evict the room's.
     //
-    // The song on the element is not one of the copies: it is already whole -
-    // the file the hand-over took up - and a second copy of it is a whole
-    // song's transfer over the same link the listener is listening on, and one
-    // more source change when it lands. What the copies are for is the songs
-    // behind it, which have no file yet.
+    // The song on the element is in the window with the rest: its copy is what
+    // plays, so the row that says it is downloading is the row that is playing,
+    // and the count of what this device holds is a count of the queue.
     if (!this._room) {
-      const playing = String(this.current()?.id || "");
-      this.keepOffline(
-        this.offlineWindow().filter((track) => !track?.localUrl && String(track?.id || "") !== playing)
-      );
+      this.keepOffline(this.offlineWindow().filter((track) => !track?.localUrl));
     }
   }
 
@@ -1875,6 +1867,29 @@ class Player {
   /** What this page holds for one track: none, pending, ready or failed. */
   offlineState(trackId) {
     return this._offline.get(String(trackId || ""))?.state || "none";
+  }
+
+  /**
+   * How far that copy is, as the queue's own mark draws it: a fraction 0-1, or
+   * null when nothing countable is known yet (the mark sweeps instead).
+   *
+   * The song being played is a copy like any other - that is the whole point of
+   * it - so this answers for the track a listener is waiting on as well as for
+   * the ones behind it, and the queue's rows are the one place a download of
+   * this page is shown. Two counts can be under way for one song: the backend's
+   * own stage (the provider's bytes, then the conversion, then the store) and
+   * this page's transfer of the file it produced. The transfer is the one the
+   * listener is being held up by, so it is the one that wins where it counts.
+   */
+  offlineProgress(trackId) {
+    const entry = this._offline.get(String(trackId || ""));
+    if (!entry) return null;
+    if (entry.state === "ready") return 1;
+    if (entry.state !== "pending") return null;
+    const total = Number(entry.transferTotal) || 0;
+    if (total > 0) return clamp01(Number(entry.transfer) / total);
+    const stage = Number(entry.stageProgress);
+    return Number.isFinite(stage) && stage >= 0 ? clamp01(stage) : null;
   }
 
   /** What the window adds up to, for the queue's own indicator. */
@@ -1919,7 +1934,7 @@ class Player {
     // was meant to conserve was spent on the restarts instead of the songs.
     // One that is still in the window keeps its slot, and the songs now due
     // take the slots as they free up.
-    for (const trackId of [...this._offlineInFlight]) {
+    for (const trackId of [...this._offlineInFlight.keys()]) {
       if (!ids.has(trackId)) this._abortOffline(trackId);
     }
     this._trimOffline(ids);
@@ -2018,22 +2033,31 @@ class Player {
     if (this._startOffline(pending[next])) this._tailAt = now;
   }
 
-  /** Start one song's fetch and hold a slot for it. */
+  /** Start one song's fetch and hold a slot for it.
+   *
+   *  Answers with the fetch itself, so a load that wants the same song waits on
+   *  the one transfer rather than starting a second: what a load is waiting for
+   *  is the download every other row of the queue shows, not a copy of it. The
+   *  fetch is held with the entry it belongs to, because a fetch whose entry has
+   *  since been replaced is a transfer for a song that is no longer there. */
   _startOffline(trackId) {
-    const entry = this._offline.get(trackId);
-    if (!entry || entry.state !== "pending") return false;
-    // The slot owns the way out of the fetch it started.
+    const id = String(trackId || "");
+    const entry = this._offline.get(id);
+    if (!entry || entry.state !== "pending") return null;
+    const inHand = this._offlineInFlight.get(id);
+    if (inHand) return inHand.entry === entry ? inHand.promise : null;
     const controller = new AbortController();
-    this._offlineAbort.set(trackId, controller);
-    this._offlineInFlight.add(trackId);
+    const held = { entry, controller, promise: null };
+    this._offlineInFlight.set(id, held);
     this._offlineActive += 1;
-    this._fetchOffline(trackId, controller.signal).finally(() => {
-      this._offlineAbort.delete(trackId);
-      this._offlineInFlight.delete(trackId);
+    held.promise = this._fetchOffline(id, controller.signal).finally(() => {
+      // Only what is still this song's is forgotten: a fetch that was replaced
+      // must not take the entry that replaced it out of the maps.
+      if (this._offlineInFlight.get(id) === held) this._offlineInFlight.delete(id);
       this._offlineActive -= 1;
       this._pumpOffline();
     });
-    return true;
+    return held.promise;
   }
 
   /** One wake-up pending is enough; a window change pumps on its own. */
@@ -2045,361 +2069,90 @@ class Player {
     }, waitMs);
   }
 
-  /** Let go of a fetch whose song has left the window. */
+  /** Let go of a fetch whose song has left the window, or whose entry has been
+   *  replaced. The maps forget it at once - the transfer is still unwinding, but
+   *  it is not this song's download any more - so a replacement can take its
+   *  place without waiting for a fetch nobody wants. */
   _abortOffline(trackId) {
-    const controller = this._offlineAbort.get(String(trackId || ""));
-    if (controller) controller.abort();
+    const id = String(trackId || "");
+    const inHand = this._offlineInFlight.get(id);
+    if (!inHand) return;
+    this._offlineInFlight.delete(id);
+    inHand.controller.abort();
   }
 
   /**
    * Fetch one song's bytes into memory.
    *
    * The file is the one this player would really play, so what lands here is
-   * what `_load` looks for, and it is asked for the same way a download is:
-   * the backend has to hold it first, which is what `_warm` is.
+   * what `_load` hands the element, and it is asked for the same way any
+   * download is: the backend has to hold it first, which is what `_warm` is.
+   * The transfer is read in pieces rather than asked for as one blob, because
+   * the queue's row says how far it has got - the download of the song somebody
+   * is waiting for is that row, and a transfer nothing can count is a row that
+   * sweeps.
    */
   async _fetchOffline(trackId, signal = null) {
+    const claimed = this._offline.get(trackId);
     try {
-      const resolved = await this._variantFor({ id: trackId });
-      const variantId = resolved?.variantId || "";
+      const pinned = String(claimed?.variantId || "");
+      const variantId = pinned || (await this._variantFor({ id: trackId }))?.variantId || "";
       if (!variantId) throw new Error("no source");
-      if (!(await this._warm(variantId, signal))) throw new Error("the file did not arrive");
+      if (claimed) claimed.variantId = variantId;
+      if (!(await this._warm(variantId, signal))) throw new Error("that file did not arrive");
       const response = await fetch(this._client().mediaUrl(variantId), signal ? { signal } : undefined);
       if (!response.ok) throw new Error(`media ${response.status}`);
-      const blob = await response.blob();
+      const blob = await readMedia(response, (received, total) => {
+        this._noteTransfer(trackId, received, total);
+      });
+      // Anything that replaced this entry while the bytes were on their way -
+      // another rendition for the same song, a failure past its retry - owns
+      // the song now, and these bytes are not its.
       const entry = this._offline.get(trackId);
-      if (!entry) return;                        // dropped on purpose, not by a track change
+      if (entry !== claimed || !entry) return null;
       entry.variantId = variantId;
       entry.url = URL.createObjectURL(blob);
       entry.bytes = blob.size;
       entry.state = "ready";
       entry.at = Date.now();
       this._offlineBytes += blob.size;
-      // If this is the track on the element, the copy takes over right here.
-      this._swapToOffline(trackId);
-    } catch {
+      this._emit("offline-changed", this.offlineSummary());
+      return entry;
+    } catch (error) {
       // Let go on purpose is not a failure: the song is still wanted and still
-      // pending, and the next pump picks it up in its new place.
-      if (signal?.aborted) return;
-      const entry = this._offline.get(trackId);
-      if (entry && entry.state === "pending") {
-        entry.state = "failed";
-        entry.at = Date.now();
+      // pending, and the next pump picks it up in its new place. Anything else
+      // is a song that did not arrive, said in the words the load will show.
+      if (!signal?.aborted) {
+        const entry = this._offline.get(trackId);
+        if (entry === claimed && entry && entry.state === "pending") {
+          entry.state = "failed";
+          entry.error = error?.message || "that file did not arrive";
+          entry.at = Date.now();
+          this._emit("offline-changed", this.offlineSummary());
+        }
       }
+      return null;
     }
-    this._emit("offline-changed", this.offlineSummary());
+  }
+
+  /** One transfer's own count, for the queue's mark on that song's row. */
+  _noteTransfer(trackId, received, total) {
+    const entry = this._offline.get(String(trackId || ""));
+    if (!entry || entry.state !== "pending") return;
+    entry.transfer = Number(received) || 0;
+    entry.transferTotal = Number(total) || 0;
+    // A finished stage is not the count for a transfer that states no length:
+    // the mark sweeps rather than sitting at the fraction of the thing before it.
+    if (!entry.transferTotal) entry.stageProgress = -1;
+    this._emit("download-progress", String(trackId));
   }
 
   /**
-   * The page's own copy of the track on the element has just landed: play it.
+   * Give the element the handlers that make it the player's element.
    *
-   * Only the track that is actually playing, and only its own rendition, so a
-   * copy arriving for a song already gone - or for a file this element is not
-   * playing - is kept but not swapped in. The direction is one way: once the
-   * element holds the copy it is never sent back to the routed URL. The exact
-   * position is kept, paused or not, so the hand-over is inaudible.
-   */
-  _swapToOffline(trackId) {
-    const audio = this.audio;
-    const id = String(trackId || "");
-    if (!audio || !id) return false;
-    const entry = this._offline.get(id);
-    if (!entry || entry.state !== "ready" || !entry.url) return false;
-    const track = this.current();
-    if (!track || String(track.id) !== id) return false;
-    if (!this._variant || entry.variantId !== this._variant) return false;
-    if (audio.src === this._elementUrl(entry.url)) return false;   // already the copy; never swap back
-    // A page nobody is looking at must not be handed a new source: changing
-    // `src` and asking to play is the one thing a hidden tab can refuse, and a
-    // refusal there is the session stopping until somebody presses play. The
-    // copy is kept either way, and the next load - or the next time this page
-    // is visible - plays it from memory without a swap at all.
-    if (this._hidden()) return false;
-    const wasPaused = !this._wantsSound(audio);
-    // A source change is a pipeline reset, and that reset is the outage heard
-    // when the page's own copy takes over mid-song. The copy goes onto a second
-    // element instead, brought up to the position while the routed URL is still
-    // playing, and the switch is then that element's play.
-    this._handOverTo(entry, wasPaused);
-    return true;
-  }
-
-  /**
-   * The second element a hand-over is made onto, once and kept.
-   *
-   * It is a whole element of the player's own, wired the same way, because the
-   * hand-over makes it the element in hand: whatever it is playing, the queue,
-   * the bar and the room all follow it from that moment on. A page with no
-   * second element to give returns nothing, and the caller moves the element it
-   * has onto the new source instead - a gap, but the song carries on.
-   */
-  _spareAudio() {
-    if (this._spare) return this._spare;
-    if (typeof Audio !== "function") return null;
-    const audio = new Audio();
-    audio.preload = "auto";
-    this._wireAudio(audio);
-    // The spare carries the other name: only one element is ever the one in
-    // hand, and a page (or a person in the devtools) asking "what is playing"
-    // must not be handed the element that just faded out.
-    audio.dataset.e2e = "audio-spare";
-    audio.style.display = "none";
-    if (typeof document !== "undefined" && document.body?.appendChild) {
-      document.body.appendChild(audio);
-    }
-    this._spare = audio;
-    return audio;
-  }
-
-  /** Whether the player means to be sounding.
-   *
-   *  The button's intent, or an element that is genuinely playing. `paused`
-   *  alone is not enough: between a play press and the element actually
-   *  starting it is still true, and a hand-over that read it alone would adopt
-   *  a paused element - the bar saying play while the sound stayed on the
-   *  element being left behind. */
-  _wantsSound(audio = this.audio) {
-    return Boolean(this._playingWanted || (audio && audio.paused === false));
-  }
-
-  /**
-   * Hand the playing element over to another source, without a gap.
-   *
-   * The new source is loaded on the second element and the music carries on
-   * from what is playing while it gets there - a blob in memory or the file the
-   * backend has just finished are both there within moments, and the whole
-   * point of this is that nobody hears it happen. The position is taken at the
-   * moment of the switch rather than when the new source landed, so nothing is
-   * rewound or skipped by however long that took; it is the song's own position
-   * (see `positionMs`).
-   */
-  async _handOverTo(target, wasPaused, timeoutMs = COPY_READY_TIMEOUT_MS) {
-    const from = this.audio;
-    if (!from) return;
-    // This hand-over's own place in the queue, and what the element being left
-    // is playing. Two of these can be in flight for one song - the file the
-    // download made and the page's own copy of it land within moments of each
-    // other - and there is only one spare element to switch onto, so the newest
-    // one wins and every older one stands down. Standing down has to happen
-    // before the fallback below, or a superseded hand-over moves the element in
-    // hand onto its own source under the winner and the position read from it
-    // afterwards is the zero of a source that was just reset: the rewind this
-    // exists to prevent.
-    const id = (this._handOverId += 1);
-    const leaving = String(from.src || "");
-    const spare = this._spareAudio();
-    if (!spare) {
-      this._moveOntoTarget(target, wasPaused);
-      return;
-    }
-    this._loadCopy(spare, target.url);
-    const ready = await this._whenPlayable(spare, target.url, timeoutMs);
-    // Anything newer - another hand-over, a load, a seek - has taken the element
-    // over in the meantime, or changed what it is playing: this one is done.
-    if (id !== this._handOverId || from !== this.audio || String(from.src || "") !== leaving) return;
-    if (!ready) {
-      // The new source is not playable yet. With a network in the way that is
-      // ordinary rather than broken: a file is a transfer, and four seconds of
-      // one is nothing. Resetting the element in hand - which is what this used
-      // to do - drops what is playing and buffers it again, and that is the song
-      // stopping and loading again that a remote listener hears. While the
-      // element in hand is still sounding it is left alone, and the source is
-      // taken up the moment it can be played. With nothing playing there is
-      // nothing to lose, and the old way is what is left.
-      if (from.paused === false && !from.ended) {
-        this._adoptLate(id, from, leaving, target, spare);
-        return;
-      }
-      this._moveOntoTarget(target, wasPaused);
-      return;
-    }
-    return this._switchTo(id, from, leaving, target, spare, wasPaused);
-  }
-
-  /**
-   * The last half of a hand-over: the position, the play, and the element in
-   * hand.
-   *
-   * Split out because a source that arrives late is taken up here too (see
-   * `_adoptLate`): the same switch, at the position the music has reached by
-   * then rather than at the moment the wait ran out.
-   */
-  async _switchTo(id, from, leaving, target, spare, wasPaused) {
-    if (id !== this._handOverId || from !== this.audio || String(from.src || "") !== leaving) return;
-    // Where the music is now, not where the new source landed.
-    const at = this.positionMs();
-    try {
-      spare.currentTime = at / 1000;
-    } catch {
-      /* not seekable yet: it starts at the top */
-    }
-    if (wasPaused) {
-      // Nothing is meant to be playing, so nothing has to be faded: the new
-      // element simply becomes the element, still paused, at the same position.
-      // The element being left is stopped even so: the only way it is still
-      // sounding is a state this branch is not about, and leaving it would put
-      // two elements on one song with the bar naming the silent one.
-      if (from.paused === false) from.pause();
-      this._adoptCopy(spare, at);
-      return;
-    }
-    try {
-      await spare.play();
-    } catch {
-      // The browser would not start it. The element in hand keeps the sound
-      // going, and what was handed over to is taken up at the next load instead.
-      return;
-    }
-    if (from !== this.audio) return;
-    this._adoptCopy(spare, at);
-    // Both play for a moment before the old one is let go: the overlap is what
-    // covers the new element's pipeline latency, and the two are at the same
-    // position, so what is heard is one performance rather than a hole.
-    setTimeout(() => this._fadeOut(from), HANDOVER_OVERLAP_MS);
-  }
-
-  /**
-   * Take up a source that only became playable after the wait ran out.
-   *
-   * Nothing is reset to do it: the element in hand is still playing, and the
-   * switch that would have happened on time happens here instead, at the
-   * position the music has reached. A source that never becomes playable costs
-   * nothing but the wait; the element in hand keeps playing what it has.
-   */
-  _adoptLate(id, from, leaving, target, spare) {
-    const wanted = this._elementUrl(target.url);
-    const onCanPlay = () => {
-      spare.removeEventListener("error", onError);
-      if (spare.src !== wanted || spare.readyState < 3) return;
-      this._switchTo(id, from, leaving, target, spare, false);
-    };
-    const onError = () => spare.removeEventListener("canplay", onCanPlay);
-    spare.addEventListener("canplay", onCanPlay, { once: true });
-    spare.addEventListener("error", onError, { once: true });
-  }
-
-  /** The second element becomes the one in hand, and the old one the spare. */
-  _adoptCopy(next, atMs) {
-    const from = this.audio;
-    this.audio = next;
-    this._spare = from;
-    // The element in hand now holds a whole source of its own, and its clock is
-    // the song's from here on.
-    // The names follow the elements: `data-e2e=audio` is always the one
-    // playing, whichever element that is after a hand-over.
-    if (from && from.dataset) from.dataset.e2e = "audio-spare";
-    if (next && next.dataset) next.dataset.e2e = "audio";
-    // The position is already where it should be: nothing is pending.
-    this._pendingSeek = null;
-    this._loading = false;
-    this._buffering = next.readyState < 3;
-    this._positionEvent();
-    this._stateEvent();
-    this.renderBar();
-  }
-
-  /** The element in hand is given the new source: the fallback for a second
-   *  element that is not there or never came up. A gap, not silence. */
-  _moveOntoTarget(target, wasPaused) {
-    const audio = this.audio;
-    if (!audio) return;
-    const atMs = this.positionMs();
-    this._pendingSeek = atMs;
-    audio.src = target.url;
-    if (wasPaused) return;
-    this._wantResume(true);
-    this._startAudio(atMs);
-  }
-
-  /** Give an element the copy to hold, at the volume this page is at. */
-  _loadCopy(audio, url) {
-    audio.volume = this._volume;
-    audio.muted = this._muted;
-    if (audio.src === this._elementUrl(url)) return;
-    audio.src = url;
-    try {
-      audio.load();
-    } catch {
-      /* nothing to load yet */
-    }
-  }
-
-  /** Whether an element can play the URL it was given, waited for up to `ms`. */
-  _whenPlayable(audio, url, ms) {
-    // Whether it is the right source is settled on the URL the element holds,
-    // not on the path it was given: they are the same string only until the DOM
-    // resolves one of them.
-    const wanted = this._elementUrl(url);
-    if (audio.src === wanted && audio.readyState >= 3) return Promise.resolve(true);
-    return new Promise((resolve) => {
-      let timer = null;
-      const finish = (ok) => {
-        clearTimeout(timer);
-        audio.removeEventListener("canplay", onCanPlay);
-        audio.removeEventListener("error", onError);
-        resolve(ok);
-      };
-      const onCanPlay = () => finish(audio.src === wanted && audio.readyState >= 3);
-      const onError = () => finish(false);
-      audio.addEventListener("canplay", onCanPlay);
-      audio.addEventListener("error", onError);
-      timer = setTimeout(() => finish(false), ms);
-    });
-  }
-
-  /**
-   * Let the element being left go without a click.
-   *
-   * Both elements are at the same position, so the overlap is a seam of a few
-   * tens of milliseconds: short enough not to be heard as two of anything, long
-   * enough that the pause lands in silence rather than on a sample.
-   */
-  _fadeOut(audio) {
-    const level = Number(audio.volume);
-    if (!(level > 0) || typeof setInterval !== "function") {
-      audio.pause();
-      this._releaseAudio(audio);
-      return;
-    }
-    const steps = Math.max(1, Math.round(HANDOVER_FADE_MS / HANDOVER_STEP_MS));
-    const step = level / steps;
-    let left = level;
-    const timer = setInterval(() => {
-      left -= step;
-      if (left <= 0) {
-        clearInterval(timer);
-        audio.volume = level;
-        audio.pause();
-        this._releaseAudio(audio);
-        return;
-      }
-      audio.volume = left;
-    }, HANDOVER_STEP_MS);
-  }
-
-  /** Free what a spare was holding, so the copy is not kept on two elements. */
-  _releaseAudio(audio) {
-    try {
-      audio.removeAttribute("src");
-      audio.load();
-    } catch {
-      /* nothing to release */
-    }
-  }
-
-  /** Whether this page is in a tab nobody is looking at. */
-  _hidden() {
-    return typeof document !== "undefined" && document.visibilityState === "hidden";
-  }
-
-
-  /**
-   * Give an element the handlers that make it the player's element.
-   *
-   * Two of them exist: the one in hand and the spare a copy is handed over to.
    * Each handler first asks whether the element it came from is still the one
-   * in hand, so a spare's events - or the events of an element that has just
-   * been left behind - cannot move the queue on or consume a position.
+   * in hand, so the events of an element that has just been left behind cannot
+   * move the queue on or consume a position.
    */
   _wireAudio(audio) {
     audio.volume = this._volume;
@@ -2507,6 +2260,17 @@ class Player {
     const audio = this.audio;
     if (!audio) return;
     if (!(atMs > 0)) {
+      this._play();
+      return;
+    }
+    // A file this page holds is read the moment it is assigned, so its length can
+    // be known before this listener is attached - and an event that has already
+    // fired never fires again. The position is applied here (the element's own
+    // handler may not have run for it yet), then the play: waiting for an event
+    // that has been and gone is a start that only the retry ever makes.
+    if (Number.isFinite(audio.duration) && audio.duration > 0) {
+      this._pendingSeek = null;
+      this.seek(atMs);
       this._play();
       return;
     }
@@ -2634,6 +2398,9 @@ class Player {
           this._status.set(variantId, status);
           this._boundCache(this._status);
         }
+        // A song's queue row is where its download is shown, and this loop is
+        // where the backend's own count for it is heard.
+        this._setProgress(variantId, status);
         if (status.state === "ready") return true;
         if (status.state === "failed") {
           // The fetch failed - a provider hiccup, or a play that took the pipe
@@ -2656,49 +2423,50 @@ class Player {
     return false;
   }
 
-  _mediaState() {
-    const status = this._status.get(this._variant);
-    if (status?.state) return status.state;
-    return this._loading ? "downloading" : "";
-  }
-
-  /** What the bar's text line says the download is doing, from the last status
-   *  this page got for the rendition it is loading.
+  /**
+   * What the download is doing, from the last status this page got for the
+   * rendition being loaded.
    *
-   *  Public because the page says it in two places: the room's own status line
-   *  names the same download, and giving it a second vocabulary meant the bar
-   *  said "downloading 3.1 of 8.4 MB" while the room said "Loading the track…". */
+   * The bar no longer says it - the queue's own row is where a download is
+   * shown - but the room's status line does, and it names the same download:
+   * giving it a second vocabulary there meant the room said "Loading the
+   * track…" while the page said "downloading 3.1 of 8.4 MB". */
   downloadLabel() {
     return mediaProgressLabel(this._status.get(this._variant));
   }
 
-  /** Take the download's own progress from a status, for the bar. The server
-   *  sends the fraction of the stage under way, or -1 when the stage has
-   *  nothing to count. A new stage (the fetch handing over to the conversion,
-   *  the conversion to the store) starts its own count, which may well begin
-   *  lower than the one before it; within a stage the bar only ever moves
-   *  forward, since a poll that lands behind the last is not the download
-   *  going backwards. A -1 is not a fraction at all: it puts the bar back to
-   *  sweeping, the honest answer to "how far along is a thing nobody counts". */
-  _setProgress(status) {
+  /** Take the download's own progress from a status, for the queue's mark on a
+   *  song's row. The server sends the fraction of the stage under way, or -1
+   *  when the stage has nothing to count. A new stage (the fetch handing over to
+   *  the conversion, the conversion to the store) starts its own count, which
+   *  may well begin lower than the one before it; within a stage the mark only
+   *  ever fills forwards, since a poll that lands behind the last is not the
+   *  download going backwards. A -1 is not a fraction at all: the mark goes back
+   *  to sweeping, the honest answer to "how far along is a thing nobody
+   *  counts". */
+  _setProgress(variantId, status) {
+    const variant = String(variantId || "");
+    if (!variant) return;
     const stage = String(status?.stage || "").toLowerCase();
     const value = Number(status?.progress);
     // Only a download has a fraction to give. Every other state - "none", the
     // answer for a rendition nothing is known about yet, and "ready"/"failed"
     // alike - carries Go's zero progress, which is not a count at all: reading
-    // it as one is what would pin the bar at 0% before the first real report.
+    // it as one is what would pin a mark at 0% before the first real report.
     const downloading = String(status?.state || "").toLowerCase() === "downloading";
     const progress = downloading && Number.isFinite(value) ? value : -1;
-    if (stage !== this._stage) {
-      this._stage = stage;
-      this._progress = progress;
-      return;
+    for (const [trackId, entry] of this._offline) {
+      if (entry.state !== "pending" || String(entry.variantId || "") !== variant) continue;
+      if (stage !== entry.stage) {
+        entry.stage = stage;
+        entry.stageProgress = progress;
+      } else if (progress < 0) {
+        entry.stageProgress = -1;
+      } else if (progress >= Number(entry.stageProgress ?? -1)) {
+        entry.stageProgress = progress;
+      }
+      this._emit("download-progress", trackId);
     }
-    if (progress < 0) {
-      this._progress = -1;
-      return;
-    }
-    if (progress >= this._progress) this._progress = progress;
   }
 
   _stopAudio() {
@@ -3116,11 +2884,9 @@ class Player {
       disabled: true,
       onclick: (event) => this._openSources(event.currentTarget),
     });
-    const progressFill = h("div", { class: "bar" });
-    const progress = h("div", { class: "progress", style: { display: "none", marginTop: "4px" } }, progressFill);
     // The pill sits directly beside the artist, at the end of that name.
     const line = h("div", { class: "player-track-line" }, subtitle, pill);
-    const text = h("div", { class: "track-text" }, title, line, progress);
+    const text = h("div", { class: "track-text" }, title, line);
 
     const star = h("button", {
       class: "btn flat round", title: "Favourite",
@@ -3196,7 +2962,7 @@ class Player {
 
     this._bar = {
       words,
-      root, cover, title, subtitle, pill, progress, progressFill, star, shuffle,
+      root, cover, title, subtitle, pill, star, shuffle,
       previous, play, next, position, volume, mute, room, listen, queue,
     };
   }

@@ -13,7 +13,13 @@ class ShimNode {
   constructor(tag = "div") {
     this.tagName = String(tag).toUpperCase();
     this.children = [];
-    this.style = {};
+    // A style of the real shape: the icon marks write a custom property for how
+    // far a download has got, and `Object.assign` on plain object is not that.
+    this.vars = {};
+    this.style = {
+      setProperty: (name, value) => { this.vars[name] = value; },
+      removeProperty: (name) => { delete this.vars[name]; },
+    };
     this.dataset = {};
     this.attributes = {};
     this.listeners = [];
@@ -73,23 +79,40 @@ test("the room's order reads from the song that is on", async () => {
 test("the held mark says what this device has, wherever it is drawn", async () => {
   const queue = await import("../views/queue.js");
   const { player } = await import("../player.js");
-  const saved = player.offlineState;
+  const savedState = player.offlineState;
+  const savedProgress = player.offlineProgress;
   try {
     player.offlineState = (id) =>
       id === "held-1" ? "ready" : id === "pending-1" ? "pending" : "none";
+    player.offlineProgress = (id) => (id === "pending-1" ? 0.42 : null);
 
     const kept = queue.heldBadge("held-1");
     assert.equal(kept.className, "held ready", "a copy that is here");
     assert.equal(kept.attributes.title, "In memory, on device");
     assert.equal(kept.attributes["aria-label"], "in memory, on device");
+    assert.equal(kept.children.length, 1, "one mark, with no bar beside it");
+    assert.equal(kept.children[0].tagName, "SVG", "the diamond");
 
     const coming = queue.heldBadge("pending-1");
     assert.equal(coming.className, "held pending", "a copy on its way");
     assert.equal(coming.attributes.title, "Downloading to this device");
+    assert.equal(coming.dataset.track, "pending-1", "named, so a report can fill it where it stands");
+    const mark = coming.children[0];
+    assert.equal(mark.className, "dl");
+    assert.equal(mark.children.length, 2, "the glyph and the ink over it");
+    assert.equal(mark.vars["--fill"], "42%", "filled by the share the player reports");
+    assert.equal(mark.added.includes("unknown"), false, "a countable download does not sweep");
+
+    // A download nobody can count sweeps rather than pretending to a fraction.
+    player.offlineProgress = () => null;
+    const uncounted = queue.heldBadge("pending-1").children[0];
+    assert.equal(uncounted.added.includes("unknown"), true);
+    assert.equal(uncounted.vars["--fill"], undefined);
 
     assert.equal(queue.heldBadge("nothing-1"), null, "nothing worth saying for a song with no copy");
   } finally {
-    player.offlineState = saved;
+    player.offlineState = savedState;
+    player.offlineProgress = savedProgress;
   }
 });
 

@@ -90,6 +90,30 @@
   for the position.
 - Reversible: yes.
 
+## 2026-10-16 The queue's own download is what plays, and its row is where it shows
+- Decision: one download per song. The song being played is an entry in the same
+  pipeline as the songs behind it (`player._offline`), at play priority and for
+  the rendition the load chose; the load waits for those bytes and hands the
+  element the copy in memory, so nothing is streamed from the server beside it.
+  The queue's mark on the song's own row is the only place a download is drawn:
+  the green diamond once the copy is here, the download arrow filled with yellow
+  as the bytes arrive (a sweep when nothing can be counted). The playbar's own
+  loader and byte numbers are gone; its subtitle says "downloading…" and no more.
+- Why: Kyle asked for downloads to be handled entirely by the side queue,
+  including the song playing, with no double download and with the sound starting
+  only once the queue's download is done. The bar's own bar had never used the
+  counts it was handed (`_setProgress` tracked a fraction nothing drew), and the
+  one-pipeline rule deletes the whole mid-song hand-over the second transfer
+  existed for: `_swapToOffline`, `_handOverTo`, `_adoptLate`, the spare element,
+  `_whenPlayable`, `_loadCopy`, `_moveOntoTarget`, the fade, `_hidden`,
+  `_elementUrl` and their constants.
+- Cost, named: the first sound now waits for this page's whole transfer of the
+  song rather than starting while the server's file is streamed. The bytes are
+  the same as before (the playing song was going to get a copy once it was in the
+  window) but they no longer arrive during playback. A room is unaffected: its
+  next songs are copied while the previous one plays.
+- Reversible: yes - the window filter in `_prefetch` and `_awaitCopy`.
+
 ## 2026-10-15 A late source does not reset the element that is playing
 - Decision: `_handOverTo` only moves the element in hand onto a new source when
   that source is playable, or when nothing is playing. A source that is not ready
@@ -101,6 +125,9 @@
   again a remote listener reports - while the stream that was already sounding
   was the better thing to keep.
 - Reversible: yes.
+- Superseded 2026-10-16: there is no second source to hand over to any more - the
+  copy of the song *is* what plays (see the entry above), so nothing adopts a
+  source late.
 
 ## 2026-10-15 The song on the element is not one of the copies kept in memory
 - Decision: `_prefetch`'s window for the page's own copies excludes the track the
@@ -115,6 +142,10 @@
   unit tests that pinned the old sequence were updated to the new one - they
   asserted which songs get copies and in what order, which is the contract that
   changed (their intent, eager then paced, is unchanged).
+- Superseded 2026-10-16: the playing track is one of the copies again, at the
+  front of the window, because its copy is now what plays (see the entry above).
+  The extra transfer is not extra: it is the only transfer, and the sound waits
+  for it.
 
 ## 2026-10-15 A compressible asset is packed once, and carries `Content-Length`
 - Decision: `assetEntry` holds the gzipped bytes, packed on the first request

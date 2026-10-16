@@ -20,8 +20,9 @@ repo (`../musoak`), reached through the proxy below.
 ## `web/js` - the app (browser ES modules, no build step)
 
 - `app.js` - boot, layout, view routing, the notification poll.
-- `player.js` - the audio engine: the queue, the single element in hand plus one
-  spare, the hand-over between them, offline copies, save/restore of playback.
+- `player.js` - the audio engine: the queue, the one element, the page's own
+  copies (which are what plays - a song is downloaded once and handed to the
+  element), the queue's download marks, save/restore of playback.
 - `client.js` - the REST + event-stream client, session, in-flight dedupe.
 - `state.js` - the localStorage session and navigation state.
 - `offline.js` - IndexedDB store of kept songs, their download queue and sync.

@@ -488,10 +488,9 @@ class Ui:
 
         Read from the media element itself rather than from the bar's label: a
         bar that says "playing" while the element sits at zero is the bug this
-        suite exists to catch. The element in hand is the one the app names
-        `data-e2e=audio`; the spare it hands over to and from is named
-        `audio-spare`, and both are listed so a mismatch is visible rather than
-        mysterious.
+        suite exists to catch. A page holds one element, named `data-e2e=audio`;
+        every `audio` in the document is listed too, so an element the app did not
+        expect is visible rather than mysterious.
         """
         return self.js(
             "const read = (el) => el ? {src: el.currentSrc || el.src || '',"

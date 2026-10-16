@@ -512,6 +512,10 @@ const ICONS = {
   note: "M9 4h9v2h-7v9.2A3.4 3.4 0 1 1 9 12.2V4Zm-2 8a2 2 0 1 0 2 2V12a2 2 0 0 0-2 0Z",
   upload: "M12 3l5 5h-3v6h-4V8H7l5-5ZM5 18h14v2H5v-2Z",
   download: "M11 3h2v9h3l-4 5-4-5h3V3ZM5 19h14v2H5v-2Z",
+  // The mark a song carries once this device holds it: a diamond. It reads at
+  // 14px as a shape in its own right, which the cloud-with-an-arrow it replaces
+  // did not - that came out a smudge at row size.
+  diamond: "M12 2.4 21.6 12 12 21.6 2.4 12Z",
   cloud: "M7.5 6.5A4 4 0 0 1 15 7.6a3.5 3.5 0 0 1-.4 7H8a4 4 0 0 1-.5-8.1ZM12 11v6h-2v-6H8l4-4 4 4h-2v6h-2v-6h-2v6h-2Z",
   people: "M9 5a3 3 0 1 1 0 6 3 3 0 0 1 0-6Zm0 8c3 0 6 1.5 6 3.5V19H3v-2.5C3 14.5 6 13 9 13Zm7-8a2.5 2.5 0 0 1 0 5 2.5 2.5 0 0 1 0-5Zm.6 7c2 .6 3.4 1.8 3.4 3.3V19h-4v-2.6c0-1.1-.5-2-1.4-2.7.7-.5 1.4-.8 2-.7Z",
   home: "M12 3l9 8h-3v9h-5v-6h-2v6H6v-9H3l9-8Z",
