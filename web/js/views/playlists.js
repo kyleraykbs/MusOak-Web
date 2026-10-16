@@ -841,7 +841,7 @@ function sheet() {
     current,
     h(
       "div",
-      { style: { display: "flex", gap: "8px", alignItems: "center" } },
+      { class: "playlist-actions" },
       h("button", { class: "btn suggested", text: "New playlist", onclick: create }),
       h("button", {
         class: "btn",

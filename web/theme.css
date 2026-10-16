@@ -591,6 +591,7 @@ img.art[data-loaded="true"] { opacity: 1; }
 .upload-selection-row { display: flex; justify-content: space-between; align-items: center; }
 .upload-selection-actions { display: flex; gap: 8px; }
 .upload-list-section { display: flex; flex-direction: column; gap: 10px; }
+.playlist-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
 .form-row { display: flex; gap: 12px; align-items: flex-end; }
 .form-row .field { flex: 1; }
