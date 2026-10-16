@@ -816,7 +816,7 @@ function rowButton(name, size, title, disabled, onclick) {
 
 function artworkTile(path) {
   const client = currentClient();
-  if (path) return artworkImage(client ? client.artworkUrl(path) : path, { className: "art" });
+  if (path) return artworkImage(client ? client.artworkUrl(path) : path, { className: "art", eager: true });
   return h("div", { class: "art", "aria-hidden": "true" }, icon("note", 18));
 }
 
