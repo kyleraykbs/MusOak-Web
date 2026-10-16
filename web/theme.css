@@ -812,6 +812,8 @@ img.art[data-loaded="true"] { opacity: 1; }
 .share-song-results .row { min-width: 0; }
 .history-section { display: flex; flex-direction: column; gap: 8px; }
 .history-section + .history-section { margin-top: 18px; }
+.favourites-track-row { align-items: center; }
+.favourites-track-row > .subtitle { flex: none; white-space: nowrap; }
 
 /* ---------- popovers (menus, source picker) ---------- */
 

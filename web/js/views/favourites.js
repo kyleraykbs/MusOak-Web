@@ -114,7 +114,7 @@ function paint() {
           "div",
           { class: "list" },
           list.map((track, position) =>
-            h("div", { class: "row" },
+            h("div", { class: "row favourites-track-row" },
               trackRow({ track, position, client, onActivate: () => playOne(list, position), menu: trackMenu(track) }),
               h("span", { class: "subtitle", text: `${Number(favoriteRating(track.id)).toFixed(1)}/5.0` })
             )
