@@ -191,7 +191,7 @@ function deviceCard() {
     h(
       "div",
       { class: "list" },
-      h("div", { class: "row" }, field("account-download-limit", "Download at a time", select)),
+      h("div", { class: "row account-device-row" }, field("account-download-limit", "Download at a time", select)),
       h("div", {
         class: "account-device-note",
         text: "How many songs this device fetches at once when it warms the queue or keeps a playlist. Five by default.",

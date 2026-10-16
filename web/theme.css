@@ -602,6 +602,7 @@ img.art[data-loaded="true"] { opacity: 1; }
  .account-device-note { padding: 0 4px 8px; }
  .account-icon-button { padding: 0; border: 0; background: transparent; }
  .account-action-button { flex: 1; min-width: 0; }
+.account-device-row { align-items: flex-start; }
 .search-row-copy { min-width: 0; }
 .search-row-copy .subtitle { overflow-wrap: anywhere; }
 .import-status { min-height: 1.2em; }
