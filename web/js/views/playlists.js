@@ -5,7 +5,7 @@
 
 import {
   h, clear, mount, popover, prompt, confirm, pickFile, fileToBase64, dialog,
-  toast, status, fmtDuration, icon, iconOr, iconButton,
+  toast, status, fmtDuration, icon, iconOr, iconButton, artworkImage, loadingState,
 } from "../dom.js";
 import {
   registerView, navigate, banner, requireLogin, currentClient, serverAnswered,
@@ -82,13 +82,8 @@ let signedInSheet = false; // whether the sheet on screen belongs to an account
 function artwork(path) {
   const client = currentClient();
   const source = path ? (client?.artworkUrl ? client.artworkUrl(path) : path) : "";
-  if (!source) {
-    return h("div", {
-      class: "art small",
-      style: { display: "flex", alignItems: "center", justifyContent: "center", color: "var(--fg4)" },
-    }, icon("list"));
-  }
-  return h("img", { class: "art small", src: source, alt: "", loading: "lazy" });
+  if (!source) return h("div", { class: "art small", "aria-hidden": "true" }, icon("list"));
+  return artworkImage(source, { className: "art small" });
 }
 
 function emptyState(mark, title, subtitle, ...extra) {
@@ -429,8 +424,7 @@ async function load() {
   if (!signedInSheet) sheet();
   const client = currentClient();
   if (!client || !listEl) return;
-  clear(listEl);
-  listEl.appendChild(h("div", { class: "empty" }, h("span", { class: "title", text: "Loading playlists..." })));
+  listEl.appendChild(loadingState("Loading playlists…"));
   // The server is asked first, as it always was - except on a page that already
   // knows it has none (`player.online()` false): there the ask can only fail,
   // and waiting for it to say so keeps somebody who has music on this machine

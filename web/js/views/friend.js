@@ -9,7 +9,7 @@
 // stay within a second or two of each other without re-seeking every poll.
 
 import {
-  h, mount, popover, confirm, toast, fmtDuration, fmtAgo, icon, iconButton, artworkImage,
+  h, mount, popover, confirm, toast, fmtDuration, fmtAgo, icon, iconButton, artworkImage, loadingState,
 } from "../dom.js";
 import {
   navigate, currentClient, banner, requireLogin, openFavoriteDialog, favoriteRating, setFollowing,
@@ -364,7 +364,7 @@ export function renderFriend(container, userId) {
   const load = async () => {
     const client = currentClient();
     if (!client) return;
-    mount(container, emptyState("users", "Loading profile\u2026"));
+    mount(container, loadingState("Loading profile…"));
     let detail;
     try {
       detail = await client.user(userId);

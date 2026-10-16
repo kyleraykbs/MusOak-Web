@@ -7,7 +7,7 @@
 // them in is the button at the top. An import somebody asks for, not something
 // a click does behind their back.
 
-import { h, mount, clear, toast, fmtDuration, icon } from "../dom.js";
+import { h, mount, clear, toast, fmtDuration, icon, loadingState } from "../dom.js";
 import { registerView, navigate, currentClient } from "../app.js";
 import { artworkTile, emptyState } from "./playlist.js";
 import { artistLine } from "./queue.js";
@@ -23,7 +23,7 @@ async function render(container, params = {}) {
     mount(container, emptyState("note", "No playlist", "That link does not name a playlist."));
     return;
   }
-  mount(container, emptyState("note", "Loading the playlist..."));
+  mount(container, loadingState("Loading playlist…"));
   try {
     const answer = await client.providerPlaylist(params.id, params.provider || "");
     if (!container.isConnected) return;

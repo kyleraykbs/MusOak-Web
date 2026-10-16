@@ -15,7 +15,7 @@
 // running. The room's state is read from rooms-state, never from a socket of
 // our own.
 
-import { fmtDuration, h, icon, iconButton, iconOr, mount, popover, scheduleFrame, tapOnly, toast } from "../dom.js";
+import { fmtDuration, h, icon, iconButton, iconOr, mount, popover, scheduleFrame, tapOnly, toast, artworkImage } from "../dom.js";
 import { banner, currentClient, inBrowser, navigate, on, registerView, requireLogin } from "../app.js";
 import { player } from "../player.js";
 import {
@@ -818,14 +818,9 @@ function rowButton(name, size, title, disabled, onclick) {
 }
 
 function artworkTile(path) {
-  if (path) {
-    const client = currentClient();
-    return h("img", { class: "art", alt: "", src: client ? client.artworkUrl(path) : path });
-  }
-  return h("div", {
-    class: "art",
-    style: { display: "flex", alignItems: "center", justifyContent: "center", color: "var(--bg4)" },
-  }, icon("note", 18));
+  const client = currentClient();
+  if (path) return artworkImage(client ? client.artworkUrl(path) : path, { className: "art" });
+  return h("div", { class: "art", "aria-hidden": "true" }, icon("note", 18));
 }
 
 function moveRow(projection, row, to) {
