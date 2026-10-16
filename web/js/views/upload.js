@@ -487,8 +487,8 @@ function showDialog({
       return;
     }
     choice = Number(select.value);
+    searchPanel.style.display = "none";
   });
-
   const selectedTrackId = () => (choice === 0 ? pickedTrackId : "");
 
   // --- confirming -----------------------------------------------------------
