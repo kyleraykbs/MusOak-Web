@@ -128,10 +128,12 @@ export function artworkImage(src, { className = "art", alt = "", eager = false }
     decoding: eager ? "sync" : "async",
     fetchpriority: eager ? "high" : "low",
     onload: (event) => {
+      if (!event.currentTarget.isConnected) return;
       artworkLoads.set(src, "loaded");
       event.currentTarget.dataset.loaded = "true";
     },
     onerror: (event) => {
+      if (!event.currentTarget.isConnected) return;
       artworkLoads.set(src, "failed");
       event.currentTarget.replaceWith(artworkFallback(className, alt));
     },
