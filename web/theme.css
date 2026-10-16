@@ -1641,7 +1641,10 @@ body:has(.drawer:not([hidden])) .player-bar > .btn[title="Open the room"] { disp
   .dialog { width: calc(100vw - 20px); padding: 18px; }
   .popover { max-width: calc(100vw - 20px); }
   .menu-item { padding: 11px 12px; }
-  .upload-association-art-fields { align-items: stretch; flex-direction: column; }
+  .find-source-toolbar { flex-wrap: wrap; }
+  .find-source-toolbar .btn { flex: 1 0 96px; }
+  .find-source-results { max-height: 42vh; }
+  .find-source-row { min-width: 0; }
   .upload-association-fields { min-width: 0; }
   .upload-association-body .upload-search-panel { min-width: 0; }
   .toasts { bottom: calc(var(--player-height) + 12px); }
