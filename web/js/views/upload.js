@@ -424,7 +424,7 @@ function showDialog({
   const query = h("input", { class: "input", type: "search", placeholder: "Search for the song this is" });
   const searchStatus = h("div", { class: "search-status", role: "status", "aria-live": "polite" });
   const results = h("div", { class: "list upload-search-results" });
-  const searchButton = h("button", { class: "btn flat", type: "button", text: "Search", onclick: () => runSearch() });
+  const searchButton = h("button", { class: "btn flat", type: "button", text: "Search", "aria-label": "Search for a matching song", onclick: () => runSearch() });
   const searchControls = h("div", { class: "upload-search-controls" }, query, searchButton);
   const searchPanel = h(
     "div",
@@ -454,6 +454,7 @@ function showDialog({
     searchPending = true;
     searchButton.disabled = true;
     searchButton.textContent = "Searching…";
+    searchButton.setAttribute("aria-label", "Searching for matching songs…");
     generation += 1;
     const mine = generation;
     searchPanel.setAttribute("aria-busy", "true");
@@ -465,6 +466,7 @@ function showDialog({
       searchPending = false;
       searchButton.disabled = false;
       searchButton.textContent = "Search";
+      searchButton.setAttribute("aria-label", "Search for a matching song");
       searchPanel.setAttribute("aria-busy", "false");
       searchStatus.textContent = groups.length ? "" : `Nothing found for \u201c${text}\u201d.`;
     } catch (error) {
@@ -472,6 +474,7 @@ function showDialog({
       searchPending = false;
       searchButton.disabled = false;
       searchButton.textContent = "Retry";
+      searchButton.setAttribute("aria-label", "Retry searching for a matching song");
       activeQuery = "";
       searchPanel.setAttribute("aria-busy", "false");
       searchStatus.textContent = String(error.message || error);
@@ -817,7 +820,7 @@ export function openTrackPicker({ title = "Associate with a song" } = {}) {
     const query = h("input", { class: "input", type: "search", placeholder: "Search for the song this is" });
     const status = h("div", { class: "search-status", role: "status", "aria-live": "polite" });
     const results = h("div", { class: "list upload-search-results" });
-    searchButton = h("button", { class: "btn flat", type: "button", text: "Search", onclick: () => runSearch() });
+    searchButton = h("button", { class: "btn flat", type: "button", text: "Search", "aria-label": "Search for a matching song", onclick: () => runSearch() });
     const searchControls = h("div", { class: "upload-search-controls" }, query, searchButton);
     const searchPanel = h("div", { class: "upload-search-panel upload-picker-panel", "aria-busy": "false" }, searchControls, status, results);
     const runSearch = async () => {
@@ -825,6 +828,7 @@ export function openTrackPicker({ title = "Associate with a song" } = {}) {
       searchPending = true;
       searchButton.disabled = true;
       searchButton.textContent = "Searching…";
+      searchButton.setAttribute("aria-label", "Searching for matching songs…");
       generation += 1;
       const mine = generation;
       status.textContent = "Searching…";
@@ -837,12 +841,14 @@ export function openTrackPicker({ title = "Associate with a song" } = {}) {
         searchPending = false;
         searchButton.disabled = false;
         searchButton.textContent = "Search";
+        searchButton.setAttribute("aria-label", "Search for a matching song");
         searchPanel.setAttribute("aria-busy", "false");
       } catch (error) {
         if (mine !== generation) return;
         searchPending = false;
         searchButton.disabled = false;
         searchButton.textContent = "Retry";
+        searchButton.setAttribute("aria-label", "Retry searching for a matching song");
         searchPanel.setAttribute("aria-busy", "false");
         status.textContent = String(error.message || error);
       }
