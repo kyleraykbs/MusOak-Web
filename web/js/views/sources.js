@@ -229,6 +229,7 @@ export function openSourcePicker(anchor, track, onChange = null, { playingVarian
 
   const panel = h("div", { class: "popover", role: "menu", style: { visibility: "hidden" } });
   const data = { sources: [], preferredVariantId: "", notice: "" };
+  let loadGeneration = 0;
   let closed = false;
 
   const close = () => {
@@ -276,21 +277,25 @@ export function openSourcePicker(anchor, track, onChange = null, { playingVarian
 
   const load = async () => {
     const client = currentClient();
+    const mine = ++loadGeneration;
     if (!client) {
+      if (closed) return;
       data.notice = "no server selected";
       render();
       return;
     }
     try {
       const { sources, preferredVariantId } = await client.sources(track.id);
+      if (closed || mine !== loadGeneration) return;
       data.sources = sources;
       data.preferredVariantId = preferredVariantId;
       data.notice = "";
     } catch (error) {
+      if (closed || mine !== loadGeneration) return;
       report(error);
       data.notice = error?.message || "could not load the sources";
     }
-    render();
+    if (!closed && mine === loadGeneration) render();
   };
 
   const pick = async (source) => {
