@@ -493,6 +493,7 @@ function showDialog({
     generation += 1;
     searchPending = false;
     searchButton.disabled = false;
+    searchButton.textContent = "Search";
     searchPanel.setAttribute("aria-busy", "false");
     activeQuery = "";
     searchStatus.textContent = "";
