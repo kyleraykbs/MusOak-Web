@@ -12,8 +12,11 @@ import { registerView, navigate, currentClient } from "../app.js";
 import { artworkTile, emptyState } from "./playlist.js";
 import { artistLine } from "./queue.js";
 
+let renderGeneration = 0;
+
 async function render(container, params = {}) {
   const client = currentClient();
+  const mine = ++renderGeneration;
   clear(container);
   if (!client) {
     mount(container, emptyState("note", "No server", "Add a server first: playlists live on one."));
@@ -26,10 +29,10 @@ async function render(container, params = {}) {
   mount(container, loadingState("Loading playlist…"));
   try {
     const answer = await client.providerPlaylist(params.id, params.provider || "");
-    if (!container.isConnected) return;
+    if (mine !== renderGeneration || !container.isConnected) return;
     paint(container, params, client, answer);
   } catch (error) {
-    if (!container.isConnected) return;
+    if (mine !== renderGeneration || !container.isConnected) return;
     mount(
       container,
       h(
