@@ -605,6 +605,7 @@ img.art[data-loaded="true"] { opacity: 1; }
 .account-device-row { align-items: flex-start; }
 .account-profile-row { align-items: center; }
 .account-profile-row > .grow { min-width: 0; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .account-profile-row > .btn { flex: none; }
 .account-profile-copy { min-width: 0; }
 .account-profile-copy .subtitle { overflow-wrap: anywhere; }

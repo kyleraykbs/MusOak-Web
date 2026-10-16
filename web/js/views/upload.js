@@ -240,7 +240,7 @@ export function artworkSizeError(bytes) {
 /** Pick several files at once: one song each. Resolves with [] when cancelled. */
 export function pickFiles(accept = "") {
   return new Promise((resolve) => {
-    const input = h("input", { type: "file", accept, multiple: true, style: { display: "none" } });
+    const input = h("input", { class: "visually-hidden", type: "file", accept, multiple: true });
     document.body.appendChild(input);
     input.addEventListener("change", () => {
       const files = Array.from(input.files || []);
@@ -270,7 +270,7 @@ export function pickFolder() {
       multiple: true,
       webkitdirectory: true,
       directory: true,
-      style: { display: "none" },
+      class: "visually-hidden",
     });
     document.body.appendChild(input);
     input.addEventListener("change", () => {
