@@ -931,7 +931,8 @@ img.art[data-loaded="true"] { opacity: 1; }
   width: 100%;
   min-width: 0;
 }
-.player-bar .controls { flex: none; }
+ .player-track-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+ .player-source-pill { flex: 0 1 auto; max-width: 150px; }
 
 /* The track's text is the part that gives way when the bar is tight: it shrinks
    rather than squeezing the seek and the volume past their floor, and what does
@@ -1666,7 +1667,8 @@ body:has(.drawer:not([hidden])) .player-bar > .btn[title="Open the room"] { disp
   .friend-status-row { min-width: 0; }
   .friend-status-row > .social-row-copy { min-width: 0; }
   .friend-status-row > .subtitle { overflow-wrap: normal; }
-  .player .btn.round { width: 44px; height: 44px; font-size: 1.15rem; }
+  .player-source-pill { flex: 0 1 auto; max-width: 100%; }
+  .player-track-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
   /* Above the tab strip, which is the topmost panel down there. */
   .queue-fab { right: 14px; bottom: var(--queue-fab-bottom, 196px); }
   .player-bar > .btn[title="Open the room"] { right: calc(14px + 38px + 10px); }

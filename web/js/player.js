@@ -3092,19 +3092,16 @@ class Player {
     // The artist line hugs its text, so the pill lands directly after the
     // artist name - which, the name being short, usually puts it under the song
     // title rather than out beside the transport.
-    const subtitle = h("div", { class: "subtitle", style: { flex: "0 1 auto", minWidth: "0" } });
+    const subtitle = h("div", { class: "subtitle", role: "status", "aria-live": "polite" });
     const pill = h("button", {
-      class: "source-pill",
-      title: "Choose where this song comes from",
+      class: "source-pill player-source-pill",
       disabled: true,
-      style: { flex: "0 1 auto", maxWidth: "150px" },
       onclick: (event) => this._openSources(event.currentTarget),
     });
     const progressFill = h("div", { class: "bar" });
     const progress = h("div", { class: "progress", style: { display: "none", marginTop: "4px" } }, progressFill);
     // The pill sits directly beside the artist, at the end of that name.
-    const line = h("div", { style: { display: "flex", alignItems: "center", gap: "8px", minWidth: "0" } },
-      subtitle, pill);
+    const line = h("div", { class: "player-track-line" }, subtitle, pill);
     const text = h("div", { class: "track-text" }, title, line, progress);
 
     const star = h("button", {
