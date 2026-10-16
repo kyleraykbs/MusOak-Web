@@ -438,30 +438,23 @@ export async function inviteToRoom(user) {
 async function inviteSomeoneToRoom() {
   const client = currentClient();
   if (!client) return;
+  const body = h("div", { class: "share-dialog-fields" }, h("p", { text: "Which room?" }), loadingState("Loading rooms…"));
+  const ref = dialog({ title: "Invite to a room", body, actions: [{ label: "Cancel" }] });
   let rooms = [];
   try {
     rooms = await client.rooms();
   } catch (error) {
+    ref.close();
     report(error);
     return;
   }
-  let close = null;
-  const body = h("div", { class: "share-dialog-fields" }, h("p", { text: "Which room?" }));
-  body.appendChild(
-    rooms.length
-      ? h(
-          "div",
-          { class: "list" },
-          rooms.map((room) =>
-            roomRow(room, () => {
-              close?.();
-              inviteFriendsToRoom(room);
-            })
-          )
-        )
-      : h("p", { class: "subtitle", text: "There are no rooms yet." })
-  );
-  close = dialog({ title: "Invite to a room", body, actions: [{ label: "Cancel" }] }).close;
+  if (!ref.node.isConnected) return;
+  mount(body, h("p", { text: "Which room?" }), rooms.length
+    ? h("div", { class: "list" }, rooms.map((room) => roomRow(room, () => {
+        ref.close();
+        inviteFriendsToRoom(room);
+      })))
+    : h("p", { class: "subtitle", text: "There are no rooms yet." }));
 }
 
 /**
