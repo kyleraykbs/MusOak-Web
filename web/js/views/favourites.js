@@ -48,7 +48,7 @@ function renderFavourites(container) {
   // A sheet of its own inside the container: when another view takes the
   // container over this one is detached, and an answer arriving late lands in
   // nothing rather than on top of somebody else's page.
-  sheet = h("div", { style: { display: "contents" } });
+  sheet = h("div", { class: "view-sheet" });
   mount(container, sheet);
   return loadFavourites();
 }

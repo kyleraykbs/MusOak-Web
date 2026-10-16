@@ -51,7 +51,7 @@ function paint(container, params, client, answer) {
   const tracks = answer?.tracks || [];
   const name = playlist.title || "Playlist";
   const from = params.from && typeof params.from === "object" ? params.from : { view: "search", params: {} };
-  const sheet = h("div", { style: { display: "contents" } });
+  const sheet = h("div", { class: "view-sheet" });
 
   clear(container);
   mount(container, sheet);

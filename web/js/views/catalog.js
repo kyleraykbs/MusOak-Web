@@ -114,7 +114,7 @@ async function syncAndSay(client, { id, name, album = false }, refresh) {
  *  ask for and what they draw, which is all they should differ in. */
 function collectionPage(container, params, { icon, what, plural, loading }) {
   const client = currentClient();
-  const sheet = h("div", { style: { display: "contents" } });
+  const sheet = h("div", { class: "view-sheet" });
   mount(container, sheet);
   if (!client) {
     mount(sheet, emptyState(icon, "No server", `Add a server first: ${plural} live on one.`));

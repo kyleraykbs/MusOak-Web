@@ -360,7 +360,7 @@ let activeName = "";
 function renderPlaylist(container, params = {}) {
   // A sheet of its own inside the container, so a fetch that finishes after the
   // user has moved on lands in a detached node instead of another view's page.
-  sheet = h("div", { style: { display: "contents" } });
+  sheet = h("div", { class: "view-sheet" });
   mount(container, sheet);
   activeId = String(params?.id || "");
   return loadPlaylist();

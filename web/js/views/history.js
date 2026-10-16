@@ -51,7 +51,7 @@ function onScreen() {
 function render(container) {
   // A sheet of its own, so an answer arriving after another view took the
   // container over lands nowhere rather than on top of that view.
-  sheet = h("div", { style: { display: "contents" } });
+  sheet = h("div", { class: "view-sheet" });
   mount(container, sheet);
   mount(sheet, loadingState("Loading history…"));
   return load();
