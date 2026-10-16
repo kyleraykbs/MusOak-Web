@@ -565,9 +565,11 @@ img.art[data-loaded="true"] { opacity: 1; }
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 80;
+  z-index: 120;
   isolation: isolate;
+  pointer-events: auto;
 }
+.dialog-backdrop .dialog { pointer-events: auto; }
 
 .dialog {
   background: var(--bg0-s);

@@ -189,6 +189,9 @@ export function render(parent, build) {
  */
 export function dialog({ title, body, actions = [], onOpen, closeButton = false }) {
   const backdrop = h("div", { class: "dialog-backdrop" });
+  // A new modal always replaces an older modal. This avoids stacked backdrops
+  // intercepting clicks while a shell refresh opens the sign-in dialog again.
+  document.querySelectorAll(".dialog-backdrop").forEach((node) => node.remove());
   const close = () => {
     document.removeEventListener("keydown", onKey);
     backdrop.remove();
@@ -198,49 +201,30 @@ export function dialog({ title, body, actions = [], onOpen, closeButton = false 
   };
   const panel = h(
     "div",
-    { class: "dialog", role: "dialog", "aria-modal": "true" },
+    { class: "dialog", role: "dialog", "aria-modal": "true", tabindex: "-1" },
     closeButton
-      ? iconButton("cross", {
-          title: "Close",
-          class: "btn flat round dialog-close",
-          onclick: () => close(),
-        })
+      ? iconButton("cross", { title: "Close", class: "btn flat round dialog-close", onclick: () => close() })
       : null,
-    title ? h("h2", { text: title }) : null,
+    title ? h("h2", { text: title, id: "dialog-title" }) : null,
     body ? (typeof body === "string" ? h("p", { text: body }) : body) : null,
-    h(
-      "div",
-      { class: "actions" },
-      actions.map((action) =>
-        h("button", {
-          class: `btn ${action.class || ""}`.trim(),
-          text: action.label,
-          onclick: async (event) => {
-            const keep = action.onClick ? await action.onClick(event) : undefined;
-            if (keep !== false && action.keepOpen !== true) close();
-          },
-        })
-      )
-    )
+    h("div", { class: "actions" }, actions.map((action) => h("button", {
+      class: `btn ${action.class || ""}`.trim(),
+      text: action.label,
+      onclick: async (event) => {
+        const keep = action.onClick ? await action.onClick(event) : undefined;
+        if (keep !== false && action.keepOpen !== true) close();
+      },
+    })))
   );
-  backdrop.appendChild(panel);
   backdrop.addEventListener("mousedown", (event) => {
     if (event.target === backdrop) close();
   });
   document.addEventListener("keydown", onKey);
   document.body.appendChild(backdrop);
+  panel.focus?.();
   onOpen?.(panel, close);
   return { close, node: panel };
 }
-
-/**
- * A popover anchored to an element. Items are {label, icon?, onClick, disabled?,
- * checked?, trailing?} or {separator: true} or {header: "…"}. `trailing` is a
- * second, smaller button on the row: {icon, title, onClick}. Closes on outside
- * click, Escape, or after an item is chosen.
- */
-/** Which button has a menu open, so pressing it again closes rather than
- *  reopening one. */
 let menuAnchor = null;
 
 export function popover(anchor, items) {
