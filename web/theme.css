@@ -461,6 +461,9 @@ img.art[data-loaded="true"] { opacity: 1; }
 .nav-item:focus-visible,
 .row.clickable:focus-visible,
 .menu-item:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.view-surface { animation: view-surface-in 140ms ease-out; }
+.content[aria-busy="true"] .topbar { border-bottom-color: var(--blue-dim); }
+.content[aria-busy="true"] .loading-state { min-height: 220px; }
 
 /* Failed artwork falls back to the same neutral tile without changing row
    dimensions or leaving a broken-image glyph in the layout. */

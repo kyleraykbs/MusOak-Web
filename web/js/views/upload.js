@@ -5,7 +5,7 @@
 // in the order the files were chosen. Manage owns the panel and the list.
 
 import { banner, currentClient, requireLogin } from "../app.js";
-import { h, mount, dialog, toast, confirm, pickFile, fileToBase64, icon, iconButton, artworkImage } from "../dom.js";
+import { h, mount, dialog, toast, confirm, pickFile, fileToBase64, icon, iconButton, artworkImage, loadingState } from "../dom.js";
 import { artworkTile } from "./playlist.js";
 
 /** What the server accepts as audio, by file extension. */
@@ -457,8 +457,7 @@ function showDialog({
     if (!text) return;
     generation += 1;
     const mine = generation;
-    searchStatus.textContent = "Searching\u2026";
-    mount(results);
+    mount(results, loadingState("Searching…"));
     try {
       const { groups } = await client.search(text, 10);
       if (mine !== generation) return;

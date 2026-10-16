@@ -143,7 +143,7 @@ async function renderArtist(container, params = {}) {
     icon: "people",
     what: "artist",
     plural: "artists",
-    loading: "Loading the artist...",
+    loading: "Loading the artist…",
   });
   if (!page) return;
   const { client, sheet } = page;
@@ -236,7 +236,7 @@ async function renderAlbum(container, params = {}) {
     icon: "note",
     what: "album",
     plural: "albums",
-    loading: "Loading the album...",
+    loading: "Loading the album…",
   });
   if (!page) return;
   const { client, sheet } = page;
