@@ -503,9 +503,10 @@ function render(container, params = {}) {
     return;
   }
   // Which tab to open on takes a round trip; the bar is drawn once it is known.
+  const renderGeneration = ++generation;
   mount(container, h("div", { class: "loading-panel" }, skeletonRows(5), h("span", { class: "loading-caption", text: "Loading friends…" })));
   openingTab().then((tab) => {
-    if (activeTab) return; // they picked one while we asked
+    if (renderGeneration !== generation || activeTab || !container.isConnected || state.view !== "friends") return;
     activeTab = tab;
     mount(container, tabBar(container), bodyEl);
     showTab();
