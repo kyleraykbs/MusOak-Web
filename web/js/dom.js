@@ -119,6 +119,7 @@ const artworkLoads = new Map();
 export function artworkImage(src, { className = "art", alt = "", eager = false } = {}) {
   if (!src) return null;
   const loaded = artworkLoads.get(src);
+  if (loaded === "failed") return artworkFallback(className, alt);
   const image = h("img", {
     class: className,
     src,
@@ -126,20 +127,21 @@ export function artworkImage(src, { className = "art", alt = "", eager = false }
     loading: eager ? "eager" : "lazy",
     decoding: "async",
     fetchpriority: eager ? "high" : "auto",
-    ...(loaded === "failed" ? { "data-failed": "true" } : {}),
     onload: (event) => {
       artworkLoads.set(src, "loaded");
       event.currentTarget.dataset.loaded = "true";
     },
     onerror: (event) => {
       artworkLoads.set(src, "failed");
-      event.currentTarget.dataset.failed = "true";
-      event.currentTarget.removeAttribute("src");
-      event.currentTarget.setAttribute("alt", alt || "Artwork unavailable");
+      event.currentTarget.replaceWith(artworkFallback(className, alt));
     },
   });
   if (loaded === "loaded") image.dataset.loaded = "true";
   return image;
+}
+
+function artworkFallback(className, alt) {
+  return h("span", { class: `${className} art-fallback`, role: alt ? "img" : null, "aria-label": alt || "Artwork unavailable" }, icon("note", 18));
 }
 
 /**

@@ -18,7 +18,7 @@ import {
   popover,
   prompt,
   toast,
-  loadingState,
+  loadingState, artworkImage,
 } from "../dom.js";
 import { banner, currentClient, navigate, refreshCurrent, registerView, requireLogin, serverAnswered, openFavoriteDialog, favoriteRating, inBrowser } from "../app.js";
 import { isSignedIn, state } from "../state.js";
