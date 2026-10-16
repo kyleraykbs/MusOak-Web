@@ -355,6 +355,7 @@ export async function addToPlaylistDialog(tracks) {
 
 let sheet = null; // the piece of the page this view owns
 let activeId = ""; // and the playlist it drew
+let activeName = "Playlist";
 let loadGeneration = 0;
 
 function renderPlaylist(container, params = {}) {
