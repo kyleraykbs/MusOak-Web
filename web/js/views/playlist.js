@@ -311,62 +311,44 @@ export async function addToPlaylistDialog(tracks) {
   const client = currentClient();
   const list = Array.from(tracks || []);
   if (!client || !list.length) return;
-
+  const picker = h("select", { class: "input", disabled: true }, h("option", { text: "Loading playlists…" }));
+  const name = h("input", { class: "input", placeholder: "…or a new playlist name", disabled: true });
+  const status = h("span", { class: "subtitle", role: "status", text: "Loading playlists…" });
+  const body = h("div", { class: "field" }, h("label", { text: `${list.length} track(s)` }), picker, name, status);
+  let submit = null;
+  const ref = dialog({ title: "Add to playlist", body, actions: [{ label: "Cancel" }, { label: "Add", class: "suggested", onClick: () => submit?.() }], onOpen: () => name.focus() });
   let playlists;
   try {
     playlists = await client.playlists();
   } catch (error) {
+    ref.close();
     reportError(error);
     return;
   }
-
-  const picker = h(
-    "select",
-    { class: "input" },
-    playlists.length
-      ? playlists.map((playlist) => h("option", { value: playlist.id, text: playlist.name }))
-      : h("option", { value: "", text: "(no playlists yet)" })
-  );
-  const name = h("input", { class: "input", placeholder: "…or a new playlist name" });
-  const status = h("span", { class: "subtitle" });
-
-  dialog({
-    title: "Add to playlist",
-    body: h(
-      "div",
-      { class: "field" },
-      h("label", { text: `${list.length} track(s)` }),
-      picker,
-      name,
-      status
-    ),
-    actions: [
-      { label: "Cancel" },
-      {
-        label: "Add",
-        class: "suggested",
-        onClick: async () => {
-          const wanted = name.value.trim();
-          const chosen = playlists.find((playlist) => playlist.id === picker.value);
-          if (!wanted && !chosen) {
-            status.textContent = "pick a playlist or name a new one";
-            return false;
-          }
-          try {
-            const target = wanted ? await client.createPlaylist(wanted) : chosen;
-            await client.addToPlaylist(target.id, list.map((track) => track.id));
-            toast(`Added ${list.length} track(s) to “${target.name}”`);
-            refreshCurrent();
-          } catch (error) {
-            reportError(error);
-            status.textContent = error?.message || String(error);
-            return false;
-          }
-        },
-      },
-    ],
-    onOpen: () => name.focus(),
-  });
+  mount(picker, playlists.length
+    ? playlists.map((playlist) => h("option", { value: playlist.id, text: playlist.name }))
+    : h("option", { value: "", text: "(no playlists yet)" }));
+  picker.disabled = false;
+  name.disabled = false;
+  status.textContent = "";
+  submit = async () => {
+    const wanted = name.value.trim();
+    const chosen = playlists.find((playlist) => playlist.id === picker.value);
+    if (!wanted && !chosen) {
+      status.textContent = "pick a playlist or name a new one";
+      return false;
+    }
+    try {
+      const target = wanted ? await client.createPlaylist(wanted) : chosen;
+      await client.addToPlaylist(target.id, list.map((track) => track.id));
+      toast(`Added ${list.length} track(s) to “${target.name}”`);
+      refreshCurrent();
+    } catch (error) {
+      reportError(error);
+      status.textContent = error?.message || String(error);
+      return false;
+    }
+  };
 }
 
 // --- the playlist page -----------------------------------------------------
