@@ -465,23 +465,22 @@ async function inviteSomeoneToRoom() {
 export async function inviteFriendsToRoom(room) {
   const client = currentClient();
   if (!client || !roomIdOf(room)) return;
+  const invited = new Set();
+  const rows = new Map();
+  const list = h("div", { class: "list" }, loadingState("Loading friends…"));
+  const search = h("input", { class: "input", type: "search", placeholder: "Search friends", "aria-label": "Search friends", disabled: true });
+  const body = h("div", { class: "invite-dialog-fields" }, h("p", { text: `Invite friends to ${room?.name || "the room"}.` }), search, list);
+  const ref = dialog({ title: "Invite to a room", closeButton: true, body, actions: [{ label: "Done" }] });
   let friends = [];
   try {
     friends = await loadFriends(client);
   } catch (error) {
+    ref.close();
     report(error);
     return;
   }
-
-  const invited = new Set();
-  const rows = new Map();
-  const list = h("div", { class: "list" });
-  const search = h("input", {
-    class: "input",
-    type: "search",
-    placeholder: "Search friends",
-    "aria-label": "Search friends",
-  });
+  if (!ref.node.isConnected) return;
+  search.disabled = false;
 
   // Only the list is redrawn, so typing never costs the search box its focus.
   const paint = () => {
@@ -514,19 +513,7 @@ export async function inviteFriendsToRoom(room) {
 
   search.addEventListener("input", paint);
   paint();
-
-  dialog({
-    title: "Invite to a room",
-    closeButton: true,
-    body: h(
-      "div",
-      { class: "invite-dialog-fields" },
-      h("p", { text: `Invite friends to ${room?.name || "the room"}.` }),
-      search,
-      list
-    ),
-    actions: [{ label: "Done" }],
-  });
+  return ref;
 }
 
 /** The mark a friend's row carries once their invite has gone. */
