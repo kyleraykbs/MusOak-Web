@@ -250,6 +250,15 @@ def sign_in_ui(ui, account):
     # A token, not a member id: every guest has a member id for the rooms, so
     # that alone cannot tell a signed-in person from a nobody.
     ui.wait(lambda: ui.token() != "", f"signing in as {account.username} never produced a token", timeout=25)
+    # The token is not the dialog being gone. The form closes itself after it
+    # succeeds, and until it has, its backdrop is over the whole page: a click
+    # that lands before then is intercepted by it, and the failure lands in
+    # whichever test clicked next rather than here.
+    ui.wait(
+        lambda: not ui.has("div.dialog-backdrop") or None,
+        "the sign-in dialog's backdrop never cleared",
+        timeout=15,
+    )
     return ui
 
 
@@ -263,4 +272,10 @@ def register_ui(ui, username, password):
     ui.type(f"{DIALOG}//input[@placeholder='password']", password)
     ui.click_xpath(f"{DIALOG}//button[normalize-space(.)='Create account']", "the create submit")
     ui.wait(lambda: ui.token() != "", f"creating {username} never produced a token", timeout=25)
+    # As in sign_in_ui: the token arrives before the form it came from is gone.
+    ui.wait(
+        lambda: not ui.has("div.dialog-backdrop") or None,
+        "the create dialog's backdrop never cleared",
+        timeout=15,
+    )
     return ui
