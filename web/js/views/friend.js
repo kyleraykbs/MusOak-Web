@@ -384,6 +384,7 @@ export function renderFriend(container, userId) {
 
 /** The page (and the playbar's stop button) share this one follower. */
 let follow = null;
+let followGeneration = 0;
 
 /** Times arrive either as milliseconds or as seconds; both land in ms. */
 function stamp(value, now = Date.now()) {
@@ -429,6 +430,7 @@ async function startListeningAlong(user) {
   const client = currentClient();
   if (!client || !user?.id) return;
   const userId = String(user.id);
+  const mine = ++followGeneration;
   if (follow?.userId === userId) return;
   stopFollowing();
   if (inRoom()) {
@@ -440,6 +442,7 @@ async function startListeningAlong(user) {
   try {
     document = await client.userPlayback(userId);
   } catch (error) {
+    if (mine !== followGeneration) return;
     fail(error);
     return;
   }
