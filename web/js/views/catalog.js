@@ -226,9 +226,13 @@ async function renderAlbum(container, params = {}) {
   const { client, sheet } = page;
 
   let album;
+  let loadGeneration = 0;
   let syncing = false;
   const load = async () => {
-    album = await client.album(params.id);
+    const mine = ++loadGeneration;
+    const next = await client.album(params.id);
+    if (mine !== loadGeneration || !sheet.isConnected) return;
+    album = next;
     paint();
     if (shortOfItsRelease()) void fetchTheRest();
   };
