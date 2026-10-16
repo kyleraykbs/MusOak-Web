@@ -1661,6 +1661,9 @@ body:has(.drawer:not([hidden])) .player-bar > .btn[title="Open the room"] { disp
   .player .art { width: 40px; height: 40px; }
   .player .source-pill { max-width: 100%; font-size: 0.8rem; }
   .player .btn.flat.round { width: 40px; height: 40px; }
+  .friend-status-row { min-width: 0; }
+  .friend-status-row > .social-row-copy { min-width: 0; }
+  .friend-status-row > .subtitle { overflow-wrap: normal; }
   .player .btn.round { width: 44px; height: 44px; font-size: 1.15rem; }
   /* Above the tab strip, which is the topmost panel down there. */
   .queue-fab { right: 14px; bottom: var(--queue-fab-bottom, 196px); }
