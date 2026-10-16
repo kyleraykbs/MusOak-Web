@@ -465,7 +465,7 @@ async function inviteSomeoneToRoom() {
 export async function inviteFriendsToRoom(room) {
   const client = currentClient();
   if (!client || !roomIdOf(room)) return;
-  const invited = new Set();
+  const pending = new Set();
   const rows = new Map();
   const list = h("div", { class: "list" }, loadingState("Loading friends…"));
   const search = h("input", { class: "input", type: "search", placeholder: "Search friends", "aria-label": "Search friends", disabled: true });
@@ -505,10 +505,15 @@ export async function inviteFriendsToRoom(room) {
   };
 
   const send = async (friend) => {
-    if (invited.has(friend.id)) return;
-    if (!(await sendRoomInvite(client, friend, room))) return;
-    invited.add(friend.id);
-    rows.get(friend.id)?.appendChild(sentMark());
+    if (invited.has(friend.id) || pending.has(friend.id)) return;
+    pending.add(friend.id);
+    try {
+      if (!(await sendRoomInvite(client, friend, room))) return;
+      invited.add(friend.id);
+      rows.get(friend.id)?.appendChild(sentMark());
+    } finally {
+      pending.delete(friend.id);
+    }
   };
 
   search.addEventListener("input", paint);
