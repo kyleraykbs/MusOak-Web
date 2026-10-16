@@ -1669,6 +1669,10 @@ body:has(.drawer:not([hidden])) .player-bar > .btn[title="Open the room"] { disp
   .friend-status-row > .social-row-copy { min-width: 0; }
   .friend-status-row > .subtitle { overflow-wrap: normal; }
   .player-source-pill { flex: 0 1 auto; max-width: 100%; }
+  .file-import-fields { min-width: 0; }
+  .file-import-fields .import-actions { flex-wrap: wrap; }
+  .file-import-fields .import-actions .btn { flex: 1 1 140px; }
+  .file-import-fields .import-report { max-height: 30vh; }
   .player-track-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
   /* Above the tab strip, which is the topmost panel down there. */
   .queue-fab { right: 14px; bottom: var(--queue-fab-bottom, 196px); }
