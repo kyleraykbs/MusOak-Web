@@ -27,6 +27,7 @@ import {
   pause,
   resume,
   skip,
+  vote,
   autoVoteCurrent,
   moveItem,
   followWithPlayer,
@@ -51,6 +52,11 @@ let hookedPlayer = false;
 let autoSkipLowRatings = false;
 let votedItemId = "";
 let votedRoomId = "";
+// The line under the song saying where the room is in it. Module state because
+// the redraw that writes it and the ticker that reads it are not the same call;
+// undeclared, the assignment threw "assignment to undeclared variable" and the
+// whole room view drew "This view could not be shown".
+let positionLabel = null;
 
 // Loaded with the app, this view attaches the shared player to the room. Every
 // member follows the room's current song and position the same way wherever
@@ -90,6 +96,11 @@ async function autoVoteCurrentIfNeeded() {
   const itemId = String(room?.current?.item?.id || "");
   const roomId = String(room?.roomId || "");
   if (!itemId || (itemId === votedItemId && roomId === votedRoomId)) return;
+  // Somebody who has already said what they think of this song is not overruled
+  // by their own saved rating arriving a moment later: the automatic vote is a
+  // convenience for a member who has not voted, not a replacement for one who
+  // has.
+  if (room.current.votes?.[room.me] != null) return;
   votedItemId = itemId;
   votedRoomId = roomId;
   try {
@@ -269,7 +280,10 @@ function votes(room, current) {
   const mine = Number(current.votes[room.me] || 0);
   const buttons = [1, 2, 3, 4, 5].map((score) =>
     h("button", {
-      class: `btn small ${mine === score ? "suggested" : ""}`.trim(),
+      // A score is a decimal from 0.1 to 5.0, so the button a member pressed is
+      // the one within a tenth of it - an exact match would drop the mark from
+      // a rating saved as, say, 4.0 the moment anything rounded it.
+      class: `btn small ${Math.abs(mine - score) < 0.05 ? "suggested" : ""}`.trim(),
       text: String(score),
       title: VOTE_LABELS[score],
       onclick: () => act(() => vote(score)),
@@ -392,6 +406,14 @@ function queueRow(room, item, index, mine, draggable = false, playingNow = false
   const own = String(item.addedBy || "") === String(room.me || "");
   const row = h(
     "div",
+    {
+      // A queue row is a row: the class carries the list's own layout and the
+      // drop target a drag looks for (`.closest('.row')`), and `data-key` is
+      // what the drop is matched by. Without either, the room's rows drew as
+      // bare boxes that could not be dragged at all.
+      class: playingNow ? "row now" : "row",
+      "data-key": String(item.id || ""),
+    },
     h("span", { class: "time", "aria-label": playingNow ? "Playing now" : `Queue position ${index + 1}` }, playingNow ? icon("play", 12) : String(index + 1)),
     h(
       "div",

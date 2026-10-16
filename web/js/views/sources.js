@@ -7,7 +7,7 @@
 
 import { banner, currentClient, navigate, requireLogin } from "../app.js";
 import { state } from "../state.js";
-import { clear, h, icon, dialog, toast, loadingState, menuNotice, skeletonRows } from "../dom.js";
+import { clear, h, icon, mount, dialog, toast, loadingState, menuNotice, skeletonRows } from "../dom.js";
 import { platformFilter, enabledPlatforms } from "../platforms.js";
 
 /**

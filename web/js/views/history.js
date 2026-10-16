@@ -42,6 +42,10 @@ export function playCountLabel(plays) {
 
 let sheet = null; // the piece of the page this view owns
 let recent = [];
+// The songs played most. Named for what it holds rather than `top`: an
+// assignment to a bare `top` lands on the window's own accessor, which has no
+// setter, and the page died on "setting getter-only property top".
+let mostPlayed = [];
 let loadGeneration = 0;
 
 function onScreen() {
@@ -63,7 +67,7 @@ async function load() {
 
   if (!isSignedIn()) {
     recent = [];
-    top = [];
+    mostPlayed = [];
     paint();
     return;
   }
@@ -73,12 +77,12 @@ async function load() {
     const [nextRecent, nextTop] = await Promise.all([client.history(), client.topTracks()]);
     if (mine !== loadGeneration || !sheet?.isConnected) return;
     recent = nextRecent;
-    top = nextTop;
+    mostPlayed = nextTop;
   } catch (error) {
     if (mine !== loadGeneration || !sheet?.isConnected) return;
     reportError(error);
     recent = [];
-    top = [];
+    mostPlayed = [];
   }
   if (!sheet || !sheet.isConnected) return;
   paint();
@@ -106,7 +110,7 @@ function paint() {
       track: play.track,
       detail: playedLengthLabel(play.playedMs),
     })),
-    section("Most played", top, (entry) => ({
+    section("Most played", mostPlayed, (entry) => ({
       track: entry.track,
       detail: playCountLabel(entry.plays),
     }))

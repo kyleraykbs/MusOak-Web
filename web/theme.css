@@ -527,6 +527,20 @@ img.art[data-loaded="true"] { opacity: 1; }
 .btn, .nav-item, .menu-item { -webkit-tap-highlight-color: transparent; }
 .btn:focus-visible, .nav-item:focus-visible, .menu-item:focus-visible { box-shadow: 0 0 0 2px var(--bg0), 0 0 0 4px var(--blue); }
 .view-surface { min-height: 100%; contain: layout style; }
+/* A view mounts its cards and sections as siblings, and this is the one place
+   that decides how far apart they sit. A sheet is a view's own wrapper - a
+   `display: contents` box, so its children are the ones that need the gap. */
+.view-surface > * + *,
+.view-sheet > * + * { margin-top: 16px; }
+/* Inside a card, a block follows another one with room to breathe. Rows are a
+   list and stay flush: their own separators already say where one ends. */
+.card > * + * { margin-top: 12px; }
+.card > .row + .row,
+.card > .row:first-child { margin-top: 0; }
+.card > .row { padding-block: 12px; }
+/* A row of fields or buttons: label above its control, controls across. */
+.form-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.form-row .field { flex: 1 1 200px; }
 .upload-search-panel { display: none; flex-direction: column; gap: 8px; }
 .upload-search-controls { display: flex; gap: 8px; align-items: center; }
 .upload-search-controls .input { flex: 1 1 auto; min-width: 0; }
@@ -597,8 +611,8 @@ img.art[data-loaded="true"] { opacity: 1; }
 .import-actions { display: flex; gap: 8px; }
 .duplicate-groups { display: flex; flex-direction: column; gap: 10px; }
 .upload-selection-row { display: flex; justify-content: space-between; align-items: center; }
-.playlist-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 0 0 16px; }
-.upload-list-section { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+.playlist-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.upload-list-section { display: flex; flex-direction: column; gap: 10px; }
 .upload-association-body { display: flex; flex-direction: column; gap: 12px; }
 .upload-association-art-fields { display: flex; gap: 12px; align-items: center; }
 .upload-association-fields { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
@@ -774,7 +788,7 @@ img.art[data-loaded="true"] { opacity: 1; }
 .friends-section { display: flex; flex-direction: column; gap: 8px; }
 .friends-search-toolbar { display: flex; gap: 8px; align-items: center; }
 .friends-search-toolbar .input { min-width: 0; flex: 1; }
-.friends-tab-body { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
+.friends-tab-body { display: flex; flex-direction: column; gap: 12px; }
 .room-header { padding: 14px 16px; }
 .room-title { font-size: 20px; color: var(--fg0); }
 .room-now-playing-row { display: flex; align-items: center; gap: 8px; border: 0; padding: 6px 0; }
@@ -794,9 +808,9 @@ img.art[data-loaded="true"] { opacity: 1; }
 .playlist-import-results { max-height: 220px; overflow: auto; }
 .playlist-import-selector { display: flex; gap: 6px; border: 0; padding: 0; overflow-x: auto; }
 .playlist-import-selector .tab { flex: none; }
-.favourites-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 16px; }
+.favourites-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .favourites-actions .btn, .playlist-actions .btn, .playlist-detail-actions .btn { flex: none; }
-.playlist-detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 16px 0 0; }
+.playlist-detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .room-now-playing-row > .grow { min-width: 0; }
 .room-transport { display: flex; gap: 6px; flex: none; }
 .rooms-section-header { display: flex; align-items: center; gap: 10px; border: 0; padding: 0 0 10px; margin-bottom: 4px; }

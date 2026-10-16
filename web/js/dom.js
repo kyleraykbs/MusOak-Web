@@ -521,6 +521,8 @@ const ICONS = {
   play: "M8 5v14l11-7L8 5Z",
   pause: "M6 5h4v14H6V5Zm8 0h4v14h-4V5Z",
   next: "M6 4l9 8-9 8V4Zm11 0h2v16h-2V4Z",
+  prev: "M18 4v16l-9-8 9-8ZM5 4h2v16H5V4Z",
+  shuffle: "M17 4h4v4h-2V7.4l-4.3 4.3-1.4-1.4L17.6 6H17V4ZM4 6h4l9 9v1.6l1.6-1.6H20v4h-4v-2h.6L7 7.4V6H4Zm0 11h4l2.3-2.3 1.4 1.4L8.5 18.4 9 19H4v-2Z",
   queue: "M4 5h2v2H4V5Zm4 0h12v2H8V5ZM4 11h2v2H4v-2Zm4 0h12v2H8v-2ZM4 17h2v2H4v-2Zm4 0h12v2H8v-2Z",
   plus: "M11 4h2v7h7v2h-7v7h-2v-7H4v-2h7V4Z",
   minus: "M4 11h16v2H4v-2Z",
