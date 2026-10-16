@@ -38,6 +38,7 @@ let tracks = [];
 /** Why the last read of them failed, so an empty page is not read as an empty
  *  account: the server's own sentence, or "". */
 let loadFailed = "";
+let loadGeneration = 0;
 
 function onScreen() {
   return Boolean(sheet?.isConnected);
@@ -54,6 +55,7 @@ function renderFavourites(container) {
 
 async function loadFavourites() {
   if (!sheet || !sheet.isConnected) return;
+  const mine = ++loadGeneration;
 
   if (!isSignedIn()) {
     tracks = [];
@@ -62,17 +64,19 @@ async function loadFavourites() {
   }
 
   const client = currentClient();
-  // A read that is on its way says so, so a slow server is not a blank page.
   if (!tracks.length) mount(sheet, skeletonRows(4));
   try {
-    tracks = await client.favorites();
+    const next = await client.favorites();
+    if (mine !== loadGeneration || !sheet?.isConnected) return;
+    tracks = next;
     loadFailed = "";
   } catch (error) {
+    if (mine !== loadGeneration || !sheet?.isConnected) return;
     reportError(error);
     tracks = [];
     loadFailed = error?.message || String(error);
   }
-  if (!sheet || !sheet.isConnected) return; // the view was replaced while we fetched
+  if (!sheet || !sheet.isConnected) return;
   paint();
 }
 
