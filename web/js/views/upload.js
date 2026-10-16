@@ -5,7 +5,7 @@
 // in the order the files were chosen. Manage owns the panel and the list.
 
 import { banner, currentClient, requireLogin } from "../app.js";
-import { h, mount, dialog, toast, confirm, pickFile, fileToBase64, icon, iconButton } from "../dom.js";
+import { h, mount, dialog, toast, confirm, pickFile, fileToBase64, icon, iconButton, artworkImage } from "../dom.js";
 import { artworkTile } from "./playlist.js";
 
 /** What the server accepts as audio, by file extension. */
@@ -367,9 +367,9 @@ function showDialog({
   const paintTile = () => {
     mount(
       tile,
-      art.url
-        ? h("img", { alt: "", src: art.url, style: { width: "100%", height: "100%", objectFit: "cover" } })
-        : h("span", { style: { color: "var(--gray)" } }, icon(editing ? "note" : "plus", 26))
+        art.url
+          ? artworkImage(art.url, { className: "upload-art-preview", eager: true })
+          : h("span", { style: { color: "var(--gray)" } }, icon(editing ? "note" : "plus", 26))
     );
   };
   paintTile();

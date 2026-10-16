@@ -432,15 +432,15 @@ async function importView(path) {
 
 function buildLayout() {
   layout = {
-    sidebar: h("aside", { class: "sidebar" }),
-    main: h("section", { class: "main" }),
-    player: h("footer", { class: "player" }),
-    content: h("div", { class: "content" }),
+    sidebar: h("aside", { class: "sidebar", "aria-label": "Application sidebar" }),
+    main: h("main", { class: "main" }),
+    player: h("footer", { class: "player", "aria-label": "Player" }),
+    content: h("div", { class: "content", role: "region", "aria-busy": "false" }),
     bannerSlot: h("div", { class: "banner-slot" }),
     title: h("h1", { text: "MusOak" }),
     bell: iconButton("bell", { title: "Notifications", onclick: openNotifications }),
     brand: h("div", { class: "brand" }),
-    nav: h("nav", { class: "nav" }),
+    nav: h("nav", { class: "nav", "aria-label": "Primary navigation" }),
     corner: h("div", { class: "corner" }),
   };
   // The brand, the server and the sign-in live together so a phone can put them
@@ -1000,6 +1000,7 @@ function renderContent() {
   const shell = layout.viewContainer || (layout.viewContainer = h("div", { class: "page" }));
   const container = h("div", { class: "view-surface" });
   if (!shell.isConnected) layout.content.appendChild(shell);
+  layout.content.setAttribute("aria-busy", "true");
   mount(shell, container);
 
   if (!state.server) {
@@ -1027,7 +1028,9 @@ function renderContent() {
   })();
   // A view that fetches before it draws can fail later than this call: that
   // failure must reach only the current surface.
-  Promise.resolve(rendered).catch((error) => {
+  Promise.resolve(rendered).finally(() => {
+    if (container.isConnected && container === layout.viewContainer?.firstElementChild) layout.content.setAttribute("aria-busy", "false");
+  }).catch((error) => {
     if (container.isConnected && container === layout.viewContainer?.firstElementChild) reportViewFailure(container, view, error);
   });
 }
