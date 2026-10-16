@@ -748,6 +748,7 @@ img.art[data-loaded="true"] { opacity: 1; }
 .room-title { font-size: 20px; color: var(--fg0); }
 .room-now-playing-row { display: flex; align-items: center; gap: 8px; border: 0; padding: 6px 0; }
 .room-queue-title { font-size: 15px; font-weight: 600; }
+.search-playlist-menu { display: flex; flex-direction: column; gap: 4px; max-height: min(50vh, 360px); overflow-y: auto; }
 .room-now-playing-row > .grow { min-width: 0; }
 .room-transport { display: flex; gap: 6px; flex: none; }
 .rooms-section-header { display: flex; align-items: center; border: 0; padding: 0 0 8px; }

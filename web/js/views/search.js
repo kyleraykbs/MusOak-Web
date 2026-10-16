@@ -199,7 +199,7 @@ async function addToPlaylist(tracks) {
   const body = playlists.length
     ? h(
         "div",
-        { style: { display: "flex", flexDirection: "column", gap: "4px" } },
+        { class: "search-playlist-menu" },
         playlists.map((playlist) =>
           h("button", {
             class: "menu-item",
