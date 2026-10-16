@@ -608,6 +608,7 @@ img.art[data-loaded="true"] { opacity: 1; }
 .account-profile-row > .btn { flex: none; }
 .account-profile-copy { min-width: 0; }
 .account-profile-copy .subtitle { overflow-wrap: anywhere; }
+.account-guest-icon { display: inline-flex; line-height: 0; }
 .search-row-copy { min-width: 0; }
  .upload-dialog-notice { margin: 0; }
 .playlist-track-number { width: 24px; flex: none; text-align: right; }

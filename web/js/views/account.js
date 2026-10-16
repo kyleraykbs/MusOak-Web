@@ -535,7 +535,7 @@ async function moveRanking(from, to) {
 function guestCard(container) {
   container.appendChild(h("div", { class: "card" },
     h("div", { class: "empty" },
-      h("span", { class: "icon account-error-icon" }, icon("gear", 38)),
+      h("span", { class: "icon account-guest-icon" }, icon("gear", 38)),
       h("span", { class: "title", text: "Guest session" }),
       h("span", { text: "You are browsing this server as a guest, so there is no account here to edit. Sign in to change your display name, icon, providers and password." }),
       h("button", { class: "btn suggested", text: "Sign in", onclick: () => requireLogin() }))));
