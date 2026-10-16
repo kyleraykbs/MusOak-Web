@@ -433,6 +433,7 @@ function showDialog({
   );
 
   let generation = 0;
+  let activeQuery = "";
   const pick = (track) => {
     const picked = trackMatch(track);
     pickedTrackId = picked.id;
@@ -445,6 +446,8 @@ function showDialog({
   const runSearch = async () => {
     const text = query.value.trim();
     if (!text) return;
+    if (activeQuery === text) return;
+    activeQuery = text;
     generation += 1;
     const mine = generation;
     mount(results, loadingState("Searching…"));
