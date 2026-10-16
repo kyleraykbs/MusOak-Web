@@ -488,6 +488,7 @@ async function startListeningAlong(user) {
 }
 
 function stopFollowing(notify = false) {
+  followGeneration += 1;
   if (!follow) return;
   clearInterval(follow.timer);
   for (const off of follow.unsubscribers) {
@@ -502,6 +503,7 @@ function stopFollowing(notify = false) {
   player?.clearFollowingMode?.();
   setFollowing(null);
   if (notify) toast(`Stopped listening along with ${name}.`);
+  followGeneration += 1;
 }
 
 async function poll() {
