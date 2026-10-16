@@ -6,7 +6,7 @@
 // length or a count where a playlist row carries a number and a duration.
 
 import { currentClient, on, registerView, requireLogin } from "../app.js";
-import { fmtDuration, h, mount } from "../dom.js";
+import { fmtDuration, h, mount, loadingState } from "../dom.js";
 import { isSignedIn } from "../state.js";
 import { artistLine, playOne, playTracks, queueButton, reportError } from "./queue.js";
 import { artworkTile, emptyState } from "./playlist.js";
@@ -53,6 +53,7 @@ function render(container) {
   // container over lands nowhere rather than on top of that view.
   sheet = h("div", { style: { display: "contents" } });
   mount(container, sheet);
+  mount(sheet, loadingState("Loading history…"));
   return load();
 }
 

@@ -9,7 +9,7 @@
 // stay within a second or two of each other without re-seeking every poll.
 
 import {
-  h, mount, popover, confirm, toast, fmtDuration, fmtAgo, icon, iconButton,
+  h, mount, popover, confirm, toast, fmtDuration, fmtAgo, icon, iconButton, artworkImage,
 } from "../dom.js";
 import {
   navigate, currentClient, banner, requireLogin, openFavoriteDialog, favoriteRating, setFollowing,
@@ -64,20 +64,8 @@ function menuButton(open) {
 function cover(client, path, round = false) {
   const source = path ? (client?.artworkUrl ? client.artworkUrl(path) : path) : "";
   const shape = round ? "art round small" : "art small";
-  if (source) return h("img", { class: shape, src: source, alt: "", loading: "lazy" });
-  return h(
-    "div",
-    {
-      class: shape,
-      style: {
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        color: "var(--fg4)",
-      },
-    },
-    icon("note", 16)
-  );
+  if (source) return artworkImage(source, { className: shape });
+  return h("div", { class: shape, "aria-hidden": "true" }, icon("note", 16));
 }
 
 function play(tracks, start = 0) {

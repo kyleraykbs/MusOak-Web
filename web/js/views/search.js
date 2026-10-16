@@ -5,7 +5,7 @@
 
 import {
   h, clear, mount, dialog, popover, prompt, debounce, fmtDuration, toast,
-  icon, iconOr, iconButton,
+  icon, iconOr, iconButton, artworkImage,
 } from "../dom.js";
 import {
   registerView, banner, requireLogin, currentClient, navigate,
@@ -95,13 +95,8 @@ function artwork(path, round = false) {
   const client = currentClient();
   const source = path ? (client?.artworkUrl ? client.artworkUrl(path) : path) : "";
   const shape = `art small${round ? " round" : ""}`;
-  if (!source) {
-    return h("div", {
-      class: shape,
-      style: { display: "flex", alignItems: "center", justifyContent: "center", color: "var(--fg4)" },
-    }, icon("note"));
-  }
-  return h("img", { class: shape, src: source, alt: "", loading: "lazy" });
+  if (!source) return h("div", { class: shape, "aria-hidden": "true" }, icon("note"));
+  return artworkImage(source, { className: shape });
 }
 
 function emptyState(mark, title, subtitle) {

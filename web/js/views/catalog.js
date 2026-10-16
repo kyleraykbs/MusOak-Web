@@ -6,7 +6,7 @@
 //
 // Both are detail views reached from a result, so neither appears in the nav.
 
-import { h, mount, clear, iconButton, popover, toast } from "../dom.js";
+import { h, mount, clear, iconButton, popover, toast, loadingState, artworkImage } from "../dom.js";
 import { currentClient, navigate, registerView } from "../app.js";
 import { playOne, playTracks } from "./queue.js";
 import { emptyState, playButtons, trackCountLine, trackMenu, trackRow } from "./playlist.js";
@@ -21,9 +21,8 @@ const syncedThisSession = new Set();
 // --- pieces both pages use --------------------------------------------------
 
 function artTile(client, artworkUrl, className = "art") {
-  if (!artworkUrl) return h("div", { class: className });
-  const src = client?.artworkUrl ? client.artworkUrl(artworkUrl) : artworkUrl;
-  return h("img", { class: className, src, alt: "", loading: "lazy" });
+  if (!artworkUrl) return h("div", { class: className, "aria-hidden": "true" });
+  return artworkImage(client?.artworkUrl ? client.artworkUrl(artworkUrl) : artworkUrl, { className, eager: className.includes("big") });
 }
 
 function artistLine(item) {
@@ -125,7 +124,7 @@ function collectionPage(container, params, { icon, what, plural, loading }) {
     mount(sheet, emptyState(icon, `No ${what}`, `That link does not name an ${what}.`));
     return null;
   }
-  mount(sheet, emptyState(icon, loading));
+  mount(sheet, loadingState(loading));
   return { client, sheet };
 }
 

@@ -5,7 +5,7 @@
 // they are around. The API decides "around" with its `online` flag (they played
 // something within the last five minutes).
 
-import { h, mount, popover, confirm, debounce, toast, icon, iconButton } from "../dom.js";
+import { h, mount, popover, confirm, debounce, toast, icon, iconButton, loadingState } from "../dom.js";
 import { registerView, navigate, currentClient, banner, requireLogin, setFriendRequestCount } from "../app.js";
 import { state } from "../state.js";
 import {
@@ -58,7 +58,7 @@ function emptyState(name, title, subtitle) {
 }
 
 function loading(text) {
-  return h("div", { class: "empty" }, h("span", { class: "title", text }));
+  return loadingState(text);
 }
 
 /** The answer failed: say what happened where the list was, and banner it. */

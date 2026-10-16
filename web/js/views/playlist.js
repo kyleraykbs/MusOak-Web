@@ -18,6 +18,7 @@ import {
   popover,
   prompt,
   toast,
+  artworkImage,
 } from "../dom.js";
 import { banner, currentClient, navigate, refreshCurrent, registerView, requireLogin, serverAnswered, openFavoriteDialog, favoriteRating, inBrowser } from "../app.js";
 import { isSignedIn, state } from "../state.js";
@@ -82,21 +83,11 @@ export function emptyState(name, title, body, ...extra) {
   );
 }
 
-/** A cover tile: the artwork when the server has one, a note otherwise. */
+/** A cover tile: stable dimensions plus lazy, asynchronous image decode. */
 export function artworkTile(client, path, size = "") {
   const className = `art ${size}`.trim();
-  if (path) {
-    return h("img", { class: className, alt: "", src: client ? client.artworkUrl(path) : path });
-  }
-  return h("div", {
-    class: className,
-    style: {
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      color: "var(--bg4)",
-    },
-  }, icon("note", size === "big" ? 44 : 18));
+  if (!path) return h("div", { class: className, "aria-hidden": "true" }, icon("note", size === "big" ? 44 : 18));
+  return artworkImage(client ? client.artworkUrl(path) : path, { className, eager: size === "big" });
 }
 
 /**

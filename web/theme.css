@@ -401,6 +401,59 @@ button, input, select, textarea {
 .row .time { color: var(--fg4); font-variant-numeric: tabular-nums; font-size: 13px; }
 /* A subtitle that is a sentence rather than a list line: it wraps, so it
    cannot set a phone's page wider than the screen. */
+
+/* Shared asynchronous states: reserve the same footprint as a panel instead of
+   replacing a page's geometry every time a request starts or finishes. */
+.loading-state {
+  min-height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--fg4);
+  text-align: center;
+}
+.loading-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--bg3);
+  border-top-color: var(--aqua);
+  border-radius: 50%;
+  animation: musoak-spin 800ms linear infinite;
+}
+@keyframes musoak-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .loading-spinner { animation: none; }
+}
+.art[data-failed="true"] { opacity: 0; }
+.art { contain: paint; }
+img.art { display: block; }
+
+.page > .section-title,
+.page > .card,
+.page > .list { margin-block: 0; }
+.section-title { color: var(--fg0); font-weight: 600; }
+.panel-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.panel-heading > .grow { min-width: 0; }
+.panel-heading .subtitle { color: var(--fg4); font-size: 0.86rem; }
+
+/* Panels use the same heading rhythm everywhere: title, supporting line, then
+   content. This keeps view changes from feeling like each page was designed in
+   a separate application. */
+.section-title + .list,
+.section-title + .card { margin-top: 8px; }
+.card > .section-title { margin-bottom: 12px; }
+.list > .row { min-height: 58px; }
+.list > .row:focus-within { background: var(--bg1); outline: 1px solid var(--blue-dim); outline-offset: -1px; }
+.btn:focus-visible,
+.nav-item:focus-visible,
+.row.clickable:focus-visible,
+.menu-item:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+/* Failed artwork falls back to the same neutral tile without changing row
+   dimensions or leaving a broken-image glyph in the layout. */
+.art[data-failed="true"] { display: inline-flex; align-items: center; justify-content: center; }
+.art[data-failed="true"]::after { content: "♪"; color: var(--bg4); font-size: 1.2rem; }
 .row .subtitle.wrap { white-space: normal; }
 
 .art {

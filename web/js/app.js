@@ -992,7 +992,10 @@ function renderContent() {
   if (!layout) return;
   const view = views.get(state.view);
   layout.title.textContent = view ? view.title : "MusOak";
-  clear(layout.content);
+  // Keep one page shell mounted: views own their loading state, so navigation
+  // changes content without blanking the whole layout or shifting the drawer.
+  const container = layout.viewContainer || (layout.viewContainer = h("div", { class: "page" }));
+  if (!container.isConnected) layout.content.appendChild(container);
 
   if (!state.server) {
     layout.content.appendChild(
@@ -1009,11 +1012,6 @@ function renderContent() {
     return;
   }
 
-  // One container for the life of the app, cleared on every render: a view may
-  // finish fetching after the next one has painted, and a container that is
-  // replaced would leave that answer nowhere to land.
-  const container = layout.viewContainer || (layout.viewContainer = h("div", { class: "page" }));
-  if (!container.isConnected) layout.content.appendChild(container);
   clear(container);
   const rendered = (() => {
     try {

@@ -80,6 +80,36 @@ export function mount(parent, ...children) {
   return parent;
 }
 
+/** A stable loading block used by views before their first answer arrives. */
+export function loadingState(label = "Loading…") {
+  return h(
+    "div",
+    { class: "loading-state", role: "status", "aria-live": "polite" },
+    h("span", { class: "loading-spinner", "aria-hidden": "true" }),
+    h("span", { text: label })
+  );
+}
+
+/**
+ * One consistent artwork element. Keeping the tile in the DOM while an image
+ * loads prevents rows and panels from jumping; lazy decoding avoids making a
+ * long queue compete with the current song for the main thread.
+ */
+export function artworkImage(src, { className = "art", alt = "", eager = false } = {}) {
+  if (!src) return null;
+  return h("img", {
+    class: className,
+    src,
+    alt,
+    loading: eager ? "eager" : "lazy",
+    decoding: "async",
+    onerror: (event) => {
+      event.currentTarget.dataset.failed = "true";
+      event.currentTarget.removeAttribute("src");
+    },
+  });
+}
+
 /**
  * A function that runs `fn` at most once per frame.
  *
