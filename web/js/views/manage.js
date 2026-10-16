@@ -6,7 +6,7 @@
 // edit that, play it, or remove it.
 
 import { currentClient, registerView, requireLogin, banner, toast } from "../app.js";
-import { h, mount, popover, confirm, icon, iconButton, artworkImage } from "../dom.js";
+import { h, mount, popover, confirm, icon, iconButton, artworkImage, loadingState } from "../dom.js";
 import { artistLine, openEditUploadDialog, openTrackPicker, openUploadDialog, trackMatch } from "./upload.js";
 import { trackMenu } from "./playlist.js";
 import { playTracks } from "./queue.js";
@@ -103,7 +103,7 @@ async function load(target) {
   }
   target.generation += 1;
   const mine = target.generation;
-  mount(target.list, h("div", { style: { color: "var(--fg4)", fontSize: "12.5px" }, text: "Loading\u2026" }));
+  mount(target.list, loadingState("Loading uploads…"));
   try {
     const [uploads, duplicates] = await Promise.all([
       active.uploads(),
