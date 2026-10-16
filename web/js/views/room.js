@@ -375,7 +375,7 @@ function queuePanel(room, heading, items, mine) {
   return h(
     "div",
     { class: "queue-panel", "data-panel": mine ? "mine" : "room" },
-    h("div", { class: "title", style: { fontSize: "15px", fontWeight: "600" }, text: `${heading} · ${upcoming.length}` }),
+    h("div", { class: "title room-queue-title", text: `${heading} · ${upcoming.length}` }),
     upcoming.length
       ? list
       : h(
