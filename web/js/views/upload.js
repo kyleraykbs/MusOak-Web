@@ -453,6 +453,7 @@ function showDialog({
     activeQuery = text;
     searchPending = true;
     searchButton.disabled = true;
+    searchButton.textContent = "Searching…";
     generation += 1;
     const mine = generation;
     searchPanel.setAttribute("aria-busy", "true");
@@ -463,12 +464,15 @@ function showDialog({
       mount(results, trackResultRows(groups, pick));
       searchPending = false;
       searchButton.disabled = false;
+      searchButton.textContent = "Search";
       searchPanel.setAttribute("aria-busy", "false");
       searchStatus.textContent = groups.length ? "" : `Nothing found for \u201c${text}\u201d.`;
     } catch (error) {
       if (mine !== generation) return;
       searchPending = false;
       searchButton.disabled = false;
+      searchButton.textContent = "Retry";
+      activeQuery = "";
       searchPanel.setAttribute("aria-busy", "false");
       searchStatus.textContent = String(error.message || error);
     }
@@ -817,9 +821,9 @@ export function openTrackPicker({ title = "Associate with a song" } = {}) {
     const searchPanel = h("div", { class: "upload-search-panel upload-picker-panel", "aria-busy": "false" }, searchControls, status, results);
     const runSearch = async () => {
       const text = query.value.trim();
-      if (!text || searchPending) return;
       searchPending = true;
       searchButton.disabled = true;
+      searchButton.textContent = "Searching…";
       generation += 1;
       const mine = generation;
       status.textContent = "Searching…";
@@ -831,12 +835,13 @@ export function openTrackPicker({ title = "Associate with a song" } = {}) {
         mount(results, trackResultRows(groups, (track) => finish(trackMatch(track))));
         searchPending = false;
         searchButton.disabled = false;
+        searchButton.textContent = "Search";
         searchPanel.setAttribute("aria-busy", "false");
-        status.textContent = groups.length ? "" : `Nothing found for \u201c${text}\u201d.`;
       } catch (error) {
         if (mine !== generation) return;
         searchPending = false;
         searchButton.disabled = false;
+        searchButton.textContent = "Retry";
         searchPanel.setAttribute("aria-busy", "false");
         status.textContent = String(error.message || error);
       }
