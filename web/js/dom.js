@@ -125,8 +125,8 @@ export function artworkImage(src, { className = "art", alt = "", eager = false }
     src,
     alt,
     loading: eager ? "eager" : "lazy",
-    decoding: "async",
-    fetchpriority: eager ? "high" : "auto",
+    decoding: eager ? "sync" : "async",
+    fetchpriority: eager ? "high" : "low",
     onload: (event) => {
       artworkLoads.set(src, "loaded");
       event.currentTarget.dataset.loaded = "true";
