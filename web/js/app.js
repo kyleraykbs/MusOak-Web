@@ -1083,7 +1083,7 @@ export function rebindClient() {
 export async function refreshMe() {
   if (!isSignedIn()) {
     state.user = null;
-    state.favorites = new Set();
+    state.favorites = new Map();
     emit("user-changed", null);
     renderCorner();
     return;
@@ -1107,29 +1107,66 @@ export async function refreshMe() {
 async function refreshFavorites() {
   try {
     const tracks = await client.favorites();
-    state.favorites = new Set(tracks.map((track) => track.id));
+    state.favorites = new Map(
+      tracks.map((track) => [String(track.id), normalizeRating(track.rating)])
+    );
     emit("favorites-changed", state.favorites);
   } catch {
     /* a guest has none */
   }
 }
 
-/** Toggle a favourite and say so everywhere. */
-export async function toggleFavorite(trackId) {
+function normalizeRating(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.min(5, Math.max(0.1, Math.round(number * 10) / 10)) : 5;
+}
+
+export function favoriteRating(trackId) {
+  return state.favorites instanceof Map ? state.favorites.get(String(trackId)) : null;
+}
+
+/** Open the rating dialog for a track. Existing favourites can be removed here. */
+export function openFavoriteDialog(trackId) {
   if (!requireLogin()) return;
-  const had = state.favorites.has(trackId);
-  if (had) state.favorites.delete(trackId);
-  else state.favorites.add(trackId);
+  const id = String(trackId || "");
+  if (!id) return;
+  const existing = favoriteRating(id);
+  const slider = h("input", { class: "input", type: "range", min: "0.1", max: "5", step: "0.1", value: String(existing || 5) });
+  const value = h("strong", { text: `${Number(slider.value).toFixed(1)}/5.0` });
+  slider.addEventListener("input", () => { value.textContent = `${Number(slider.value).toFixed(1)}/5.0`; });
+  const status = h("div", { class: "subtitle", text: "" });
+  const actions = [{ label: "Cancel" }];
+  if (existing != null) actions.push({ label: "Remove rating", class: "destructive", onClick: () => saveFavoriteRating(id, null) });
+  actions.push({ label: existing == null ? "Rate" : "Save", class: "suggested", onClick: () => saveFavoriteRating(id, Number(slider.value), status) });
+  dialog({
+    title: existing == null ? "Rate favourite" : "Change rating",
+    body: h("div", { class: "field" }, h("label", { text: "Your rating" }), slider, value, status),
+    actions,
+  });
+}
+
+async function saveFavoriteRating(trackId, rating, status) {
+  const before = favoriteRating(trackId);
+  if (rating == null) state.favorites.delete(String(trackId));
+  else state.favorites.set(String(trackId), normalizeRating(rating));
   emit("favorites-changed", state.favorites);
   try {
-    if (had) await client.removeFavorite(trackId);
-    else await client.addFavorite(trackId);
+    if (rating == null) await client.removeFavorite(trackId);
+    else await client.addFavorite(trackId, rating);
   } catch (error) {
-    if (had) state.favorites.add(trackId);
-    else state.favorites.delete(trackId);
+    if (before == null) state.favorites.delete(String(trackId));
+    else state.favorites.set(String(trackId), before);
     emit("favorites-changed", state.favorites);
-    banner(`could not change that favourite: ${error.message}`, "error");
+    if (status) status.textContent = error?.message || String(error);
+    else banner(`could not change that favourite: ${error.message}`, "error");
+    return false;
   }
+  return true;
+}
+
+/** Compatibility action used by stars and menus: opening is the action now. */
+export function toggleFavorite(trackId) {
+  openFavoriteDialog(trackId);
 }
 
 // --- the server picker -----------------------------------------------------
@@ -1261,7 +1298,7 @@ export function switchServer(url) {
   setServer(url);
   buildClient();
   state.user = null;
-  state.favorites = new Set();
+  state.favorites = new Map();
   state.online = true;
   emit("user-changed", null);
   renderBrand();
@@ -1406,7 +1443,7 @@ function signOut() {
   client?.logout().catch(() => null);
   updateSession({ token: "" });
   state.user = null;
-  state.favorites = new Set();
+  state.favorites = new Map();
   // Signed out is signed out: the bell's poll has nothing left to ask this
   // account for, and a tab that keeps asking every thirty seconds as a guest is
   // a request nobody is waiting on.

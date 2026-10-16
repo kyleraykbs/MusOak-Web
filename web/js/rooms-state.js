@@ -914,9 +914,18 @@ export function seek(positionMs = 0) {
   });
 }
 
-/** A score of 1 (bad) to 5 (great); enough of them skips the track. */
-export function vote(score) {
-  return command(({ client, roomId }) => client.roomVote(roomId, Math.round(num(score))));
+/** A score from 0.1 (bad) to 5 (great). */
+export function vote(score, options = {}) {
+  const value = Math.min(5, Math.max(0.1, Math.round(num(score) * 10) / 10));
+  return command(({ client, roomId }) => client.roomVote(roomId, value, options));
+}
+
+/** Cast the current user's saved rating once when a new room item starts. */
+export function autoVoteCurrent(room, { autoSkip = false } = {}) {
+  const item = room?.current?.item;
+  const rating = state.favorites instanceof Map ? state.favorites.get(str(item?.trackId)) : null;
+  if (!item || rating == null) return Promise.resolve(null);
+  return command(({ client, roomId }) => client.roomVote(roomId, rating, { autoSkip }));
 }
 
 // --- following the room with the player ------------------------------------

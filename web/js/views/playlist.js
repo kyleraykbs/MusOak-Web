@@ -19,7 +19,7 @@ import {
   prompt,
   toast,
 } from "../dom.js";
-import { banner, currentClient, navigate, refreshCurrent, registerView, requireLogin, serverAnswered, toggleFavorite, inBrowser } from "../app.js";
+import { banner, currentClient, navigate, refreshCurrent, registerView, requireLogin, serverAnswered, openFavoriteDialog, favoriteRating, inBrowser } from "../app.js";
 import { isSignedIn, state } from "../state.js";
 import { currentRoom } from "../rooms-state.js";
 import * as offline from "../offline.js";
@@ -222,9 +222,10 @@ export function trackMenu(track, extra = [], { playlistId = "" } = {}) {
   items.push({ label: "Add to playlist…", onClick: () => addToPlaylistDialog([track]) });
   items.push({ label: "Download song file", onClick: () => downloadSongFile(track) });
   items.push({ label: "Share…", onClick: () => shareTrack(track) });
+  const rating = favoriteRating(track.id);
   items.push({
-    label: state.favorites.has(track.id) ? "Unfavourite" : "Favourite",
-    onClick: () => toggleFavorite(track.id),
+    label: rating == null ? "Rate favourite…" : `Rating ${Number(rating).toFixed(1)}/5.0…`,
+    onClick: () => openFavoriteDialog(track.id),
   });
   // Only when the track names an artist: an artist's page needs an id, and a
   // name alone cannot name one.

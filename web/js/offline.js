@@ -166,9 +166,8 @@ export function keptGoneMessage(name, missing, total) {
  */
 export const DEFAULT_DOWNLOAD_LIMIT = 5;
 
-/** The most that may run at once, straight from the setting: a page that
- *  changed it does not have to be reloaded for it to apply. */
 function downloadLimit() {
+  if (state.downloadLimit === "all") return Number.POSITIVE_INFINITY;
   const wanted = Number(state.downloadLimit);
   if (!Number.isFinite(wanted) || wanted <= 0) return DEFAULT_DOWNLOAD_LIMIT;
   return Math.min(20, Math.floor(wanted));
@@ -186,8 +185,16 @@ export function createDownloadQueue({ limit = downloadLimit } = {}) {
     while (running < Math.max(1, Number(limit()) || 1) && waiting.length) {
       const next = waiting.shift();
       running += 1;
-      Promise.resolve()
-        .then(next.task)
+      let work;
+      try {
+        // Invoke immediately: callers use the start of a transfer as their
+        // scheduling observation, while the promise still owns rejection and
+        // slot release for asynchronous work.
+        work = next.task();
+      } catch (error) {
+        work = Promise.reject(error);
+      }
+      Promise.resolve(work)
         .then(next.resolve, next.reject)
         .finally(() => {
           running -= 1;
@@ -205,6 +212,11 @@ export function createDownloadQueue({ limit = downloadLimit } = {}) {
 
 /** The queue every cached copy goes through. */
 const downloads = createDownloadQueue();
+
+/** Run one server-backed media transfer under this device's concurrency limit. */
+export function withDownloadSlot(task) {
+  return downloads(task);
+}
 
 /**
  * The order a playlist's songs should be fetched in.

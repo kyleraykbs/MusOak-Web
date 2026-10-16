@@ -168,16 +168,18 @@ function build() {
  * warms and the playlists it keeps. */
 function deviceCard() {
   const select = h("select", { class: "input", id: "account-download-limit" });
-  for (const count of [1, 2, 3, 5, 8, 12, 20]) {
+  const options = [1, 2, 3, 5, 8, 12, 20];
+  for (const count of options) {
     select.appendChild(
-      h("option", { value: String(count), text: count === 1 ? "1 song at a time" : `${count} songs at a time` })
+      h("option", { value: String(count), text: `${count} song${count === 1 ? "" : "s"} at a time` })
     );
   }
+  select.appendChild(h("option", { value: "all", text: "All songs at a time" }));
   select.value = String(state.downloadLimit || 5);
   select.onchange = () => {
-    state.downloadLimit = Number(select.value) || 5;
+    state.downloadLimit = select.value === "all" ? "all" : Number(select.value) || 5;
     saveLocal();
-    toast(`Fetching ${state.downloadLimit} at a time`);
+    toast(`Fetching ${select.value === "all" ? "all songs" : state.downloadLimit} at a time`);
   };
   return h(
     "div",

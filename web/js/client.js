@@ -321,8 +321,8 @@ export class Client {
     return this.get("/api/v1/me/favorites").then((payload) => payload?.tracks || []);
   }
 
-  addFavorite(trackId) {
-    return this.post("/api/v1/me/favorites", { trackId });
+  addFavorite(trackId, rating = 5) {
+    return this.post("/api/v1/me/favorites", { trackId, rating: Number(rating) });
   }
 
   removeFavorite(trackId) {
@@ -789,9 +789,9 @@ export class Client {
     return this.post(`/api/v1/rooms/${roomId}/seek`, { positionMs }).then(this.roomSnapshot);
   }
 
-  /** A score from 1 (bad) to 5 (great), changeable while the track plays. */
-  roomVote(roomId, score) {
-    return this.post(`/api/v1/rooms/${roomId}/vote`, { score }).then(this.roomSnapshot);
+  /** A score from 0.1 (bad) to 5 (great), changeable while the track plays. */
+  roomVote(roomId, score, { autoSkip = false } = {}) {
+    return this.post(`/api/v1/rooms/${roomId}/vote`, { score: Number(score), ...(autoSkip ? { autoSkip: true } : {}) }).then(this.roomSnapshot);
   }
 
   /** The room's own state, whether the endpoint wrapped it or not. */

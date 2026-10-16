@@ -9,6 +9,7 @@ import { currentClient, on, registerView, requireLogin } from "../app.js";
 import { isSignedIn, state } from "../state.js";
 import { playOne, reportError } from "./queue.js";
 import { emptyState, playButtons, trackCountLine, trackMenu, trackRow } from "./playlist.js";
+import { favoriteRating } from "../app.js";
 
 registerView({
   id: "favourites",
@@ -94,7 +95,7 @@ function paint() {
   // What the account starred, in the order the server listed it: a star taken
   // back in a row menu drops out of the list at once. Playing from here is not
   // playing a playlist, so no playlist is recorded for a restore.
-  const list = tracks.filter((track) => state.favorites.has(track.id));
+  const list = tracks.filter((track) => favoriteRating(track.id) != null);
   const client = currentClient();
   mount(
     sheet,
@@ -109,13 +110,10 @@ function paint() {
           "div",
           { class: "list" },
           list.map((track, position) =>
-            trackRow({
-              track,
-              position,
-              client,
-              onActivate: () => playOne(list, position),
-              menu: trackMenu(track),
-            })
+            h("div", { class: "row" },
+              trackRow({ track, position, client, onActivate: () => playOne(list, position), menu: trackMenu(track) }),
+              h("span", { class: "subtitle", text: `${Number(favoriteRating(track.id)).toFixed(1)}/5.0` })
+            )
           )
         )
       : loadFailed

@@ -27,7 +27,7 @@ import {
   pause,
   resume,
   skip,
-  vote,
+  autoVoteCurrent,
   moveItem,
   followWithPlayer,
 } from "../rooms-state.js";
@@ -48,7 +48,9 @@ let ticker = 0;
 let unsubscribe = null;
 let unhookOnline = null;
 let hookedPlayer = false;
-let positionLabel = null;
+let autoSkipLowRatings = false;
+let votedItemId = "";
+let votedRoomId = "";
 
 // Loaded with the app, this view attaches the shared player to the room. Every
 // member follows the room's current song and position the same way wherever
@@ -63,7 +65,10 @@ function render(container) {
   // somebody navigates to it: without letting the last pair go, every visit
   // leaves another redraw behind for each beat of the room.
   if (unsubscribe) unsubscribe();
-  unsubscribe = subscribe(() => scheduleRedraw());
+  unsubscribe = subscribe(() => {
+    scheduleRedraw();
+    autoVoteCurrentIfNeeded();
+  });
   if (unhookOnline) unhookOnline();
   // Offline is said on the card, so the card has to be redrawn when it changes.
   unhookOnline = on("online-changed", () => scheduleRedraw());
@@ -78,6 +83,20 @@ function render(container) {
 function refresh() {
   if (currentRoom()) refreshRoom().catch(report);
   paint();
+}
+async function autoVoteCurrentIfNeeded() {
+  const room = currentRoom();
+  if (!room?.current?.started) return;
+  const itemId = String(room?.current?.item?.id || "");
+  const roomId = String(room?.roomId || "");
+  if (!itemId || (itemId === votedItemId && roomId === votedRoomId)) return;
+  votedItemId = itemId;
+  votedRoomId = roomId;
+  try {
+    await autoVoteCurrent(room, { autoSkip: autoSkipLowRatings });
+  } catch (error) {
+    console.warn("saved room rating failed", error);
+  }
 }
 
 const scheduleRedraw = scheduleFrame(() => {
@@ -114,6 +133,10 @@ function paint() {
     room.error ? h("div", { class: "banner error" }, h("span", { class: "grow", text: room.error })) : null,
     header(room),
     nowPlaying(room),
+    h("label", { class: "row", style: { padding: "8px 0", border: "0" } },
+      h("input", { type: "checkbox", checked: autoSkipLowRatings, onchange: (event) => { autoSkipLowRatings = event.currentTarget.checked; } }),
+      h("span", { text: "Auto-skip low ratings" })
+    ),
     members(room),
     queues(room)
   );

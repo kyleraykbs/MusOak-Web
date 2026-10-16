@@ -1,3 +1,4 @@
+import { state } from "../state.js";
 // The pure part of the player and the source picker: what the bar says, which
 // files stay fetched, what plays next, and how the picker orders and marks its
 // rows. Everything here is a function of its arguments — no server; the few

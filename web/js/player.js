@@ -13,7 +13,6 @@
 //
 // The file is importable without a DOM: the shell guards its own boot, and
 // nothing here touches the document until mountPlayer() is called.
-
 import {
   banner, currentClient, emit, navigate, on, requireLogin, toggleFavorite,
 } from "./app.js";
@@ -22,6 +21,7 @@ import { h, mount, dialog, icon, iconButton, fmtBytes } from "./dom.js";
 import { lyricsPanel } from "./views/lyrics.js";
 import { session, state, updateSession } from "./state.js";
 import { openSourcePicker, pickSource, sourceLabel, findSourceDialog } from "./views/sources.js";
+import { withDownloadSlot } from "./offline.js";
 
 /** How many tracks after the current one stay downloaded. */
 export const PREFETCH = 3;
@@ -74,7 +74,7 @@ export const OFFLINE_MAX_BYTES = 256 * 1024 * 1024;
  *  hours; an entry that is dropped is resolved again when it is next asked
  *  for, which is a shortcut lost, not a promise broken. */
 const CACHE_ENTRIES = 256;
-/** How many of those are fetched at once: enough to keep ahead, not a flood. */
+/** How many eager songs are fetched at once; the account setting may raise it. */
 const OFFLINE_FETCHES = 2;
 /** How long a song that did not arrive is left before it is tried again. */
 const OFFLINE_RETRY_MS = 60000;
@@ -1725,6 +1725,10 @@ class Player {
         this.renderBar();
       }
       if (status.state === "ready" || status.state === "failed") return status;
+      // Status is also requested by the download starter, but this loop owns
+      // the visible wait. Repaint immediately on every provider report so the
+      // bar cannot remain on its generic fallback between timer ticks.
+      this.renderBar();
       if (Date.now() >= deadline) {
         // Stuck rather than failed. Saying so is what lets the room move on
         // and this member sit the track out, instead of both waiting for ever.
@@ -2001,7 +2005,7 @@ class Player {
     this._offlineAbort.set(trackId, controller);
     this._offlineInFlight.add(trackId);
     this._offlineActive += 1;
-    this._fetchOffline(trackId, controller.signal).finally(() => {
+    withDownloadSlot(() => this._fetchOffline(trackId, controller.signal)).finally(() => {
       this._offlineAbort.delete(trackId);
       this._offlineInFlight.delete(trackId);
       this._offlineActive -= 1;

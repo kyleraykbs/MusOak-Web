@@ -12,7 +12,7 @@ import {
   h, mount, popover, confirm, toast, fmtDuration, fmtAgo, icon, iconButton,
 } from "../dom.js";
 import {
-  navigate, currentClient, banner, requireLogin, toggleFavorite, setFollowing,
+  navigate, currentClient, banner, requireLogin, openFavoriteDialog, favoriteRating, setFollowing,
 } from "../app.js";
 import { state } from "../state.js";
 import { player } from "../player.js";
@@ -88,24 +88,35 @@ function starButton(trackId) {
   const button = iconButton("star", {
     class: "btn flat small",
     title: "Favourite",
-    onclick: async (event) => {
+    onclick: (event) => {
       event.stopPropagation();
-      await toggleFavorite(trackId);
-      paint();
+      openFavoriteDialog(trackId);
     },
   });
-  // A starred song is drawn in the accent colour; an unstarred one is dim.
   const paint = () => {
-    const favourite = Boolean(state.favorites?.has(trackId));
-    button.title = favourite ? "Unfavourite" : "Favourite";
+    const rating = favoriteRating(trackId);
+    const favourite = rating != null;
+    button.title = favourite ? `Rating ${Number(rating).toFixed(1)}/5.0` : "Rate favourite";
     button.setAttribute("aria-pressed", favourite ? "true" : "false");
     button.style.color = favourite ? "var(--orange)" : "var(--fg4)";
   };
   paint();
   return button;
 }
+function ratingVisual(rating) {
+  const value = Number(rating);
+  if (!Number.isFinite(value)) return null;
+  const stars = "★★★★★";
+  const full = Math.floor(value);
+  const partial = value - full;
+  const glyphs = stars.split("").map((glyph, index) => {
+    const fill = Math.max(0, Math.min(1, value - index));
+    return h("span", { text: glyph, style: { color: "var(--orange)", opacity: fill ? String(0.25 + fill * 0.75) : "0.2" } });
+  });
+  return h("div", { class: "subtitle", title: `${value.toFixed(1)}/5.0` }, ...glyphs, ` ${value.toFixed(1)}/5.0`);
+}
 
-function trackRow(client, track, { note = "" } = {}) {
+function trackRow(client, track, { note = "", rating = null } = {}) {
   const artists = artistLine(track);
   return h(
     "div",
@@ -116,6 +127,7 @@ function trackRow(client, track, { note = "" } = {}) {
       { style: { flex: 1, minWidth: 0 } },
       h("div", { class: "title", text: track?.title || "" }),
       artists ? artistLineNode(artists, (track?.artistIds || [])[0]) : null,
+      ratingVisual(rating),
       note ? h("div", { class: "subtitle", text: note }) : null
     ),
     track?.durationMs ? h("span", { class: "time", text: fmtDuration(track.durationMs) }) : null,
@@ -227,7 +239,7 @@ function listsGrid(client, detail, uploads = []) {
     ),
     section(
       "Favourite songs",
-      favorites.map((track) => trackRow(client, track)),
+      favorites.map((track) => trackRow(client, track, { rating: track.rating })),
       EMPTY_FAVOURITES
     ),
     // A listening history has no natural end, so it gets a box of its own
