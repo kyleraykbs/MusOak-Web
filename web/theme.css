@@ -1606,6 +1606,9 @@ body:has(.drawer:not([hidden])) .player-bar > .btn[title="Open the room"] { disp
   .account-profile-row { align-items: flex-start; flex-wrap: wrap; }
   .account-profile-row > .grow { flex: 1 1 180px; }
   .account-profile-row > .btn { margin-left: 68px; }
+  .profile-identity { align-items: flex-start; }
+  .profile-actions { gap: 8px; }
+  .profile-actions .btn { flex: 1 1 140px; min-width: 0; }
 
   /* A phone keeps the queue button where it is when the drawer opens: stepping
      it aside means stepping it off a screen this narrow. It rides above the
