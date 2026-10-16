@@ -765,6 +765,7 @@ img.art[data-loaded="true"] { opacity: 1; }
 .playlist-import-selector { display: flex; gap: 6px; border: 0; padding: 0; overflow-x: auto; }
 .playlist-import-selector .tab { flex: none; }
 .favourites-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.playlist-detail-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .room-now-playing-row > .grow { min-width: 0; }
 .room-transport { display: flex; gap: 6px; flex: none; }
 .rooms-section-header { display: flex; align-items: center; border: 0; padding: 0 0 8px; }

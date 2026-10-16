@@ -553,7 +553,7 @@ function header(client, playlist, tracks) {
     ),
     h(
       "div",
-      { class: "row", style: { flexWrap: "wrap" } },
+      { class: "playlist-detail-actions" },
       ...playButtons(tracks, { playlistId: activeId }),
       mine ? h("button", { class: "btn", text: "Rename", title: "Rename this playlist", onclick: renamePlaylist }) : null,
       mine ? h("button", { class: "btn", text: "Upload cover", title: "Set this playlist's cover", onclick: uploadCover }) : null,
