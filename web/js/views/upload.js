@@ -347,22 +347,12 @@ function showDialog({
   // --- cover art ------------------------------------------------------------
 
   const tile = h(editing ? "div" : "button", {
-    class: editing ? "art" : "btn",
+    class: editing ? "art upload-art-tile" : "btn upload-art-tile",
     type: editing ? null : "button",
     title: editing ? "" : "Choose cover art",
     // A plus glyph and nothing else: the tooltip says what it does to a
     // pointer, and this says it to a reader.
     "aria-label": editing ? null : "Choose cover art",
-    style: {
-      width: "96px",
-      height: "96px",
-      flex: "none",
-      padding: "0",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      overflow: "hidden",
-    },
   });
   const paintTile = () => {
     mount(
