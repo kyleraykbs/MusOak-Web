@@ -305,7 +305,7 @@ function queues(room) {
   section.appendChild(
     h(
       "div",
-      { class: "room-queue-clear" },
+      { class: "room-queue-clear room-queue-clear-action" },
       h("span", { class: "grow" }),
       h("button", {
         class: "btn small",
