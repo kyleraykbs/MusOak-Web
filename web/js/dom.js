@@ -208,6 +208,7 @@ export function dialog({ title, body, actions = [], onOpen, closeButton = false 
     title ? h("h2", { text: title, id: "dialog-title" }) : null,
     body ? (typeof body === "string" ? h("p", { text: body }) : body) : null,
     h("div", { class: "actions" }, actions.map((action) => h("button", {
+      type: "button",
       class: `btn ${action.class || ""}`.trim(),
       text: action.label,
       onclick: async (event) => {
