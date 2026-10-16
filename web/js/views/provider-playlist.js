@@ -57,7 +57,7 @@ function paint(container, params, client, answer) {
   mount(container, sheet);
 
   const importButton = h("button", {
-    class: "btn suggested",
+    class: "btn suggested provider-playlist-import",
     text: "Import into library",
     title: `Bring “${name}” into your library`,
   });
@@ -186,7 +186,7 @@ export async function importIntoLibrary(client, playlist) {
  *  the songs playable. */
 async function runImport(client, playlist, button) {
   button.disabled = true;
-  button.textContent = "Importing...";
+  button.textContent = "Importing…";
   try {
     const { id, added, queued } = await importIntoLibrary(client, playlist);
     toast(
