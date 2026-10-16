@@ -209,18 +209,8 @@ function iconTile() {
   const version = Number(account.iconVersion) || iconVersion(userIdOf(account));
   const url = currentClient()?.artworkUrl(account.iconUrl || "", version) || "";
   const tile = url
-    ? h("img", { class: "art big round", src: url, alt: "Your icon" })
-    : h("div", {
-        class: "art big round",
-        role: "img",
-        "aria-label": "No icon yet",
-        style: {
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: "var(--bg4)",
-        },
-      }, icon("users", 48));
+    ? artworkImage(url, { className: "art big round", alt: "Your icon", eager: true })
+    : h("div", { class: "art big round", role: "img", "aria-label": "No icon yet" }, icon("users", 48));
   return h("button", {
     class: "btn",
     title: "Choose a new icon",

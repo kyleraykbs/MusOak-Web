@@ -1003,17 +1003,16 @@ function renderContent() {
   mount(shell, container);
 
   if (!state.server) {
-    layout.content.appendChild(
-      h("div", { class: "empty" },
-        h("span", { class: "icon", text: "\u25c9" }),
-        h("span", { class: "title", text: "No server yet" }),
-        h("span", { text: "Choose a backend to browse. This page is only a frontend: your music lives on your own server." }),
-        h("button", { class: "btn suggested", text: "Choose a server", onclick: (event) => openServerPicker(event.currentTarget) }))
-    );
+    mount(container, h("div", { class: "empty" },
+      h("span", { class: "icon" }, icon("home", 38)),
+      h("span", { class: "title", text: "No server yet" }),
+      h("span", { text: "Choose a backend to browse. This page is only a frontend: your music lives on your own server." }),
+      h("button", { class: "btn suggested", text: "Choose a server", onclick: (event) => openServerPicker(event.currentTarget) })
+    ));
     return;
   }
   if (!view) {
-    layout.content.appendChild(h("div", { class: "empty" }, h("span", { class: "title", text: "Nothing here yet" })));
+    mount(container, h("div", { class: "empty" }, h("span", { class: "title", text: "Nothing here yet" })));
     return;
   }
 

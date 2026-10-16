@@ -17,7 +17,7 @@ import {
   banner, currentClient, emit, navigate, on, requireLogin, toggleFavorite,
 } from "./app.js";
 import { ServerError } from "./client.js";
-import { h, mount, dialog, icon, iconButton, fmtBytes } from "./dom.js";
+import { h, mount, dialog, icon, iconButton, fmtBytes, artworkImage } from "./dom.js";
 import { lyricsPanel } from "./views/lyrics.js";
 import { session, state, updateSession } from "./state.js";
 import { openSourcePicker, pickSource, sourceLabel, findSourceDialog } from "./views/sources.js";
@@ -3086,7 +3086,7 @@ class Player {
   }
 
   _buildBar() {
-    const cover = h("img", { class: "art", alt: "", style: { width: "56px", height: "56px" } });
+    const cover = artworkImage("about:blank", { className: "art", eager: true });
     const title = h("div", { class: "title", text: "Nothing playing" });
     // The artist line hugs its text, so the pill lands directly after the
     // artist name - which, the name being short, usually puts it under the song
