@@ -561,10 +561,10 @@ img.art[data-loaded="true"] { opacity: 1; }
 .dialog-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(16, 16, 16, 0.62);
   display: flex;
   align-items: center;
   justify-content: center;
+  background: rgba(16, 16, 16, 0.62);
   z-index: 120;
   isolation: isolate;
   pointer-events: auto;
