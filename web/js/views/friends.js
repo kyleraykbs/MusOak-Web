@@ -309,7 +309,7 @@ async function runSearch(force = false) {
     }
     return;
   }
-  if (mine !== generation || !searchResults) return;
+  if (mine !== generation || searchInput.value.trim() !== wanted || !searchResults) return;
   if (!users.length) {
     searchStatus.textContent = "";
     const { title, body } = peopleSearchEmpty({ query: wanted, directory });
