@@ -147,7 +147,7 @@ async function load() {
     }
     root.appendChild(h("div", { class: "card" },
       h("div", { class: "empty" },
-        h("span", { class: "icon", style: { display: "inline-flex", lineHeight: "0" } }, icon("gear", 38)),
+        h("span", { class: "icon account-error-icon" }, icon("gear", 38)),
         h("span", { class: "title", text: "Your account could not be loaded" }),
         h("span", { text: String(error?.message || error) }),
         h("button", { class: "btn suggested", text: "Try again", onclick: () => load() }))));
