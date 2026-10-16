@@ -1723,17 +1723,19 @@ test("the play path pre-empts the tail", () => {
       return new Promise(() => {});
     };
 
-    // Only tail songs are due, and a song is being waited on: none start.
+    // Nothing starts while a song is being waited on: not the tail, and not the
+    // eager window either. One pipe, and it belongs to the song somebody is
+    // listening for.
     player._offlineWanted = ["a", "b", "c", "d", "e", "f", "g"];
     player._pumpOffline();
-    assert.deepEqual(asked, [], "no tail fetch starts while a song is being waited on");
-    assert.notEqual(player._tailTimer, 0, "a wake-up is left so the tail is not forgotten");
+    assert.deepEqual(asked, [], "nothing starts while a song is being waited on");
 
-    // The eager window is not held back by the play path: what is about to be
-    // heard is still chased.
+    // The eager window is not lost to that wait: the moment the file lands the
+    // songs about to be heard are chased again.
     player._offline.set("a", { state: "pending", variantId: "", url: "", bytes: 0, at: 0 });
+    player._loading = false;
     player._pumpOffline();
-    assert.deepEqual(asked, ["a"], "the eager window still chases the song");
+    assert.deepEqual(asked, ["a"], "the eager window starts once the wait is over");
   } finally {
     clearTimeout(player._tailTimer);
     player._offline = saved.offline;
@@ -2262,34 +2264,50 @@ function barShowing(status) {
   return player._bar;
 }
 
-test("a sized download fills the bar to the fraction the server reports", () => {
+test("a song being waited on sweeps its bar whatever the server reports", () => {
   withDom(() => {
+    // The wait for a song is one loader, and it does not fill: the fraction a
+    // provider reports is not a fraction of the wait a listener is in, and a
+    // bar that fills to 42% and then sits there is a number made up on this
+    // side of the link. What the server does know is still said in words.
     const bar = barShowing({ state: "downloading", stage: "download", progress: 0.42, bytes: 3_250_000, totalBytes: 8_800_000 });
     player._loading = true;
     player.renderBar();
     assert.equal(bar.progress.style.display, "", "the bar is shown while the file is on its way");
-    assert.equal(bar.progress.classList.contains("indeterminate"), false, "and it fills rather than sweeps");
-    assert.equal(bar.progressFill.style.width, "42%");
+    assert.equal(bar.progress.classList.contains("indeterminate"), true, "and it sweeps");
+    assert.equal(bar.progressFill.style.width, "", "with no fill at all");
     assert.match(bar.subtitle.textContent, /downloading 3\.1 of 8\.4 MB/, "with the numbers the server sent");
   });
 });
 
-test("a download with nothing to count sweeps instead of filling", () => {
+test("a transition into loading keeps the sweep, and the label follows the stage", () => {
   withDom(() => {
-    // A first, countable poll, so there is a fill for the sweep to replace.
-    const bar = barShowing({ state: "downloading", stage: "download", progress: 0.42, bytes: 3_250_000, totalBytes: 8_800_000 });
+    const bar = barShowing({ state: "downloading", stage: "download", progress: 0.9, bytes: 9_000_000, totalBytes: 10_000_000 });
     player._loading = true;
     player.renderBar();
-    assert.equal(bar.progressFill.style.width, "42%");
+    assert.equal(bar.progress.classList.contains("indeterminate"), true);
+    assert.equal(bar.progressFill.style.width, "", "the fetch's own count never becomes a fill");
 
-    // The provider has told nobody a length: -1 means sweep, and no width at
-    // all, rather than the fraction the last poll happened to leave behind.
+    // The fetch hands over to the conversion: the words say where the wait is,
+    // which is the only count the bar has ever promised.
+    const convert = { state: "downloading", stage: "convert", progress: 0.05 };
+    player._status = new Map([["v-a", convert]]);
+    player._setProgress(convert);
+    player.renderBar();
+    assert.equal(bar.progress.classList.contains("indeterminate"), true, "still one sweep");
+    assert.equal(bar.progressFill.style.width, "");
+    assert.match(bar.subtitle.textContent, /converting 5%/);
+  });
+});
+
+test("a stage that reports no length says so rather than keeping the last fraction", () => {
+  withDom(() => {
     const unknown = { state: "downloading", stage: "download", progress: -1, bytes: 12_000, totalBytes: 0 };
-    player._status = new Map([["v-a", unknown]]);
-    player._setProgress(unknown);
+    const bar = barShowing(unknown);
+    player._loading = true;
     player.renderBar();
     assert.equal(bar.progressFill.style.width, "", "no fill");
-    assert.equal(bar.progress.classList.contains("indeterminate"), true, "the sweep instead");
+    assert.equal(bar.progress.classList.contains("indeterminate"), true, "the sweep again");
     assert.equal(bar.progress.style.display, "");
     assert.match(bar.subtitle.textContent, /downloading…/);
   });
@@ -2323,27 +2341,27 @@ test("the label names the stage and that stage's own numbers", () => {
   assert.equal(mediaProgressLabel(undefined), "");
 });
 
-test("a stage change starts its own count instead of keeping the old fraction", () => {
+test("a stage's count never goes backwards, and a new stage starts its own", () => {
   withDom(() => {
+    // The count is still kept - the words use it, and the queue's own panel
+    // says how far a song is - so its own invariant is tested where it lives.
     const download = { state: "downloading", stage: "download", progress: 0.9, bytes: 9_000_000, totalBytes: 10_000_000 };
-    const bar = barShowing(download);
-    player._loading = true;
-    player.renderBar();
-    assert.equal(bar.progressFill.style.width, "90%");
+    barShowing(download);
+    assert.equal(player._progress, 0.9);
 
     // The same stage never goes backwards, whatever order two polls land in.
     player._setProgress({ ...download, progress: 0.4 });
-    player.renderBar();
-    assert.equal(bar.progressFill.style.width, "90%");
+    assert.equal(player._progress, 0.9);
 
     // The fetch hands over to the conversion: its own count, from zero, and
     // not left sitting at the fraction the fetch finished on.
     const convert = { state: "downloading", stage: "convert", progress: 0.05 };
     player._status = new Map([["v-a", convert]]);
     player._setProgress(convert);
+    assert.equal(player._progress, 0.05);
+    player._loading = true;
     player.renderBar();
-    assert.equal(bar.progressFill.style.width, "5%");
-    assert.match(bar.subtitle.textContent, /converting 5%/);
+    assert.match(player._bar.subtitle.textContent, /converting 5%/);
   });
 });
 

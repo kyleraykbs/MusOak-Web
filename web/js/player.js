@@ -1170,16 +1170,22 @@ class Player {
     }
 
     // --- transport -------------------------------------------------------
-    const paused = this.isPaused();
-    const playing = this.isPlaying() && !paused;
+    // A load in flight is not a song playing: until the file for this track is
+    // here the element still holds the last one, and reading the transport off
+    // it would show a pause button and a running position over a song nobody
+    // can hear. The bar says "loading" and offers play, which is what a press
+    // there would do once the file lands.
+    const loading = this._loading && !this._error;
+    const paused = this.isPaused() || loading;
+    const playing = !loading && this.isPlaying() && !paused;
     setIcon(bar.play, paused ? "play" : "pause");
-    setLabel(bar.play, paused ? "Play" : "Pause");
+    setLabel(bar.play, loading ? "Loading" : paused ? "Play" : "Pause");
     // Which state the button is showing, for the theme to colour: no colour
     // is chosen here.
     bar.play.dataset.state = playing ? "playing" : "paused";
     // Waiting on the sound is its own state: the button still offers pause, and
     // the theme holds it back a little so the wait is visible.
-    bar.play.dataset.busy = this._buffering ? "true" : "false";
+    bar.play.dataset.busy = loading || this._buffering ? "true" : "false";
     // The bar itself carries it too: the played part of the seek takes the
     // same colour as the transport.
     bar.root.dataset.state = playing ? "playing" : "paused";
@@ -1219,14 +1225,11 @@ class Player {
     // A count is only honest while the file is on its way: once it is ready the
     // element hides and the timeline is the position again.
     const arriving = this._loading && !this._error && this._mediaState() !== "ready";
-    if (arriving && this._progress >= 0) {
-      bar.progress.style.display = "";
-      bar.progress.classList.remove("indeterminate");
-      bar.progressFill.style.width = `${Math.round(clamp01(this._progress) * 100)}%`;
-    } else if (arriving || (this._buffering && !this._error)) {
-      // Nothing to count: a provider still starting, a length nobody knows, or
-      // a file that is whole and not yet making a sound. The bar sweeps rather
-      // than claiming a share it does not have.
+    if (arriving || (this._buffering && !this._error)) {
+      // One loader, and an honest one: the wait for a song is a whole file
+      // arriving, and a bar that fills by a percentage of a fetch that cannot
+      // be seen from here is a number made up on this side of the link. It
+      // sweeps until the sound starts instead.
       bar.progress.style.display = "";
       bar.progressFill.style.width = "";
       bar.progress.classList.add("indeterminate");
@@ -1763,6 +1766,10 @@ class Player {
     const status = await this._ready(attempt.variantId, attempt.token, true);
     if (attempt.token !== this._token || status === null) return;
     this._loading = false;
+    // The song that was being waited on is here: the songs behind it start now.
+    // They were held for the whole of that wait, which is what keeps one pipe
+    // for the song somebody is listening for.
+    this._prefetch();
     if (status.state === "failed") {
       this._error = status.error || "that file could not be downloaded";
       this._stateEvent();
@@ -1968,6 +1975,17 @@ class Player {
    * the play path; the play path never yields to the tail.
    */
   _pumpOffline() {
+    // One system, one priority: while a song is being fetched for somebody who
+    // is waiting to hear it, nothing else is fetched at all. The songs behind
+    // the playhead start the moment that file lands, not before - a page that
+    // spent the link on the queue's copies is the page that showed a loading
+    // bar over a song that never started.
+    if (this._loading) {
+      // Held, not forgotten: the file landing pumps again, and this wake-up is
+      // the backstop for a load that ends somewhere that does not.
+      this._scheduleTail(OFFLINE_TAIL_GAP_MS);
+      return;
+    }
     const wanted = this._offlineWanted || [];
     const eager = new Set(wanted.slice(0, EAGER_AHEAD));
     // The order is the wanted list, re-derived here rather than only when it
