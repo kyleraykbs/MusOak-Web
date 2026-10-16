@@ -500,7 +500,7 @@ function importDialog() {
       if (mode !== "link" && looksLikePlaylistLink(value)) modeRow.children[1]?.click();
     },
   });
-  const results = h("div", { class: "list", style: { maxHeight: "220px", overflow: "auto" } });
+  const results = h("div", { class: "playlist-import-results" });
   const status = h("div", { class: "login-status", role: "status" });
 
   const platformName = () => (PLATFORMS.find((entry) => entry.id === platform) || {}).label || platform;
@@ -531,11 +531,11 @@ function importDialog() {
       }
     );
 
-  const platformRow = h("div", { class: "row", style: { border: "0", padding: "0", gap: "6px" } });
+  const platformRow = h("div", { class: "playlist-import-selector" });
   for (const entry of PLATFORMS) platformRow.appendChild(choose(platformRow, entry, (id) => { platform = id; }));
   platformRow.firstChild.classList.add("active");
 
-  const modeRow = h("div", { class: "row", style: { border: "0", padding: "0", gap: "6px" } });
+  const modeRow = h("div", { class: "playlist-import-selector" });
   for (const entry of [{ id: "search", label: "From search" }, { id: "link", label: "From a link" }]) {
     modeRow.appendChild(choose(modeRow, entry, (id) => { mode = id; }));
   }

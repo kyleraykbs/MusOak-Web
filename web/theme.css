@@ -761,6 +761,9 @@ img.art[data-loaded="true"] { opacity: 1; }
 .source-row-main { flex: 1; min-width: 0; justify-content: flex-start; text-align: left; overflow: hidden; }
 .source-row-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .source-row-tag, .source-row-unplayable { margin-left: 8px; flex: none; }
+.playlist-import-results { max-height: 220px; overflow: auto; }
+.playlist-import-selector { display: flex; gap: 6px; border: 0; padding: 0; overflow-x: auto; }
+.playlist-import-selector .tab { flex: none; }
 .room-now-playing-row > .grow { min-width: 0; }
 .room-transport { display: flex; gap: 6px; flex: none; }
 .rooms-section-header { display: flex; align-items: center; border: 0; padding: 0 0 8px; }
