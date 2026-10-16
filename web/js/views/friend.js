@@ -361,23 +361,27 @@ async function unfriend(client, userId, user) {
 
 /** Render the page into `container`; the returned function re-fetches it. */
 export function renderFriend(container, userId) {
+  let generation = 0;
   const load = async () => {
     const client = currentClient();
     if (!client) return;
+    const mine = ++generation;
     mount(container, loadingState("Loading profile…"));
     let detail;
+    let uploads = [];
     try {
-      detail = await client.user(userId);
+      [detail, uploads] = await Promise.all([
+        client.user(userId),
+        client.userUploads(userId).then((answer) => answer.uploads).catch(() => []),
+      ]);
     } catch (error) {
+      if (mine !== generation || !container.isConnected) return;
       mount(container, emptyState("cross", "Could not load this profile", error?.message || ""));
       fail(error);
       return;
     }
-    const user = detail?.user || {};
-    // Their uploads are public, so they are fetched alongside the profile
-    // rather than waiting on it.
-    const uploads = await client.userUploads(userId).then((answer) => answer.uploads).catch(() => []);
-    mount(container, bannerBox(client, userId, user, load), listsGrid(client, detail, uploads));
+    if (mine !== generation || !container.isConnected) return;
+    mount(container, bannerBox(client, userId, detail?.user || {}, load), listsGrid(client, detail, uploads));
   };
   load();
   return load;
