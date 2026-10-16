@@ -415,30 +415,23 @@ function chooseSong(client, friend) {
 export async function inviteToRoom(user) {
   const client = currentClient();
   if (!client || !user?.id) return;
+  const body = h("div", { class: "share-dialog-fields" }, h("p", { text: `Invite ${displayName(user)} to a room.` }), loadingState("Loading rooms…"));
+  const ref = dialog({ title: "Invite to a room", body, actions: [{ label: "Cancel" }] });
   let rooms = [];
   try {
     rooms = await client.rooms();
   } catch (error) {
+    ref.close();
     report(error);
     return;
   }
-  let close = null;
-  const body = h("div", { class: "share-dialog-fields" }, h("p", { text: `Invite ${displayName(user)} to a room.` }));
-  body.appendChild(
-    rooms.length
-      ? h(
-          "div",
-          { class: "list" },
-          rooms.map((room) =>
-            roomRow(room, () => {
-              close?.();
-              sendRoomInvite(client, user, room);
-            })
-          )
-        )
-      : h("p", { class: "subtitle", text: "There are no rooms to invite them to." })
-  );
-  close = dialog({ title: "Invite to a room", body, actions: [{ label: "Cancel" }] }).close;
+  if (!ref.node.isConnected) return;
+  mount(body, h("p", { text: `Invite ${displayName(user)} to a room.` }), rooms.length
+    ? h("div", { class: "list" }, rooms.map((room) => roomRow(room, () => {
+        ref.close();
+        sendRoomInvite(client, user, room);
+      })))
+    : h("p", { class: "subtitle", text: "There are no rooms to invite them to." }));
 }
 
 /** A room picked first: who to bring into it. */
