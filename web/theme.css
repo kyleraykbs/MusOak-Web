@@ -790,6 +790,8 @@ img.art[data-loaded="true"] { opacity: 1; }
 .room-vote-buttons { border: 0; padding: 6px 0; gap: 6px; }
 .room-queue-clear { border: 0; padding: 0 0 6px; }
 .room-queue-clear-action { display: flex; justify-content: flex-end; }
+.avatar-fallback { display: inline-flex; align-items: center; justify-content: center; color: var(--fg3); font-weight: 600; }
+.share-song-placeholder { display: inline-flex; align-items: center; justify-content: center; color: var(--fg4); }
 .social-row-copy { min-width: 0; }
 .social-row-copy .subtitle { overflow-wrap: anywhere; }
 .search-collection-copy .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

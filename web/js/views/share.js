@@ -211,14 +211,7 @@ export function avatarFor(client, user, className = "art round small") {
   if (source) return artworkImage(source, { className });
   const initial = displayName(user).trim().charAt(0).toUpperCase() || "?";
   return h("div", {
-    class: className,
-    style: {
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      color: "var(--fg3)",
-      fontWeight: "600",
-    },
+    class: `${className} avatar-fallback`,
     text: initial,
   });
 }
@@ -247,22 +240,10 @@ function songRow(client, track, onPick) {
   return h(
     "div",
     { class: "row clickable", onclick: onPick },
+    h("div", { class: "art small share-song-placeholder" }, icon("note", 16)),
     h(
       "div",
-      {
-        class: "art small",
-        style: {
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: "var(--fg4)",
-        },
-      },
-      icon("note", 16)
-    ),
-    h(
-      "div",
-      { style: { flex: 1, minWidth: 0 } },
+      { class: "grow social-row-copy" },
       h("div", { class: "title", text: track?.title || "" }),
       subtitleLine(artists)
     )
@@ -277,7 +258,7 @@ function roomRow(room, onPick) {
     { class: "row clickable", onclick: onPick },
     h(
       "div",
-      { style: { flex: 1, minWidth: 0 } },
+      { class: "grow social-row-copy" },
       h("div", { class: "title", text: room?.name || "Room" }),
       subtitleLine(room?.hasPassword ? `${members} \u00b7 locked` : members)
     )
