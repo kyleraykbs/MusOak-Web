@@ -422,12 +422,14 @@ function showDialog({
   // The search panel: "Search…" is a door, not an answer, so the dropdown keeps
   // its old answer until a song is picked.
   const query = h("input", { class: "input", type: "search", placeholder: "Search for the song this is" });
-  const searchStatus = h("div", { class: "search-status" });
+  const searchStatus = h("div", { class: "search-status", role: "status", "aria-live": "polite" });
   const results = h("div", { class: "list upload-search-results" });
+  const searchButton = h("button", { class: "btn flat", type: "button", text: "Search", onclick: () => runSearch() });
+  const searchControls = h("div", { class: "upload-search-controls" }, query, searchButton);
   const searchPanel = h(
     "div",
     { class: "upload-search-panel", "aria-busy": "false" },
-    query,
+    searchControls,
     searchStatus,
     results
   );
@@ -789,9 +791,11 @@ export function openTrackPicker({ title = "Associate with a song" } = {}) {
     };
 
     const query = h("input", { class: "input", type: "search", placeholder: "Search for the song this is" });
-    const status = h("div", { class: "search-status" });
+    const status = h("div", { class: "search-status", role: "status", "aria-live": "polite" });
     const results = h("div", { class: "list upload-search-results" });
-    const searchPanel = h("div", { class: "upload-search-panel upload-picker-panel", "aria-busy": "false" }, query, status, results);
+    const searchButton = h("button", { class: "btn flat", type: "button", text: "Search", onclick: () => runSearch() });
+    const searchControls = h("div", { class: "upload-search-controls" }, query, searchButton);
+    const searchPanel = h("div", { class: "upload-search-panel upload-picker-panel", "aria-busy": "false" }, searchControls, status, results);
 
     const runSearch = async () => {
       const text = query.value.trim();

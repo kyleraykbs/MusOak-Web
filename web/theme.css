@@ -522,6 +522,8 @@ img.art[data-loaded="true"] { opacity: 1; }
 .btn:focus-visible, .nav-item:focus-visible, .menu-item:focus-visible { box-shadow: 0 0 0 2px var(--bg0), 0 0 0 4px var(--blue); }
 .view-surface { min-height: 100%; contain: layout style; }
 .upload-search-panel { display: none; flex-direction: column; gap: 8px; }
+.upload-search-controls { display: flex; gap: 8px; align-items: center; }
+.upload-search-controls .input { flex: 1 1 auto; min-width: 0; }
 .search-status { color: var(--fg4); font-size: 12.5px; min-height: 16px; }
 .upload-search-results { min-height: 48px; }
 .upload-picker-panel { display: flex; }
