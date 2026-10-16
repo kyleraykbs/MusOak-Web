@@ -486,7 +486,7 @@ function importDialog() {
   if (!client) return;
 
   let platform = PLATFORMS[0].id;
-  let mode = "search";
+  let searchGeneration = 0;
   let picked = null;
   let busy = false;
 
@@ -546,41 +546,33 @@ function importDialog() {
   async function search() {
     const query = input.value.trim();
     if (!query) return;
+    const mine = ++searchGeneration;
     status.className = "login-status";
     status.textContent = `Searching ${platformName()}…`;
-    mount(results);
+    mount(results, loadingState("Searching playlists…"));
     try {
       const { playlists, providerErrors } = await client.searchPlaylists(query, 20);
-      const mine = (playlists || []).filter((entry) => (entry.provider || "") === platform);
+      if (mine !== searchGeneration || !results.isConnected) return;
+      const matches = (playlists || []).filter((entry) => (entry.provider || "") === platform);
       status.className = "login-status";
-      status.textContent = mine.length ? "" : providerErrors?.[0]?.error || `No ${platformName()} playlists matched.`;
-      mount(
-        results,
-        ...mine.map((entry) =>
-          h(
-            "div",
-            {
-              class: "row clickable",
-              onclick: (event) => {
-                picked = entry;
-                for (const row of results.children) row.classList.toggle("active", row === event.currentTarget);
-                status.className = "login-status";
-                status.textContent = `Ready to import “${entry.title || "that playlist"}”`;
-              },
-            },
-            h(
-              "div",
-              { class: "grow" },
-              h("div", { class: "title", text: entry.title || "Untitled" }),
-              h("div", {
-                class: "subtitle",
-                text: [entry.owner, entry.trackCount ? `${entry.trackCount} tracks` : ""].filter(Boolean).join(" \u00b7 "),
-              })
-            )
-          )
+      status.textContent = matches.length ? "" : providerErrors?.[0]?.error || `No ${platformName()} playlists matched.`;
+      mount(results, ...matches.map((entry) =>
+        h("div", {
+          class: "row clickable",
+          onclick: (event) => {
+            picked = entry;
+            for (const row of results.children) row.classList.toggle("active", row === event.currentTarget);
+            status.className = "login-status";
+            status.textContent = `Ready to import “${entry.title || "that playlist"}”`;
+          },
+        }, h("div", { class: "grow" },
+          h("div", { class: "title", text: entry.title || "Untitled" }),
+          h("div", { class: "subtitle", text: [entry.owner, entry.trackCount ? `${entry.trackCount} tracks` : ""].filter(Boolean).join(" · ") })
         )
-      );
+        )
+      ));
     } catch (error) {
+      if (mine !== searchGeneration || !results.isConnected) return;
       status.className = "login-status error";
       status.textContent = String(error?.message || error);
     }
