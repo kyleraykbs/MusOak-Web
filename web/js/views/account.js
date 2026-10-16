@@ -86,6 +86,7 @@ function slotLabel(name) {
   if (name === "uploaded") return "Other people's uploads";
   return name;
 }
+let loadGeneration = 0;
 let nameInput = null;
 let saveButton = null;
 let discardButton = null;
@@ -113,8 +114,9 @@ export function refresh() {
 
 async function load() {
   const client = currentClient();
+  const mine = ++loadGeneration;
   if (!client) {
-    if (root) {
+    if (root && mine === loadGeneration) {
       clear(root);
       guestCard(root);
     }
@@ -124,6 +126,7 @@ async function load() {
     const [me, payload, order, providers] = await Promise.all([
       client.me(), client.ranking(), client.providerOrder(), client.providers().catch(() => []),
     ]);
+    if (mine !== loadGeneration || !root?.isConnected) return;
     account = { ...me };
     // Only the platforms a search can actually ask get a checkbox: Spotify
     // answers metadata-only, so a search asking it would only add an error line.
@@ -132,8 +135,8 @@ async function load() {
     ranking = { order: order.length ? order : own, own: own.length > 0, list: null };
     if (root) build();
   } catch (error) {
+    if (mine !== loadGeneration || !root?.isConnected) return;
     fail(error);
-    if (!root) return;
     // Whatever went wrong, the view must stop saying it is loading - the 401
     // included. That one is answered by the sign-in dialog, and the page used
     // to sit on "Loading your account…" for the rest of the session behind it.

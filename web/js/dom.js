@@ -115,10 +115,10 @@ export function artworkImage(src, { className = "art", alt = "", eager = false }
     loading: eager ? "eager" : "lazy",
     decoding: "async",
     fetchpriority: eager ? "high" : "auto",
-    onload: (event) => { event.currentTarget.dataset.loaded = "true"; },
     onerror: (event) => {
       event.currentTarget.dataset.failed = "true";
       event.currentTarget.removeAttribute("src");
+      event.currentTarget.setAttribute("alt", alt || "Artwork unavailable");
     },
   });
 }
