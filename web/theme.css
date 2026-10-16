@@ -604,6 +604,8 @@ img.art[data-loaded="true"] { opacity: 1; }
  .account-action-button { flex: 1; min-width: 0; }
 .search-row-copy { min-width: 0; }
 .search-row-copy .subtitle { overflow-wrap: anywhere; }
+.import-status { min-height: 1.2em; }
+.import-report { min-height: 40px; }
 .form-row .field { flex: 1; }
 
 /* ---------- dialogs ---------- */

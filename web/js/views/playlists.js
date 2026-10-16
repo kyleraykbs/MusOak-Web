@@ -669,7 +669,7 @@ function importFilesDialog() {
   let busy = false;
   let close = () => {};
 
-  const line = h("div", { class: "login-status", role: "status" });
+  const line = h("div", { class: "login-status import-status", role: "status" });
   const note = h("div", { class: "import-note" });
   const report = h("div", { class: "list import-report" });
   const after = h("div", { class: "import-actions" });
