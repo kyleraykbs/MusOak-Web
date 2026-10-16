@@ -537,6 +537,33 @@ export function subscribe(handler) {
   return () => listeners.delete(handler);
 }
 
+/**
+ * Forget that this item could not be resolved, so the next beat works its
+ * source out again.
+ *
+ * What calls it is an association: the song has a source now, and asking for it
+ * is a provider round trip the back-off would otherwise refuse. It does nothing
+ * unless the room is still on that item - the song it was asked about is the
+ * one that has to be re-resolved, not whatever is playing by the time somebody
+ * has answered.
+ */
+export function retryItem(itemId = "") {
+  const running = plugin;
+  if (!running) return;
+  const id = str(itemId) || str(running.itemId);
+  if (!id || str(running.itemId) !== id) return;
+  if (str(running.failedItemId) === id) {
+    running.failedItemId = "";
+    running.failedAt = 0;
+  }
+  running.failedTries?.delete(id);
+  // It failed before it was ever put on the player, so the item goes back to
+  // unresolved and the next beat resolves it and hands it over.
+  running.loadedItemId = "";
+  running.variantId = "";
+  running.track = null;
+}
+
 function publish() {
   const room = currentRoom();
   for (const handler of [...listeners]) {
@@ -1312,6 +1339,13 @@ async function loadItem(running, item, { positionMs: at = 0, autoplay = true } =
       if (!running.variantId) {
         markUnplayable(running, itemId);
         setStatus(running, "That song could not be found.");
+        // A song nobody can source is not a dead end: somebody listening knows
+        // what it is, and the server can be told. Putting that question to them
+        // is the app's job, not this module's.
+        sayUnplayable({
+          itemId,
+          track: running.track || { id: trackId, title: item.title, artists: item.artists },
+        });
         return;
       }
       running.resolved.set(trackId, { variantId: running.variantId, track });
@@ -1488,6 +1522,7 @@ async function loadTrack(connection, trackId) {
 let blockedNotice = null;
 let statusNotice = null;
 let stepNotice = null;
+let unplayableNotice = null;
 
 export function setBlockedNotice(handler) {
   blockedNotice = typeof handler === "function" ? handler : null;
@@ -1497,12 +1532,27 @@ export function setStatusNotice(handler) {
   statusNotice = typeof handler === "function" ? handler : null;
 }
 
+/**
+ * A song this member cannot be put on the player at all: no source was found
+ * for it. The app is handed the item and the track, and asks whoever is
+ * listening what the song is - the answer attaches a real rendition to it,
+ * which is the difference between a room that plays and one that sits on
+ * "Finding a source\u2026" until the song is over.
+ */
+export function setUnplayableNotice(handler) {
+  unplayableNotice = typeof handler === "function" ? handler : null;
+}
+
 export function setStepNotice(handler) {
   stepNotice = typeof handler === "function" ? handler : null;
 }
 
 function sayStatus(message) {
   statusNotice?.(message);
+}
+
+function sayUnplayable(problem) {
+  unplayableNotice?.(problem);
 }
 
 /** Say each step of a song once; a stream of ticks is not a stream of toasts. */

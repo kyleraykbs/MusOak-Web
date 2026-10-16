@@ -18,8 +18,13 @@ import { platformFilter, enabledPlatforms } from "../platforms.js";
  * filter the search page has - and attaches whichever result is picked to that
  * song, so it becomes playable where it stands rather than having to be found
  * again by name.
+ *
+ * `query` prefills the box and runs it: a caller that already knows the song's
+ * name - the room, when it reaches a song with no source - has nothing to gain
+ * from making somebody type it. The handle comes back so the caller can take
+ * the question down again when it stops being about anything.
  */
-export function findSourceDialog(track, { onDone } = {}) {
+export function findSourceDialog(track, { onDone, query = "" } = {}) {
   const client = currentClient();
   if (!client || !track?.id) return;
 
@@ -118,7 +123,13 @@ export function findSourceDialog(track, { onDone } = {}) {
       results
     ),
     actions: [{ label: "Close", onClick: () => close() }],
-    onOpen: () => input.focus(),
+    onOpen: () => {
+      input.focus();
+      if (query) {
+        input.value = query;
+        run();
+      }
+    },
   });
 
   // The filter cannot offer platforms until the server has said which it has.
@@ -131,6 +142,8 @@ export function findSourceDialog(track, { onDone } = {}) {
       filterRow.replaceChildren(filter.node);
     })
     .catch(() => {});
+
+  return { close };
 }
 
 /** A duration as m:ss, for a result row. */

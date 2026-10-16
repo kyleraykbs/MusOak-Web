@@ -26,6 +26,8 @@ import {
   skip,
   followWithPlayer,
   setStatusNotice,
+  setUnplayableNotice,
+  retryItem,
 } from "../rooms-state.js";
 
 const KYLE = "member-kyle";
@@ -1187,6 +1189,37 @@ test("a load the player will not take is not re-issued on every tick", async (t)
     await new Promise((resolve) => setTimeout(resolve, 60));
   }
   assert.equal(asked, 1, "a load the player would not take is left alone");
+});
+
+// A song nobody can source is a question, not a dead end. The page is told
+// which song it is and asks whoever is listening; the answer attaches a real
+// rendition to it, and the song is then worth resolving again at once rather
+// than after the back-off the failure set.
+test("a song with no source is asked about, and the answer puts it on the player", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  // The server can find nothing for the song the room is on.
+  player.resolvedVariant = "";
+  const client = fakeClient({ memberId: SAM });
+  const asked = [];
+  const off = setUnplayableNotice((problem) => asked.push(problem));
+  t.after(off);
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1", rejoin: true });
+  const track = item("a1", "first", KYLE);
+  client.roomData = roomWith(track, { started: true, positionMs: 0, atMs: Date.now() });
+  client.calls.sockets[0].onEvent({ type: "playback", roomId: "room-1", seq: 1, data: { current: client.roomData.current } });
+  assert.ok(await waitFor(() => asked.length === 1), "the page is asked what the song is");
+  assert.equal(asked[0].track.id, track.trackId, "and it is asked about the song the room is on");
+  assert.equal(asked[0].track.title, "first");
+
+  // Somebody answered: a source is attached to the song, so it resolves now.
+  player.resolvedVariant = "v-found";
+  retryItem(asked[0].itemId);
+  assert.ok(
+    await waitFor(() => player.plays.some((play) => play.track?.id === track.trackId)),
+    "the song is put on the player without waiting out the failure's back-off"
+  );
 });
 
 // The same thing through the engine, where it was seen: a song change moves the

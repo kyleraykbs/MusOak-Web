@@ -16,7 +16,10 @@ import {
   subscribe,
   setBlockedNotice,
   setStatusNotice,
+  setUnplayableNotice,
+  retryItem,
 } from "../rooms-state.js";
+import { findSourceDialog } from "./sources.js";
 
 // The room page registers itself; this module is what the shell loads. Its
 // host-only notice is shared, since the playbar says the same thing.
@@ -29,6 +32,41 @@ setBlockedNotice(hostOnly);
 // And the same box for "the room is getting the track ready", which can take a
 // while after a skip.
 setStatusNotice(status);
+
+/**
+ * The dialogue asking what an unsourced song is, while it is up.
+ *
+ * `null` means nothing has been asked about this song; a handle means the
+ * question has been put, and is not put again for the same song whether or not
+ * it is still on screen - somebody who took it down has answered it with "not
+ * now", and putting it back up every beat is not asking.
+ */
+let asking = null;
+
+// A song the room cannot source is a question, and this is the page that asks
+// it: somebody listening knows what the song is, and the answer attaches a real
+// rendition to it. That is the difference between a room that plays and one that
+// sits on "Finding a source…" until the song is over.
+setUnplayableNotice(({ itemId, track }) => {
+  if (asking || !track?.id) return;
+  const query = [track.title, (track.artists || [])[0]].filter(Boolean).join(" ").trim();
+  const opened = findSourceDialog(track, {
+    query,
+    // The source is attached now, so the song is worth a resolve the back-off
+    // would otherwise refuse.
+    onDone: () => retryItem(itemId),
+  });
+  if (opened) asking = { itemId, close: opened.close };
+});
+
+// The question is about the song that is playing. When the room moves on to the
+// next one there is nothing left to answer it about, so it comes down.
+subscribe(() => {
+  if (!asking) return;
+  if (String(currentRoom()?.current?.item?.id || "") === asking.itemId) return;
+  asking.close();
+  asking = null;
+});
 
 /**
  * Open the room being followed, and remember that this is where the tab was
