@@ -302,48 +302,27 @@ async function loadFriends(client) {
 
 /** A song picked: who gets it, and the room option beside them. */
 async function chooseTarget(client, track) {
+  const title = `Share “${track.title || "this song"}” with…`;
+  const body = h("div", { class: "share-dialog-fields" }, h("p", { text: title }), loadingState("Loading friends…"));
+  const ref = dialog({ title: "Share", body, actions: [{ label: "Close" }] });
   let friends = [];
   try {
     friends = await loadFriends(client);
   } catch (error) {
+    ref.close();
     report(error);
     return;
   }
-  let close = null;
-  const body = h(
-    "div",
-    { class: "share-dialog-fields" },
-    h("p", { text: `Share \u201c${track.title || "this song"}\u201d with\u2026` })
-  );
-  body.appendChild(
-    friends.length
-      ? h(
-          "div",
-          { class: "list" },
-          friends.map((friend) =>
-            personRow(client, friend, () => {
-              close?.();
-              sendTrack(client, friend, track);
-            })
-          )
-        )
-      : h("p", { class: "subtitle", text: "You have no friends yet." })
-  );
+  if (!ref.node.isConnected) return;
+  mount(body, h("p", { text: title }), friends.length
+    ? h("div", { class: "list" }, friends.map((friend) => personRow(client, friend, () => {
+        ref.close();
+        sendTrack(client, friend, track);
+      })))
+    : h("p", { class: "subtitle", text: "You have no friends yet." }));
   body.appendChild(h("div", { class: "section-title", text: "A room" }));
-  body.appendChild(
-    h("p", { class: "subtitle", text: "A room is shared by inviting a friend into it." })
-  );
-  body.appendChild(
-    h("button", {
-      class: "btn",
-      text: "Invite a friend to a room\u2026",
-      onclick: () => {
-        close?.();
-        inviteSomeoneToRoom();
-      },
-    })
-  );
-  close = dialog({ title: "Share", body, actions: [{ label: "Close" }] }).close;
+  body.appendChild(h("p", { class: "subtitle", text: "A room is shared by inviting a friend into it." }));
+  body.appendChild(h("button", { class: "btn", text: "Invite a friend to a room…", onclick: () => { ref.close(); inviteSomeoneToRoom(); } }));
 }
 
 /** A friend already chosen: search the library and send them something. */
