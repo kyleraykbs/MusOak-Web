@@ -1565,6 +1565,9 @@ body:has(.drawer:not([hidden])) .player-bar > .btn[title="Open the room"] { disp
      one, and this card has no tabs. */
   .room-queue .queue-panel[data-panel="mine"] { display: none; }
   .room-queue .room-queue-hint { display: block; }
+  .room-votes { padding-inline: 0; }
+  .room-vote-buttons { flex-wrap: wrap; }
+  .room-header { padding: 12px; }
 
   /* A phone keeps the queue button where it is when the drawer opens: stepping
      it aside means stepping it off a screen this narrow. It rides above the
