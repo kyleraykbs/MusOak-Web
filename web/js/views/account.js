@@ -225,7 +225,7 @@ function profileCard() {
 
   card.appendChild(h("div", { class: "row account-profile-row" },
     iconTile(),
-    h("div", { class: "grow" },
+    h("div", { class: "grow account-profile-copy" },
       h("div", { class: "title", text: "Profile picture" }),
       h("div", { class: "subtitle wrap", text: "A png, jpeg, webp, gif or avif image, up to 8 MB. Animated pngs and gifs keep moving." })),
     h("button", { class: "btn", text: "Upload icon", onclick: chooseIcon })));

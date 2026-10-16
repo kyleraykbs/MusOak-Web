@@ -606,6 +606,8 @@ img.art[data-loaded="true"] { opacity: 1; }
 .account-profile-row { align-items: center; }
 .account-profile-row > .grow { min-width: 0; }
 .account-profile-row > .btn { flex: none; }
+.account-profile-copy { min-width: 0; }
+.account-profile-copy .subtitle { overflow-wrap: anywhere; }
 .search-row-copy { min-width: 0; }
  .upload-dialog-notice { margin: 0; }
 .playlist-track-number { width: 24px; flex: none; text-align: right; }
