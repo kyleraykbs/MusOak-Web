@@ -222,6 +222,7 @@ export function dialog({ title, body, actions = [], onOpen, closeButton = false 
   });
   document.addEventListener("keydown", onKey);
   document.body.classList.add("modal-open");
+  backdrop.appendChild(panel);
   document.body.appendChild(backdrop);
   panel.focus?.();
   onOpen?.(panel, close);
