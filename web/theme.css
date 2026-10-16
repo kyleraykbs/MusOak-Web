@@ -810,6 +810,8 @@ img.art[data-loaded="true"] { opacity: 1; }
 .share-dialog-fields { display: flex; flex-direction: column; gap: 10px; }
 .share-song-results { max-height: min(42vh, 320px); overflow: auto; }
 .share-song-results .row { min-width: 0; }
+.history-section { display: flex; flex-direction: column; gap: 8px; }
+.history-section + .history-section { margin-top: 18px; }
 
 /* ---------- popovers (menus, source picker) ---------- */
 

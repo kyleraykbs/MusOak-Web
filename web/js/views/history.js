@@ -120,8 +120,8 @@ function section(title, entries, shape) {
   const tracks = items.map((item) => item.track);
   return h(
     "div",
-    { class: "section" },
-    h("div", { class: "subtitle", text: title }),
+    { class: "section history-section" },
+    h("div", { class: "section-title", text: title }),
     items.length
       ? h(
           "div",
