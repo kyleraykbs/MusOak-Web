@@ -94,14 +94,11 @@ function starButton(trackId) {
 function ratingVisual(rating) {
   const value = Number(rating);
   if (!Number.isFinite(value)) return null;
-  const stars = "★★★★★";
-  const full = Math.floor(value);
-  const partial = value - full;
-  const glyphs = stars.split("").map((glyph, index) => {
+  const stars = Array.from({ length: 5 }, (_, index) => {
     const fill = Math.max(0, Math.min(1, value - index));
-    return h("span", { text: glyph, style: { color: "var(--orange)", opacity: fill ? String(0.25 + fill * 0.75) : "0.2" } });
+    return h("span", { class: "rating-star", style: { opacity: String(fill ? 0.25 + fill * 0.75 : 0.2) } }, icon("star", 14));
   });
-  return h("div", { class: "subtitle", title: `${value.toFixed(1)}/5.0` }, ...glyphs, ` ${value.toFixed(1)}/5.0`);
+  return h("div", { class: "subtitle rating", title: `${value.toFixed(1)}/5.0`, role: "img", "aria-label": `Rating ${value.toFixed(1)} out of 5` }, stars, ` ${value.toFixed(1)}/5.0`);
 }
 
 function trackRow(client, track, { note = "", rating = null } = {}) {
