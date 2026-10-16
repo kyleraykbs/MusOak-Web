@@ -92,7 +92,18 @@ async function associationInfo(active, upload, cache) {
   }
   return cache.get(id);
 }
-
+async function associationInfos(active, uploads, cache, limit = 6) {
+  const infos = new Map();
+  let next = 0;
+  async function worker() {
+    while (next < uploads.length) {
+      const upload = uploads[next++];
+      infos.set(String(upload.id || ""), await associationInfo(active, upload, cache));
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, uploads.length) }, worker));
+  return infos;
+}
 async function load(target) {
   const active = client();
   if (!active) {
@@ -130,12 +141,7 @@ async function load(target) {
       );
       return;
     }
-    const infos = new Map();
-    await Promise.all(
-      uploads.map(async (upload) => {
-        infos.set(String(upload.id || ""), await associationInfo(active, upload, target.cache));
-      })
-    );
+    const infos = await associationInfos(active, uploads, target.cache);
     if (mine !== target.generation) return;
     target.infos = infos;
     renderUploads(active, target);
