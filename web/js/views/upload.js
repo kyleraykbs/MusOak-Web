@@ -663,7 +663,6 @@ async function oneFile({ client, file, known }) {
     match = known;
     if (!title) ({ title, artists } = guessMetadata(file.name));
   } else {
-    ({ title, artists } = guessMetadata(file.name));
     let groups = [];
     try {
       ({ groups } = await client.search([title, ...artists].join(" "), 5));
