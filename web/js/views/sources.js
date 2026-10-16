@@ -56,7 +56,7 @@ export function findSourceDialog(track, { onDone, query = "" } = {}) {
         onclick: () => attach(variant, title, artists),
       },
       h("span", { class: "find-source-provider", text: variant.provider || "" }),
-      h("span", { style: { flex: 1, minWidth: 0 } },
+      h("span", { class: "find-source-copy" },
         h("span", { text: title }),
         artists ? h("span", { class: "subtitle", text: ` \u00b7 ${artists}` }) : null
       ),

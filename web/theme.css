@@ -790,6 +790,9 @@ img.art[data-loaded="true"] { opacity: 1; }
 .search-collection-copy .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .search-collection-copy .subtitle { overflow-wrap: anywhere; }
 .source-action-icon { width: 18px; display: inline-flex; align-items: center; justify-content: center; }
+.find-source-copy { flex: 1; min-width: 0; overflow: hidden; }
+.find-source-copy > span:first-child { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.find-source-copy .subtitle { overflow-wrap: anywhere; }
 
 /* ---------- popovers (menus, source picker) ---------- */
 
