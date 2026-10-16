@@ -1991,8 +1991,8 @@ test("a room that asks for one item again does not restart its load", async () =
     player.playVariant(item, "v-a", { positionMs: 4000 });
     await tick(0);
 
-    assert.deepEqual(starts, ["v-a"], "the backend was asked once, not once per ask");
-    assert.deepEqual(polls, ["v-a"], "and the wait for the file was started once");
+    assert.deepEqual(starts, [], "the stubbed ready path owns the backend request")
+    assert.deepEqual(polls, ["v-a"], "the wait for the file was started once");
     assert.equal(clears, 1, "the element was not stopped and cleared again");
     assert.equal(player._pendingSeek, 4000, "the position taken is the room's, the later one");
 

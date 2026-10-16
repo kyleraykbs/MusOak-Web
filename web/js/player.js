@@ -21,6 +21,7 @@ import { h, mount, dialog, icon, iconButton, fmtBytes } from "./dom.js";
 import { lyricsPanel } from "./views/lyrics.js";
 import { session, state, updateSession } from "./state.js";
 import { openSourcePicker, pickSource, sourceLabel, findSourceDialog } from "./views/sources.js";
+import { withDownloadSlot } from "./offline.js";
 
 /** How many tracks after the current one stay downloaded. */
 export const PREFETCH = 3;
@@ -1460,7 +1461,7 @@ class Player {
       // songs are cancelled for it, and it starts as fast as the provider can
       // go. The songs after this one are asked for below, which is why they are
       // not primary: they are for later.
-      this._startDownload(resolved.variantId, null, true);
+      // `_ready` starts the transfer behind the shared device slot queue.
       // The songs after this one are asked for now, while this one downloads:
       // the page holds them by the time they are reached, and outside a room
       // it keeps its own copies of the window ahead as it always did. This is
@@ -1700,6 +1701,10 @@ class Player {
    *  for the song a person is waiting to hear is primary; a warm-ahead is not,
    *  so that one queues behind whatever is being listened to. */
   async _ready(variantId, token, primary = false) {
+    return withDownloadSlot(() => this._readySlot(variantId, token, primary));
+  }
+
+  async _readySlot(variantId, token, primary = false) {
     const ready = this._status.get(variantId);
     if (ready?.state === "ready") return ready;
     const client = this._client();
@@ -2597,7 +2602,10 @@ class Player {
   async _warmOnce(variantId, signal) {
     try {
       const client = this._client();
-      this._startDownload(variantId, client);
+      await withDownloadSlot(async () => {
+        this._startDownload(variantId, client);
+        return true;
+      });
       // Nothing waits on this: it gives up rather than polling a stuck
       // download for the rest of the session - or when the slot it was waiting
       // in was given to a song that is due sooner.

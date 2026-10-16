@@ -132,3 +132,8 @@
 - Decision: provider streaming is removed. The player resolves a variant, starts its download, waits for the file, then assigns the stored media URL and applies the in-file seek. If a room cannot resolve a source, the shell opens Find a source with the song prefilled; selecting a result associates it, retries immediately, and the dialogue closes when the room advances.
 - Why: the provider stream added an unknown-length, unseekable second path and competed with the download. A stored file is durable and seekable. A room with no source needs a human association rather than a five-second retry loop with no explanation.
 - Reversible: no for streaming; yes for the dialogue.
+
+## 2026-10-16 Decimal ratings, explicit room auto-skip, and bounded downloads
+- Decision: the favorite star opens a 0.1-step 0.1–5.0 rating slider; a saved rating is shown numerically and as partially filled stars, and a room submits it once when its item starts. Auto-skip is a visible opt-in room checkbox. The device download selector also supports All, while the shared download queue enforces the selected limit.
+- Why: binary favorites lost useful preference information, automatic low-rating skips are disruptive unless requested, and displaying a concurrency setting without applying it made the server run more downloads than the user selected. Provider status polling now drives the visible progress label directly.
+- Reversible: yes.
