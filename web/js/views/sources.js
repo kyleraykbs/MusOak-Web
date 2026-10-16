@@ -227,7 +227,7 @@ export function pickSource(sources, preferredVariantId = "") {
 export function openSourcePicker(anchor, track, onChange = null, { playingVariantId = "" } = {}) {
   if (!anchor || !track?.id) return null;
 
-  const panel = h("div", { class: "popover source-popover-pending", role: "menu" });
+  const panel = h("div", { class: "popover source-popover-pending", role: "menu", "aria-busy": "true" });
   const data = { sources: [], preferredVariantId: "", notice: "" };
   let loadGeneration = 0;
   let closed = false;
@@ -295,7 +295,7 @@ export function openSourcePicker(anchor, track, onChange = null, { playingVarian
       report(error);
       data.notice = error?.message || "could not load the sources";
     }
-    if (!closed && mine === loadGeneration) render();
+    panel.removeAttribute("aria-busy");
   };
 
   const pick = async (source) => {
