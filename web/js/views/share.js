@@ -312,7 +312,7 @@ async function chooseTarget(client, track) {
   let close = null;
   const body = h(
     "div",
-    { style: column(10) },
+    { class: "share-dialog-fields" },
     h("p", { text: `Share \u201c${track.title || "this song"}\u201d with\u2026` })
   );
   body.appendChild(
@@ -423,7 +423,7 @@ export async function inviteToRoom(user) {
     return;
   }
   let close = null;
-  const body = h("div", { style: column(10) }, h("p", { text: `Invite ${displayName(user)} to a room.` }));
+  const body = h("div", { class: "share-dialog-fields" }, h("p", { text: `Invite ${displayName(user)} to a room.` }));
   body.appendChild(
     rooms.length
       ? h(
@@ -453,7 +453,7 @@ async function inviteSomeoneToRoom() {
     return;
   }
   let close = null;
-  const body = h("div", { style: column(10) }, h("p", { text: "Which room?" }));
+  const body = h("div", { class: "share-dialog-fields" }, h("p", { text: "Which room?" }));
   body.appendChild(
     rooms.length
       ? h(
