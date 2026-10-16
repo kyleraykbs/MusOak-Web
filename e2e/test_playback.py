@@ -139,17 +139,32 @@ def assert_smooth(ui, title, *, budget, since_click, sources_allowed, seconds=WA
 def assert_audio_at(ui, backend, *, position_ms, since_log, where):
     """The audio is at the position asked for.
 
-    Read as the larger of two honest readings: the element's clock, and the
-    largest `start=` the provider was asked for since the log mark. A stream
-    begins where its URL named, so the element clock is short by that offset.
-    The defect this catches is a file answer that ignored `?start=` while nothing
-    seeked the element: the clock sits near zero and the provider was never asked,
-    so the song plays from the top under a bar that names a position."""
+    Two honest readings, and which one is the truth depends on what the element
+    in hand holds. A whole source - a file the server has, or the page's own copy
+    - begins at the beginning of the song, so the element's own clock *is* the
+    position, and it is asserted exactly: a file that plays from the top while
+    the provider was asked for a section is the defect this catches. A stream's
+    clock starts where its URL asked to, so there the position is that offset
+    plus the clock, and the provider's own record of what it was asked (see
+    `stream_offsets`) is what stands in for the offset the page recorded.
+
+    Reading the larger of the two, which is what this used to do, passes a file
+    playing from the top whenever the provider was asked for the position - which
+    is exactly the "picked back up, plays from the beginning" a listener reported
+    with the file already on disk."""
     element = element_now(ui)
     played = element["currentTime"] * 1000
+    src = element.get("src") or ""
+    whole = src.startswith("blob:") or "start=" not in src
+    if whole:
+        assert abs(played - position_ms) <= POSITION_TOLERANCE_MS, (
+            f"{where}: the element in hand holds a whole source and its clock is at "
+            f"{played:.0f}ms, the listener asked for {position_ms}ms, and nothing seeked it: {element!r}"
+        )
+        return
     offsets = stream_offsets(backend, since_log)
     provider = max(offsets) if offsets else 0
-    audio_at = max(played, provider)
+    audio_at = provider + played
     assert abs(audio_at - position_ms) <= POSITION_TOLERANCE_MS, (
         f"{where}: the audio is at {audio_at:.0f}ms, the listener asked for {position_ms}ms. "
         f"The element clock is {played:.0f}ms, the provider was asked for "
@@ -365,6 +380,65 @@ def test_a_restored_song_starts_where_it_left_off(ui, backend, signed_in):
     )
     print(f"  restored sound at the position; sources {len(result['sources'])}")
     ui.assert_no_errors("playing a restored song")
+
+
+# --- scenario 4b: picked up with the file still coming ---------------------------
+
+
+def test_a_song_picked_up_while_its_file_was_still_coming_starts_where_it_was(
+    ui, backend, signed_in
+):
+    """The same press, one second into the song, with the file not on disk yet.
+
+    The pick-up above reloads a song the server already holds, and the page can
+    hand the element that whole file. Here it cannot: a second of the song has
+    been heard and the download behind it is still running, so the sound comes
+    from the provider's stream - and the position has to survive that, and the
+    file landing behind it while the song plays. That hand-over is what a
+    listener over a network hears as "it starts, then stops and loads again", and
+    the position is what they hear as "it started from the beginning"."""
+    title = "E2E Stream Ten"
+    variant = fresh_variant(backend, signed_in.token, title)
+    sign_in_ui(ui, signed_in)
+    ui.goto("/")
+    ui.click_tab("Search")
+    play_from_search(ui, title)
+    wait_streaming(ui, title, timeout=30)
+    time.sleep(1.2)
+
+    ui.reload()
+    wait_for(
+        lambda: ui.now_playing() == title and bool(element_now(ui)["src"]) or None,
+        f"{title!r} was not restored after the reload",
+        timeout=30,
+    )
+    # What the app itself says it picked up is what the press has to honour.
+    status, document = backend.get("/api/v1/me/playback", token=signed_in.token)
+    picked_from = int(document["state"]["positionMs"])
+    assert picked_from > 500, f"there was nothing to pick up: {document!r}"
+    print(f"  picked up from {picked_from}ms with the file {media_status(backend, signed_in.token, variant['id']).get('state')}")
+
+    log = log_mark(backend)
+    since = time.monotonic()
+    ui.click(".player-bar button.play")
+    wait_first_sound(ui, title, FIRST_SOUND_BUDGET, since, "picked up mid-download")
+    assert_audio_at(
+        ui,
+        backend,
+        position_ms=picked_from,
+        since_log=log,
+        where="picked up while its file was still coming",
+    )
+    result = assert_smooth(
+        ui,
+        title,
+        budget=FIRST_SOUND_BUDGET,
+        since_click=since,
+        sources_allowed=2,
+        where="picked up while its file was still coming",
+    )
+    print(f"  picked-up sound at the position; sources {len(result['sources'])}")
+    ui.assert_no_errors("playing a song picked up mid-download")
 
 
 # --- scenario 5: a room member joins a song already on disk ----------------------
