@@ -385,8 +385,10 @@ function chooseSong(client, friend) {
   );
   close = dialog({ title: "Share a song", body, actions: [{ label: "Close" }] }).close;
 
+  let searchGeneration = 0;
   const search = debounce(async () => {
     const query = input.value.trim();
+    const mine = ++searchGeneration;
     mount(results);
     results.style.display = query ? "" : "none";
     if (query.length < MIN_QUERY) {
@@ -399,9 +401,11 @@ function chooseSong(client, friend) {
     try {
       ({ groups } = await client.search(query, SEARCH_LIMIT));
     } catch (error) {
+      if (mine !== searchGeneration) return;
       status.textContent = error?.message || "The search failed.";
       return;
     }
+    if (mine !== searchGeneration) return;
     const tracks = (groups || []).map((group) => group?.track).filter((track) => track?.id);
     if (!tracks.length) {
       status.textContent = "Nothing matched that.";
