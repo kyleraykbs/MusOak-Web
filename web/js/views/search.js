@@ -54,7 +54,7 @@ export function searchSections({ groups = [], albums = [], artists = [], playlis
   const uploads = pinned.filter((group) => group?.userUpload);
   const tracks = pinned.filter((group) => !group?.userUpload);
   const sections = [];
-  if (uploads.length) sections.push({ key: "uploads", title: "Your uploads", kind: "track", items: uploads });
+  if (uploads.length) sections.push({ key: "uploads", title: "User Uploads", kind: "track", items: uploads });
   if (tracks.length) sections.push({ key: "tracks", title: "Tracks", kind: "track", items: tracks });
   if (albums.length) sections.push({ key: "albums", title: "Albums", kind: "album", items: albums });
   if (artists.length) sections.push({ key: "artists", title: "Artists", kind: "artist", items: artists });
@@ -248,6 +248,8 @@ function trackRow(group) {
   const track = group?.track || {};
   const providers = groupProviders(group);
   const artist = artistLine(track);
+  const uploader = group?.userUpload ? (group.variants || []).map((variant) => variant?.uploader).find(Boolean) : null;
+  const owner = uploader?.displayName || uploader?.username || "User upload";
   const rest = providers.join(", ");
   return h(
     "div",
@@ -257,13 +259,13 @@ function trackRow(group) {
       "div",
       { class: "grow search-row-copy" },
       h("div", { class: "title", text: track.title || "Untitled" }),
-      // The artist is a way into their page; the provider names are not.
-      artist || rest
+      artist || rest || group?.userUpload
         ? h(
             "div",
             { class: "subtitle" },
             artist ? artistLink(artist, (track.artistIds || [])[0]) || h("span", { text: artist }) : null,
-            rest ? h("span", { text: `${artist ? " \u00b7 " : ""}${rest}` }) : null
+            group?.userUpload ? h("span", { text: `${artist ? " · " : ""}${owner}` }) : null,
+            !group?.userUpload && rest ? h("span", { text: `${artist ? " · " : ""}${rest}` }) : null
           )
         : null
     ),

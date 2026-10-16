@@ -53,7 +53,7 @@
   --player-height: 92px;
 
   color-scheme: dark;
-  font-family: "Miracode", "Iosevka", "JetBrains Mono", "Fira Mono", ui-monospace, monospace;
+  font-family: "JetBrains Mono", "Iosevka", "Fira Mono", ui-monospace, monospace;
   font-size: 15px;
 }
 
@@ -788,8 +788,8 @@ img.art[data-loaded="true"] { opacity: 1; }
 .playlist-import-results { max-height: 220px; overflow: auto; }
 .playlist-import-selector { display: flex; gap: 6px; border: 0; padding: 0; overflow-x: auto; }
 .playlist-import-selector .tab { flex: none; }
-.favourites-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.playlist-detail-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.favourites-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 12px; }
+.playlist-detail-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
 .room-now-playing-row > .grow { min-width: 0; }
 .room-transport { display: flex; gap: 6px; flex: none; }
 .rooms-section-header { display: flex; align-items: center; border: 0; padding: 0 0 8px; }
@@ -898,6 +898,7 @@ img.art[data-loaded="true"] { opacity: 1; }
    side is green and the pause side is orange. */
 .player .btn.round[data-state="paused"] { color: var(--green); border-color: var(--green-dim); }
 .player .btn.round[data-state="playing"] { color: var(--orange); border-color: var(--orange-dim); }
+.player .btn.play svg { display: block; width: 22px; height: 22px; }
 .player .btn.round:hover { border-color: currentColor; }
 
 /* The volume: the part up to the dot is green whatever the transport is doing -

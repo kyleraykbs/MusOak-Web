@@ -282,7 +282,8 @@ function renderUploads(active, target) {
 function uploadRow(active, upload, info, target) {
   const artists = artistLine(upload.artists);
   const association = info?.label || "No Association";
-  const subtitle = [artists, association].filter(Boolean).join(" \u00b7 ");
+  const uploader = upload.uploader?.displayName || upload.uploader?.username || "User upload";
+  const subtitle = [artists, association, uploader].filter(Boolean).join(" · ");
   const id = String(upload.id || "");
   return h(
     "div",
@@ -524,7 +525,7 @@ export function render(container, params = {}) {
     h(
       "div",
       { class: "upload-list-section" },
-      h("div", { class: "section-title", text: "Your uploads" }),
+      h("div", { class: "section-title", text: "User Uploads" }),
       search,
       bar,
       list
