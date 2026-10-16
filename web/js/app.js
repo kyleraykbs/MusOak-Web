@@ -1020,10 +1020,12 @@ function renderContent() {
       h("span", { text: "Choose a backend to browse. This page is only a frontend: your music lives on your own server." }),
       h("button", { class: "btn suggested", text: "Choose a server", onclick: (event) => openServerPicker(event.currentTarget) })
     ));
+    layout.content.setAttribute("aria-busy", "false");
     return;
   }
   if (!view) {
     mount(container, h("div", { class: "empty" }, h("span", { class: "title", text: "Nothing here yet" })));
+    layout.content.setAttribute("aria-busy", "false");
     return;
   }
 
