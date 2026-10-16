@@ -611,6 +611,7 @@ img.art[data-loaded="true"] { opacity: 1; }
 .import-status { min-height: 1.2em; }
 .import-report { min-height: 40px; }
 .form-row .field { flex: 1; }
+.upload-header-spacer { width: 24px; flex: none; }
 
 /* ---------- dialogs ---------- */
 

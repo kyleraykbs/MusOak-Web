@@ -266,7 +266,7 @@ function renderUploads(active, target) {
       },
     }),
     h("div", { class: "grow" }, h("div", { class: "subtitle", text: `Select all (${shown.length})` })),
-    h("span", { style: { width: "24px" } })
+    h("span", { class: "upload-header-spacer" }),
   );
   mount(
     target.list,
