@@ -1073,11 +1073,12 @@ function renderContent() {
     }
   })();
   if (view && container.isConnected) layout.title.focus?.({ preventScroll: true });
-  const savedScroll = routeScroll.get(routeScrollKey());
-  if (savedScroll != null) requestAnimationFrame(() => { if (container.isConnected) layout.content.scrollTop = savedScroll; });
-  // A view that fetches before it draws can fail later than this call: that
-  // failure must reach only the current surface.
+  const restoreScroll = () => {
+    const savedScroll = routeScroll.get(routeScrollKey());
+    if (savedScroll != null && container.isConnected) layout.content.scrollTop = savedScroll;
+  };
   Promise.resolve(rendered).finally(() => {
+    restoreScroll();
     if (container.isConnected && container === layout.viewContainer?.firstElementChild) layout.content.setAttribute("aria-busy", "false");
   }).catch((error) => {
     if (container.isConnected && container === layout.viewContainer?.firstElementChild) reportViewFailure(container, view, error);
