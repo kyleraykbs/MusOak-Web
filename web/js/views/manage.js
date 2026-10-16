@@ -461,12 +461,12 @@ function start(files, associateTrackId, progress) {
 // --- the view ---------------------------------------------------------------
 
 export function render(container, params = {}) {
-  const progress = h("div", { style: { color: "var(--fg4)", fontSize: "12.5px", minHeight: "16px" } });
+  const progress = h("div", { class: "upload-progress", role: "status" });
   // Possible duplicates sit above the uploads: a copy is worth resolving, and
   // the section is empty (and hidden) when there is nothing to say.
-  const duplicatesBox = h("div", { style: { display: "flex", flexDirection: "column", gap: "10px" } });
+  const duplicatesBox = h("div", { class: "upload-duplicates" });
   const bar = h("div");
-  const list = h("div", { style: { display: "flex", flexDirection: "column", gap: "10px" } });
+  const list = h("div", { class: "upload-list" });
 
   const choose = h("button", {
     class: "btn suggested",
@@ -474,10 +474,7 @@ export function render(container, params = {}) {
     onclick: () => start([], "", progress),
   });
 
-  const card = h("div", {
-    class: "card",
-    style: { display: "flex", flexDirection: "column", alignItems: "center", gap: "8px", textAlign: "center" },
-  });
+  const card = h("div", { class: "card upload-dropzone" });
   card.addEventListener("dragover", (event) => {
     event.preventDefault();
     card.style.borderColor = "var(--blue)";
@@ -496,12 +493,9 @@ export function render(container, params = {}) {
 
   mount(
     card,
-    h("span", { style: { color: "var(--bg4)" } }, icon("upload", 30)),
-    h("div", { style: { fontSize: "17px", color: "var(--fg2)" }, text: "Drop it or choose files" }),
-    h("div", {
-      style: { color: "var(--fg4)", fontSize: "12.5px", maxWidth: "460px" },
-      text: "Up to 64 MB per song. One dialog per song asks what it is and which song, if any, it is a source of.",
-    }),
+    h("span", { class: "upload-dropzone-icon" }, icon("upload", 30)),
+    h("div", { class: "upload-dropzone-title", text: "Drop it or choose files" }),
+    h("div", { class: "upload-dropzone-hint", text: "Up to 64 MB per song. One dialog per song asks what it is and which song, if any, it is a source of." }),
     choose,
     progress
   );
