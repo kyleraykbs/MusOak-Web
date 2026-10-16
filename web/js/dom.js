@@ -270,7 +270,7 @@ export function popover(anchor, items) {
     { class: "popover", role: "menu" },
     items.map((item) => {
       if (item.separator) return h("div", { class: "menu-separator" });
-      if (item.header) return h("div", { class: "menu-item", style: { color: "var(--gray)", cursor: "default" }, text: item.header });
+      if (item.header) return menuNotice(item.header);
       if (!item.trailing) return main(item);
       const trailing = Array.isArray(item.trailing) ? item.trailing : [item.trailing];
       return h(
@@ -346,7 +346,10 @@ export function popover(anchor, items) {
   });
   return { close, node: menu };
 }
-
+/** A non-interactive menu row with the same muted treatment everywhere. */
+export function menuNotice(message) {
+  return h("div", { class: "menu-item menu-notice", role: "status", text: message });
+}
 /** The stack notices are shown in: one column above the player bar, oldest at
  *  the top, so two notices never land on top of each other. It is created when
  *  the first notice arrives and removed when the last one goes. */
