@@ -6,7 +6,7 @@
 // catalogue is enormous and noisy beside a music service, so including it by
 // default would bury the results people want.
 
-import { h, icon } from "./dom.js";
+import { h, icon, menuNotice } from "./dom.js";
 
 /** Platforms that stay out of a search until somebody ticks them. */
 const OFF_BY_DEFAULT = new Set(["youtube"]);
@@ -177,7 +177,7 @@ export function platformFilter({ providers = [], preferred = null, onChange } = 
               h("span", { text: name })
             )
           )
-        : h("div", { class: "menu-item", style: { color: "var(--gray)", cursor: "default" }, text: "No platforms enabled" })
+        : menuNotice("No platforms enabled"),
     );
     document.body.appendChild(panel);
     place();
