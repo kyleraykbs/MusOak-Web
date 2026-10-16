@@ -718,6 +718,9 @@ img.art[data-loaded="true"] { opacity: 1; }
 .room-now-playing-row { display: flex; align-items: center; gap: 8px; border: 0; padding: 6px 0; }
 .room-now-playing-row > .grow { min-width: 0; }
 .room-transport { display: flex; gap: 6px; flex: none; }
+.rooms-section-header { display: flex; align-items: center; border: 0; padding: 0 0 8px; }
+.room-create-panel .form-row { align-items: flex-end; }
+.rooms-empty { padding: 20px; }
 
 /* ---------- popovers (menus, source picker) ---------- */
 

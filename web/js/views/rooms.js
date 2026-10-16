@@ -126,7 +126,7 @@ function paint() {
       { class: "card" },
       h(
         "div",
-        { class: "row", style: { border: "0", padding: "0 0 8px" } },
+        { class: "rooms-section-header" },
         h("span", { class: "section-title grow", text: "Rooms on this server" }),
         h("button", { class: "btn small", text: "Refresh", title: "Refresh", onclick: () => refresh() })
       ),
@@ -161,7 +161,7 @@ function openPanel() {
 
   return h(
     "div",
-    { class: "card" },
+    { class: "card room-create-panel" },
     h(
       "div",
       { class: "form-row" },
@@ -202,7 +202,7 @@ function roomList() {
     if (loadError) {
       return h(
         "div",
-        { class: "empty", style: { padding: "20px" } },
+        { class: "empty rooms-empty" },
         h("span", { class: "icon" }, icon("room", 38)),
         h("span", { class: "title", text: "The rooms could not be listed" }),
         h("span", { text: loadError }),
@@ -211,7 +211,7 @@ function roomList() {
     }
     return h(
       "div",
-      { class: "empty", style: { padding: "20px" } },
+      { class: "empty rooms-empty" },
       h("span", { class: "icon" }, icon("room", 38)),
       h("span", { class: "title", text: "No rooms yet" }),
       h("span", { text: "Create one above, or wait for someone else to open one." })
