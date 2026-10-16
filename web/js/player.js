@@ -21,7 +21,6 @@ import { h, mount, dialog, icon, iconButton, fmtBytes } from "./dom.js";
 import { lyricsPanel } from "./views/lyrics.js";
 import { session, state, updateSession } from "./state.js";
 import { openSourcePicker, pickSource, sourceLabel, findSourceDialog } from "./views/sources.js";
-import { withDownloadSlot } from "./offline.js";
 
 /** How many tracks after the current one stay downloaded. */
 export const PREFETCH = 3;
@@ -2005,7 +2004,7 @@ class Player {
     this._offlineAbort.set(trackId, controller);
     this._offlineInFlight.add(trackId);
     this._offlineActive += 1;
-    withDownloadSlot(() => this._fetchOffline(trackId, controller.signal)).finally(() => {
+    this._fetchOffline(trackId, controller.signal).finally(() => {
       this._offlineAbort.delete(trackId);
       this._offlineInFlight.delete(trackId);
       this._offlineActive -= 1;
