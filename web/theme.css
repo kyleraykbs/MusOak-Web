@@ -1599,6 +1599,9 @@ body:has(.drawer:not([hidden])) .player-bar > .btn[title="Open the room"] { disp
   .room-votes { padding-inline: 0; }
   .room-vote-buttons { flex-wrap: wrap; }
   .room-header { padding: 12px; }
+  .account-profile-row { align-items: flex-start; flex-wrap: wrap; }
+  .account-profile-row > .grow { flex: 1 1 180px; }
+  .account-profile-row > .btn { margin-left: 68px; }
 
   /* A phone keeps the queue button where it is when the drawer opens: stepping
      it aside means stepping it off a screen this narrow. It rides above the
