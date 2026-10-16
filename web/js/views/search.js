@@ -287,7 +287,7 @@ function collectionRow(kind, item) {
     artwork(item.artworkUrl),
     h(
       "div",
-      { class: "grow search-row-copy" },
+      { class: "grow search-row-copy search-collection-copy" },
       h("div", { class: "title", text: item.title || item.name || "Untitled" }),
       subtitle ? h("div", { class: "subtitle", text: subtitle }) : null
     ),

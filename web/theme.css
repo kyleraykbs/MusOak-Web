@@ -785,6 +785,8 @@ img.art[data-loaded="true"] { opacity: 1; }
 .room-queue-clear { border: 0; padding: 0 0 6px; }
 .social-row-copy { min-width: 0; }
 .social-row-copy .subtitle { overflow-wrap: anywhere; }
+.search-collection-copy .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-collection-copy .subtitle { overflow-wrap: anywhere; }
 .source-action-icon { width: 18px; display: inline-flex; align-items: center; justify-content: center; }
 
 /* ---------- popovers (menus, source picker) ---------- */
