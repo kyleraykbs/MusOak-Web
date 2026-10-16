@@ -18,7 +18,7 @@ import {
   popover,
   prompt,
   toast,
-  loadingState, artworkImage,
+  loadingState, artworkImage, skeletonRows,
 } from "../dom.js";
 import { banner, currentClient, navigate, refreshCurrent, registerView, requireLogin, serverAnswered, openFavoriteDialog, favoriteRating, inBrowser } from "../app.js";
 import { isSignedIn, state } from "../state.js";
@@ -388,7 +388,7 @@ async function loadPlaylist() {
     return;
   }
 
-  if (!target.firstChild) mount(target, loadingState("Loading playlist…"));
+  if (!target.firstChild || !target.querySelector(".playlist-refresh-loading")) mount(target, h("div", { class: "loading-panel playlist-refresh-loading" }, skeletonRows(5), h("span", { class: "loading-caption", text: "Loading playlist…" })));
 
   // The same rule the play buttons follow: a page that already knows it has no
   // server goes straight to the copy kept here, rather than spending the wait
