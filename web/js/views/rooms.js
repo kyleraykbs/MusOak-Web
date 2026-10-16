@@ -85,6 +85,7 @@ let loading = false;
  *  an empty list and an unreadable one are not the same thing to show. */
 let loadError = "";
 let unsubscribe = null;
+let loadGeneration = 0;
 
 function render(container, params = {}) {
   host = container;
@@ -264,6 +265,7 @@ function describeRoom(room) {
 
 async function loadRooms() {
   const client = currentClient();
+  const mine = ++loadGeneration;
   loadError = "";
   if (!client) {
     listed = [];
@@ -272,15 +274,18 @@ async function loadRooms() {
   }
   loading = true;
   try {
-    listed = await client.rooms();
+    const next = await client.rooms();
+    if (mine !== loadGeneration || !host?.isConnected) return;
+    listed = next;
   } catch (error) {
+    if (mine !== loadGeneration || !host?.isConnected) return;
     listed = [];
     loadError = error?.message || String(error);
     report(error);
   } finally {
-    loading = false;
+    if (mine === loadGeneration) loading = false;
   }
-  if (host && state.view === "rooms") paint();
+  if (host && state.view === "rooms" && mine === loadGeneration) paint();
 }
 
 // --- actions ---------------------------------------------------------------
