@@ -56,6 +56,27 @@ export function currentUser() {
   return state.user;
 }
 
+function routeState() {
+  return { view: state.view, params: state.viewParams || {} };
+}
+
+function syncBrowserRoute({ replace = false } = {}) {
+  if (typeof history === "undefined") return;
+  const method = replace ? "replaceState" : "pushState";
+  history[method](routeState(), "", location.href);
+}
+
+function applyBrowserRoute(route) {
+  const id = route?.view;
+  if (!views.has(id)) return false;
+  state.view = id;
+  state.viewParams = route.params && typeof route.params === "object" ? route.params : {};
+  saveLocal();
+  renderContent();
+  renderNav();
+  return true;
+}
+
 export function navigate(id, params = {}) {
   const view = views.get(id);
   if (!view) {
@@ -65,6 +86,7 @@ export function navigate(id, params = {}) {
   state.view = id;
   state.viewParams = params;
   saveLocal();
+  syncBrowserRoute();
   renderContent();
   renderNav();
 }
@@ -170,6 +192,10 @@ export async function boot() {
   buildClient();
   renderNav();
   renderContent();
+  window.addEventListener("popstate", (event) => {
+    if (applyBrowserRoute(event.state)) return;
+    syncBrowserRoute({ replace: true });
+  });
 
   // Resolves once the landing view is in hand; the rest keep loading behind the
   // paint.
@@ -182,6 +208,7 @@ export async function boot() {
     renderNav();
   }
   renderContent();
+  syncBrowserRoute({ replace: true });
 
   if (wanted) {
     await refreshMe();
