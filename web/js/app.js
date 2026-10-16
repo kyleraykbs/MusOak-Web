@@ -1432,25 +1432,20 @@ export function openLogin({ arrival = false } = {}) {
     title: arrival ? `Sign in to ${serverLabel()}` : "Sign in",
     body: form,
     actions: [
+      { id: "skip", label: "Skip", onClick: () => { updateSession({ loginSkipped: true }); renderCorner(); } },
       {
-        label: "Skip",
-        onClick: () => {
-          updateSession({ loginSkipped: true });
-          renderCorner();
-        },
-      },
-      {
+        id: "toggle-registration",
         label: "Create an account",
         onClick: (event) => {
           registering = !registering;
           event.currentTarget.textContent = registering ? "I have an account" : "Create an account";
-          const submitButton = event.currentTarget.closest(".dialog")?.querySelector(".actions .suggested");
+          const submitButton = event.currentTarget.closest(".dialog")?.querySelector("[data-action='submit']");
           if (submitButton) submitButton.textContent = registering ? "Create account" : "Sign in";
           status.textContent = registering ? "a new account on this server" : "";
           return false;
         },
       },
-      { label: "Sign in", class: "suggested", onClick: submit },
+      { id: "submit", label: "Sign in", class: "suggested", onClick: submit },
     ],
     onOpen: () => username.focus(),
   });

@@ -567,12 +567,12 @@ img.art[data-loaded="true"] { opacity: 1; }
   align-items: center;
   justify-content: center;
   background: rgba(16, 16, 16, 0.62);
-  z-index: 120;
+  z-index: 2147483000;
   isolation: isolate;
   pointer-events: auto;
 }
 .modal-open { overflow: hidden; }
-.dialog-backdrop .dialog { pointer-events: auto; }
+.dialog-backdrop .dialog { pointer-events: auto; position: relative; z-index: 1; }
 
 .dialog {
   background: var(--bg0-s);

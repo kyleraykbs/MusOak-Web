@@ -206,11 +206,11 @@ export function dialog({ title, body, actions = [], onOpen, closeButton = false 
       ? iconButton("cross", { title: "Close", class: "btn flat round dialog-close", onclick: () => close() })
       : null,
     title ? h("h2", { text: title, id: "dialog-title" }) : null,
-    body ? (typeof body === "string" ? h("p", { text: body }) : body) : null,
     h("div", { class: "actions" }, actions.map((action) => h("button", {
       type: "button",
       class: `btn ${action.class || ""}`.trim(),
       text: action.label,
+      dataset: action.id ? { action: action.id } : null,
       onclick: async (event) => {
         event.preventDefault();
         event.stopPropagation();
