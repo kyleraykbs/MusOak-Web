@@ -8,7 +8,7 @@
 // consults when it picks which source of a song plays.
 
 import {
-  h, clear, mount, dialog, toast, pickFile, fileToBase64, icon, loadingState,
+  h, clear, mount, dialog, toast, pickFile, fileToBase64, icon, loadingState, skeletonRows,
 } from "../dom.js";
 import { state, saveLocal, isSignedIn, bumpIcon, iconVersion, userIdOf } from "../state.js";
 import { rejoinRoom } from "../rooms-state.js";
@@ -98,7 +98,7 @@ export function render(container) {
     guestCard(container);
     return;
   }
-  container.appendChild(loadingState("Loading your account…"));
+  mount(container, h("div", { class: "loading-panel account-loading" }, skeletonRows(4, { artwork: false }), h("span", { class: "loading-caption", text: "Loading your account…" })));
   load();
 }
 

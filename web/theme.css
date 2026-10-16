@@ -449,6 +449,8 @@ button, input, select, textarea {
 .loading-panel { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
 .search-loading { border: 1px solid var(--bg1); border-radius: var(--radius); background: var(--bg0-s); overflow: hidden; }
 .loading-caption { align-self: center; color: var(--fg4); font-size: .86rem; }
+.account-loading .skeleton-list { min-height: 208px; }
+.account-loading .skeleton-row { min-height: 48px; }
 .art { contain: paint; }
 img.art { display: block; transition: opacity 140ms ease; }
 img.art:not([data-loaded="true"]) { opacity: 0.72; }
