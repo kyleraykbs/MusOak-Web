@@ -187,7 +187,7 @@ function shareRow(client, share) {
 function section(title, rows, emptyText, { scroll = false } = {}) {
   return h(
     "section",
-    { style: { display: "flex", flexDirection: "column", gap: "8px" } },
+    { class: "profile-section" },
     h("h2", { class: "section-title", text: title }),
     h(
       "div",
@@ -248,7 +248,7 @@ function actionsRow(client, userId, user, reload) {
   const ignored = String(user?.relationship || "") === "ignored";
   return h(
     "div",
-    { style: { display: "flex", gap: "6px", flexWrap: "wrap" } },
+    { class: "profile-actions" },
     h("button", {
       class: "btn suggested",
       text: following ? "Listening along" : "Listen along",
@@ -292,7 +292,7 @@ function bannerBox(client, userId, user, reload) {
   if (listening) parts.push(listening);
   return h(
     "div",
-    { class: "card", style: { display: "flex", flexDirection: "column", gap: "12px" } },
+    { class: "card profile-banner" },
     h(
       "div",
       null,
@@ -305,15 +305,12 @@ function bannerBox(client, userId, user, reload) {
     ),
     h(
       "div",
-      { style: { display: "flex", gap: "18px", alignItems: "center" } },
+      { class: "profile-identity" },
       avatarFor(client, user, "art big round"),
       h(
         "div",
-        { style: { flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "6px" } },
-        h("div", {
-          style: { fontSize: "24px", fontWeight: "700", color: "var(--fg0)" },
-          text: displayName(user),
-        }),
+        { class: "grow profile-copy" },
+        h("div", { class: "profile-name", text: displayName(user) }),
         user?.username ? h("div", { class: "subtitle", text: `@${user.username}` }) : null,
         h("div", { class: "subtitle", text: parts.join(" \u00b7 ") }),
         actionsRow(client, userId, user, reload)

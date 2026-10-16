@@ -703,6 +703,12 @@ img.art[data-loaded="true"] { opacity: 1; }
 .collection-header-actions { margin-top: 8px; }
 .playlist-header .collection-header-title { font-size: 22px; font-weight: 600; }
 .playlist-header > .row { flex-wrap: wrap; }
+.profile-section { display: flex; flex-direction: column; gap: 8px; }
+.profile-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.profile-banner { display: flex; flex-direction: column; gap: 12px; }
+.profile-identity { display: flex; gap: 18px; align-items: center; }
+.profile-copy { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.profile-name { font-size: 24px; font-weight: 700; color: var(--fg0); }
 
 /* ---------- popovers (menus, source picker) ---------- */
 
