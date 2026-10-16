@@ -7,7 +7,7 @@
 
 import { banner, currentClient, navigate, requireLogin } from "../app.js";
 import { state } from "../state.js";
-import { clear, h, icon, dialog, toast, loadingState, menuNotice } from "../dom.js";
+import { clear, h, icon, dialog, toast, loadingState, menuNotice, skeletonRows } from "../dom.js";
 import { platformFilter, enabledPlatforms } from "../platforms.js";
 
 /**
@@ -386,7 +386,7 @@ export function openSourcePicker(anchor, track, onChange = null, { playingVarian
       panel.appendChild(
         data.notice
           ? menuNotice(data.notice)
-          : loadingState("Loading sources…")
+          : h("div", { class: "source-loading" }, skeletonRows(3, { artwork: false }), h("span", { class: "loading-caption", text: "Loading sources…" }))
       );
     }
     for (const source of official) panel.appendChild(row(source, current));

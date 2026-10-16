@@ -794,6 +794,8 @@ img.art[data-loaded="true"] { opacity: 1; }
 .find-source-copy { flex: 1; min-width: 0; overflow: hidden; }
 .find-source-copy > span:first-child { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .find-source-copy .subtitle { overflow-wrap: anywhere; }
+.source-loading { min-width: 280px; }
+.source-loading .skeleton-list { min-height: 150px; }
 
 /* ---------- popovers (menus, source picker) ---------- */
 
