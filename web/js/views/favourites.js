@@ -105,7 +105,7 @@ function paint() {
     sheet,
     h(
       "div",
-      { class: "row", style: { flexWrap: "wrap" } },
+      { class: "favourites-actions" },
       h("div", { class: "grow" }, h("div", { class: "subtitle", text: trackCountLine(list) })),
       ...playButtons(list, { withShuffleQueue: false })
     ),
