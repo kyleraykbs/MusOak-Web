@@ -553,7 +553,7 @@ function importDialog() {
     const query = input.value.trim();
     if (!query) return;
     status.className = "login-status";
-    status.textContent = `Searching ${platformName()}...`;
+    status.textContent = `Searching ${platformName()}…`;
     mount(results);
     try {
       const { playlists, providerErrors } = await client.searchPlaylists(query, 20);

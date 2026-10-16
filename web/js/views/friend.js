@@ -366,7 +366,6 @@ export function renderFriend(container, userId) {
     const client = currentClient();
     if (!client) return;
     const mine = ++generation;
-    mount(container, loadingState("Loading profile…"));
     let detail;
     let uploads = [];
     try {

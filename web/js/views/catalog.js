@@ -170,7 +170,7 @@ async function renderArtist(container, params = {}) {
         actions: [
           syncControl({
             label: "Sync into library",
-            running: "Syncing...",
+            running: "Syncing…",
             title: "Bring every album this artist has into the library",
             hint: "Asking the provider about every album this artist has. A big artist takes a minute or so.",
             work: () => syncAndSay(client, { id: artist.id, name: artist.name }, load),
@@ -302,7 +302,7 @@ async function renderAlbum(container, params = {}) {
         actions: [
           syncControl({
             label: tracks.length ? "Sync again" : "Sync into library",
-            running: "Syncing...",
+            running: "Syncing…",
             title: "Bring this album's tracks into the library",
             hint: "Asking the provider about this album.",
             work: () => syncAndSay(client, { id: album.id, name: album.title, album: true }, load),
