@@ -603,6 +603,9 @@ img.art[data-loaded="true"] { opacity: 1; }
  .account-icon-button { padding: 0; border: 0; background: transparent; }
  .account-action-button { flex: 1; min-width: 0; }
 .account-device-row { align-items: flex-start; }
+.account-profile-row { align-items: center; }
+.account-profile-row > .grow { min-width: 0; }
+.account-profile-row > .btn { flex: none; }
 .search-row-copy { min-width: 0; }
 .search-row-copy .subtitle { overflow-wrap: anywhere; }
 .import-status { min-height: 1.2em; }

@@ -223,7 +223,7 @@ function iconTile() {
 function profileCard() {
   const card = h("div", { class: "list" });
 
-  card.appendChild(h("div", { class: "row" },
+  card.appendChild(h("div", { class: "row account-profile-row" },
     iconTile(),
     h("div", { class: "grow" },
       h("div", { class: "title", text: "Profile picture" }),
