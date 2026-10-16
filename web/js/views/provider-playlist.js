@@ -203,7 +203,7 @@ async function runImport(client, playlist, button) {
 registerView({
   id: "providerPlaylist",
   title: "Playlist",
-  icon: "\u2261",
+  icon: "list",
   order: 72,
   hidden: true,
   render,

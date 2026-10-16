@@ -1204,13 +1204,13 @@ export function openServerPicker(anchor) {
 
   if (state.config.allowCustomServer) {
     items.push({ separator: true });
-    items.push({ label: "Add a server...", icon: "+", onClick: () => addServerDialog() });
+    items.push({ label: "Add a server…", icon: "plus", onClick: () => addServerDialog() });
   }
   if (known.length && state.server) {
     items.push({ separator: true });
     items.push({
       label: isSignedIn() ? "Sign out of this server" : "Sign in to this server",
-      icon: "\u21a9",
+      icon: isSignedIn() ? "logout" : "login",
       onClick: () => (isSignedIn() ? signOut() : openLogin()),
     });
   }

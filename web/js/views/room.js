@@ -566,7 +566,7 @@ async function leave() {
 registerView({
   id: "room",
   title: "Room",
-  icon: "\u2302",
+  icon: "home",
   order: 71,
   hidden: true,
   render,
