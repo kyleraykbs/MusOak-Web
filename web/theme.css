@@ -776,6 +776,9 @@ img.art[data-loaded="true"] { opacity: 1; }
 .provider-playlist-section-title { margin-top: 10px; }
 .provider-playlist-more { min-width: 128px; }
 .provider-playlist-more-row { min-height: 40px; align-items: center; }
+.room-votes { padding: 0 4px 6px; }
+.room-vote-buttons { border: 0; padding: 6px 0; gap: 6px; }
+.room-queue-clear { border: 0; padding: 0 0 6px; }
 
 /* ---------- popovers (menus, source picker) ---------- */
 

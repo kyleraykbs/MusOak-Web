@@ -285,8 +285,8 @@ function votes(room, current) {
   }
   return h(
     "div",
-    { style: { padding: "0 4px 6px" } },
-    h("div", { class: "row", style: { border: "0", padding: "6px 0" } }, buttons),
+    { class: "room-votes" },
+    h("div", { class: "row room-vote-buttons" }, buttons),
     h("div", { class: "subtitle", text: summary })
   );
 }
@@ -305,7 +305,7 @@ function queues(room) {
   section.appendChild(
     h(
       "div",
-      { class: "row", style: { border: "0", padding: "0 0 6px" } },
+      { class: "room-queue-clear" },
       h("span", { class: "grow" }),
       h("button", {
         class: "btn small",
