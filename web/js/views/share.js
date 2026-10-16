@@ -303,7 +303,7 @@ async function loadFriends(client) {
 /** A song picked: who gets it, and the room option beside them. */
 async function chooseTarget(client, track) {
   const title = `Share “${track.title || "this song"}” with…`;
-  const body = h("div", { class: "share-dialog-fields" }, h("p", { text: title }), loadingState("Loading friends…"));
+  const body = h("div", { class: "share-dialog-fields", "aria-busy": "true" }, h("p", { text: title }), loadingState("Loading friends…"));
   const ref = dialog({ title: "Share", body, actions: [{ label: "Close" }] });
   let friends = [];
   try {
@@ -314,6 +314,7 @@ async function chooseTarget(client, track) {
     return;
   }
   if (!ref.node.isConnected) return;
+  body.removeAttribute("aria-busy");
   mount(body, h("p", { text: title }), friends.length
     ? h("div", { class: "list" }, friends.map((friend) => personRow(client, friend, () => {
         ref.close();
@@ -394,7 +395,7 @@ function chooseSong(client, friend) {
 export async function inviteToRoom(user) {
   const client = currentClient();
   if (!client || !user?.id) return;
-  const body = h("div", { class: "share-dialog-fields" }, h("p", { text: `Invite ${displayName(user)} to a room.` }), loadingState("Loading rooms…"));
+  const body = h("div", { class: "share-dialog-fields", "aria-busy": "true" }, h("p", { text: `Invite ${displayName(user)} to a room.` }), loadingState("Loading rooms…"));
   const ref = dialog({ title: "Invite to a room", body, actions: [{ label: "Cancel" }] });
   let rooms = [];
   try {
@@ -405,6 +406,7 @@ export async function inviteToRoom(user) {
     return;
   }
   if (!ref.node.isConnected) return;
+  body.removeAttribute("aria-busy");
   mount(body, h("p", { text: `Invite ${displayName(user)} to a room.` }), rooms.length
     ? h("div", { class: "list" }, rooms.map((room) => roomRow(room, () => {
         ref.close();
@@ -417,7 +419,7 @@ export async function inviteToRoom(user) {
 async function inviteSomeoneToRoom() {
   const client = currentClient();
   if (!client) return;
-  const body = h("div", { class: "share-dialog-fields" }, h("p", { text: "Which room?" }), loadingState("Loading rooms…"));
+  const body = h("div", { class: "share-dialog-fields", "aria-busy": "true" }, h("p", { text: "Which room?" }), loadingState("Loading rooms…"));
   const ref = dialog({ title: "Invite to a room", body, actions: [{ label: "Cancel" }] });
   let rooms = [];
   try {
@@ -428,6 +430,7 @@ async function inviteSomeoneToRoom() {
     return;
   }
   if (!ref.node.isConnected) return;
+  body.removeAttribute("aria-busy");
   mount(body, h("p", { text: "Which room?" }), rooms.length
     ? h("div", { class: "list" }, rooms.map((room) => roomRow(room, () => {
         ref.close();
