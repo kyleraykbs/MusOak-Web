@@ -212,6 +212,8 @@ export function dialog({ title, body, actions = [], onOpen, closeButton = false 
       class: `btn ${action.class || ""}`.trim(),
       text: action.label,
       onclick: async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
         const keep = action.onClick ? await action.onClick(event) : undefined;
         if (keep !== false && action.keepOpen !== true) close();
       },
