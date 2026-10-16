@@ -2796,8 +2796,9 @@ class Player {
   _syncMediaMetadata(track) {
     const session = typeof navigator === "undefined" ? null : navigator.mediaSession;
     if (!session || typeof MediaMetadata === "undefined") return;
-    if (this._mediaMetadataFor === (track?.id || "")) return;
-    this._mediaMetadataFor = track?.id || "";
+    const metadataKey = track ? [track.id, track.title, artistLine(track), track.album, track.artworkUrl].join("\u0000") : "";
+    if (this._mediaMetadataFor === metadataKey) return;
+    this._mediaMetadataFor = metadataKey;
     if (!track) {
       session.metadata = null;
       return;
