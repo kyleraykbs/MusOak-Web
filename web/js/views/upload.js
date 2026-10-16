@@ -369,7 +369,7 @@ function showDialog({
       tile,
         art.url
           ? artworkImage(art.url, { className: "upload-art-preview", eager: true })
-          : h("span", { style: { color: "var(--gray)" } }, icon(editing ? "note" : "plus", 26))
+      : h("span", { class: "upload-art-placeholder" }, icon(editing ? "note" : "plus", 26))
     );
   };
   paintTile();
@@ -607,21 +607,21 @@ function showDialog({
 
   const body = h(
     "div",
-    { style: { display: "flex", flexDirection: "column", gap: "12px" } },
+    { class: "upload-association-body" },
     h(
       "div",
-      { style: { display: "flex", gap: "12px", alignItems: "center" } },
+      { class: "upload-association-art-fields" },
       tile,
       h(
         "div",
-        { style: { flex: "1", display: "flex", flexDirection: "column", gap: "8px" } },
+        { class: "upload-association-fields" },
         h("div", { class: "field" }, h("label", { for: ids.title, text: "Title" }), titleInput),
         h("div", { class: "field" }, h("label", { for: ids.artists, text: "Artists" }), artistsInput)
       )
     ),
     h("div", { class: "section-title", text: "Association" }),
     select,
-    h("div", { style: { color: "var(--fg4)", fontSize: "12.5px" }, text: editing ? EDIT_NOTE : ASSOCIATION_NOTE }),
+    h("div", { class: "upload-association-note", text: editing ? EDIT_NOTE : ASSOCIATION_NOTE }),
     searchPanel,
     notice
   );

@@ -592,6 +592,11 @@ img.art[data-loaded="true"] { opacity: 1; }
 .upload-selection-actions { display: flex; gap: 8px; }
 .upload-list-section { display: flex; flex-direction: column; gap: 10px; }
 .playlist-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.upload-association-body { display: flex; flex-direction: column; gap: 12px; }
+.upload-association-art-fields { display: flex; gap: 12px; align-items: center; }
+.upload-association-fields { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.upload-association-note { color: var(--fg4); font-size: 12.5px; min-height: 16px; }
+.upload-art-placeholder { display: inline-flex; align-items: center; justify-content: center; color: var(--gray); }
 
 .form-row { display: flex; gap: 12px; align-items: flex-end; }
 .form-row .field { flex: 1; }
