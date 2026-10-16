@@ -587,6 +587,10 @@ img.art[data-loaded="true"] { opacity: 1; }
 .import-note { color: var(--fg4); font-size: 12.5px; min-height: 16px; }
 .import-report { max-height: 200px; overflow: auto; }
 .import-actions { display: flex; gap: 8px; }
+.duplicate-groups { display: flex; flex-direction: column; gap: 10px; }
+.upload-selection-row { display: flex; justify-content: space-between; align-items: center; }
+.upload-selection-actions { display: flex; gap: 8px; }
+.upload-list-section { display: flex; flex-direction: column; gap: 10px; }
 
 .form-row { display: flex; gap: 12px; align-items: flex-end; }
 .form-row .field { flex: 1; }

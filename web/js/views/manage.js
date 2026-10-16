@@ -167,7 +167,7 @@ function renderDuplicates(active, target) {
     h("div", { class: "section-title", text: "Possible duplicates" }),
     h(
       "div",
-      { style: { display: "flex", flexDirection: "column", gap: "10px" } },
+      { class: "duplicate-groups" },
       groups.map((group) => duplicateGroup(active, group))
     )
   );
@@ -317,11 +317,11 @@ function renderSelectionBar(active, target) {
     target.bar,
     h(
       "div",
-      { class: "row", style: { justifyContent: "space-between" } },
+      { class: "upload-selection-row" },
       h("span", { class: "subtitle", text: `${count} selected` }),
       h(
         "div",
-        { style: { display: "flex", gap: "8px" } },
+        { class: "upload-selection-actions" },
         h("button", {
           class: "btn suggested",
           text: "Associate with\u2026",
@@ -517,7 +517,7 @@ export function render(container, params = {}) {
     card,
     h(
       "div",
-      { style: { display: "flex", flexDirection: "column", gap: "10px" } },
+      { class: "upload-list-section" },
       h("div", { class: "section-title", text: "Your uploads" }),
       search,
       bar,
