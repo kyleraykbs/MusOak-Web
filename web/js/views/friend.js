@@ -96,7 +96,7 @@ function ratingVisual(rating) {
   if (!Number.isFinite(value)) return null;
   const stars = Array.from({ length: 5 }, (_, index) => {
     const fill = Math.max(0, Math.min(1, value - index));
-    return h("span", { class: "rating-star", style: { opacity: String(fill ? 0.25 + fill * 0.75 : 0.2) } }, icon("star", 14));
+    return h("span", { class: "rating-star", style: { "--rating-opacity": String(fill ? 0.25 + fill * 0.75 : 0.2) } }, icon("star", 14));
   });
   return h("div", { class: "subtitle rating", title: `${value.toFixed(1)}/5.0`, role: "img", "aria-label": `Rating ${value.toFixed(1)} out of 5` }, stars, ` ${value.toFixed(1)}/5.0`);
 }

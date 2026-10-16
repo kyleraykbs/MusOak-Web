@@ -511,7 +511,7 @@ img.art[data-loaded="true"] { opacity: 1; }
 }
  .row .subtitle.wrap { white-space: normal; }
  .rating { display: inline-flex; align-items: center; gap: 2px; }
- .rating-star { display: inline-flex; color: var(--orange); }
+ .rating-star { display: inline-flex; color: var(--orange); opacity: var(--rating-opacity, 1); }
  .art-fallback { display: inline-flex; align-items: center; justify-content: center; background: var(--bg2); color: var(--fg4); }
 
 /* Subtle interaction feedback makes rows feel like controls without turning
