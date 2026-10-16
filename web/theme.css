@@ -568,6 +568,8 @@ img.art[data-loaded="true"] { opacity: 1; }
 .input::placeholder { color: var(--gray); }
 .account-dialog-fields { display: flex; flex-direction: column; gap: 10px; }
 .dialog-intro { margin: 0; }
+.sync-control { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.sync-status { min-height: 1.2em; }
 
 .form-row { display: flex; gap: 12px; align-items: flex-end; }
 .form-row .field { flex: 1; }

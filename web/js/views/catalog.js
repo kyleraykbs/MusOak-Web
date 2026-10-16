@@ -70,7 +70,7 @@ function header({ client, artworkUrl, title, lines = [], actions = [] }) {
  * rather than sitting there looking pressed.
  */
 function syncControl({ label, running, title, work, hint }) {
-  const status = h("span", { class: "login-status", role: "status" });
+  const status = h("span", { class: "login-status sync-status", role: "status" });
   const button = h("button", {
     class: "btn suggested",
     text: label,
@@ -96,7 +96,7 @@ function syncControl({ label, running, title, work, hint }) {
       }
     },
   });
-  return h("div", { style: { display: "flex", flexDirection: "column", gap: "6px" } }, button, status);
+  return h("div", { class: "sync-control" }, button, status);
 }
 
 /** A sync that reports how much it added and then lets the page catch up. */
