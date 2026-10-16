@@ -197,6 +197,7 @@ async function addToPlaylist(tracks) {
   let playlists = [];
   try {
     playlists = await client.playlists();
+    if (!ref.node.isConnected) return;
   } catch (error) {
     ref.close();
     handle(error);
