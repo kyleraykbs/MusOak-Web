@@ -151,7 +151,7 @@ function header(room) {
     h(
       "div",
       { class: "grow" },
-      h("div", { class: "title", style: { fontSize: "20px", color: "var(--fg0)" }, text: room.name || "Room" }),
+      h("div", { class: "room-title", text: room.name || "Room" }),
       h("div", { class: "subtitle", text: `${room.memberCount} listening · ${policy}` })
     ),
     h("button", {
@@ -162,7 +162,7 @@ function header(room) {
     }),
   ];
   pieces.push(h("button", { class: "btn destructive", text: "Leave", title: `Leave “${room.name}”`, onclick: () => leave() }));
-  return h("div", { class: "card row", style: { padding: "14px 16px" } }, h("button", {
+  return h("div", { class: "card room-header" }, h("button", {
     class: "btn flat small",
     title: "Back to the rooms list",
     onclick: () => {
@@ -256,9 +256,9 @@ function nowPlaying(room) {
   section.appendChild(
     h(
       "div",
-      { class: "row", style: { border: "0", padding: "6px 0" } },
+      { class: "room-now-playing-row" },
       text,
-      h("div", { style: { display: "flex", gap: "6px" } }, playPause, next)
+      h("div", { class: "room-transport" }, playPause, next)
     )
   );
   section.appendChild(votes(room, current));
