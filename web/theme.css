@@ -771,6 +771,8 @@ img.art[data-loaded="true"] { opacity: 1; }
 .rooms-section-header { display: flex; align-items: center; border: 0; padding: 0 0 8px; }
 .room-create-panel .form-row { align-items: flex-end; }
 .rooms-empty { padding: 20px; }
+.room-policy-toggle { padding: 8px 0; border: 0; }
+.room-status-message { padding: 0 4px 8px; }
 
 /* ---------- popovers (menus, source picker) ---------- */
 

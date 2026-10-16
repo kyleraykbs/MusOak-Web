@@ -133,7 +133,7 @@ function paint() {
     room.error ? h("div", { class: "banner error" }, h("span", { class: "grow", text: room.error })) : null,
     header(room),
     nowPlaying(room),
-    h("label", { class: "row", style: { padding: "8px 0", border: "0" } },
+    h("label", { class: "row room-policy-toggle" },
       h("input", { type: "checkbox", checked: autoSkipLowRatings, onchange: (event) => { autoSkipLowRatings = event.currentTarget.checked; } }),
       h("span", { text: "Auto-skip low ratings" })
     ),
@@ -186,8 +186,7 @@ function nowPlaying(room) {
   if (!current || !current.item) {
     section.appendChild(
       h("div", {
-        class: "subtitle",
-        style: { padding: "0 4px 8px" },
+        class: "subtitle room-status-message",
         // A room with nothing on because nobody queued anything and a room with
         // nothing on because its channel is down look identical, and they want
         // opposite things: one wants a song, the other is already waiting. The
@@ -205,7 +204,7 @@ function nowPlaying(room) {
     section.appendChild(
       h(
         "div",
-        { class: "subtitle", style: { padding: "0 4px 8px" } },
+        { class: "subtitle room-status-message" },
         h("div", { class: "title", text: current.item.title }),
         ...(artists ? [h("div", { text: artists })] : []),
         h("div", { text: "Starting…" })
