@@ -1645,6 +1645,7 @@ body:has(.drawer:not([hidden])) .player-bar > .btn[title="Open the room"] { disp
   .find-source-toolbar .btn { flex: 1 0 96px; }
   .find-source-results { max-height: 42vh; }
   .find-source-row { min-width: 0; }
+  .queue-drawer-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .upload-association-fields { min-width: 0; }
   .upload-association-body .upload-search-panel { min-width: 0; }
   .toasts { bottom: calc(var(--player-height) + 12px); }

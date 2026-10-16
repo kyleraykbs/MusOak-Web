@@ -397,10 +397,9 @@ function draw({ sheet, compact }, projection, room) {
         sheet,
         h(
           "div",
-          { class: "row", style: { flexWrap: "wrap" } },
+          { class: "queue-drawer-controls" },
           h("button", {
-            class: drawerWholeRoom ? "tab active" : "tab",
-            style: { padding: "4px 10px" },
+            class: `tab queue-tab${drawerWholeRoom ? " active" : ""}`.trim(),
             text: "Whole Room",
             title: "Show the room's play order — the fair mix everyone plays (read only)",
             "aria-pressed": drawerWholeRoom ? "true" : "false",
