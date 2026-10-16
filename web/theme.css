@@ -453,6 +453,25 @@ img.art { display: block; }
 /* Failed artwork falls back to the same neutral tile without changing row
    dimensions or leaving a broken-image glyph in the layout. */
 .art[data-failed="true"] { display: inline-flex; align-items: center; justify-content: center; }
+
+/* Mobile panels stay readable when the keyboard and browser chrome reduce the
+   visual viewport: dialogs become bottom sheets, list panes scroll themselves,
+   and panel padding does not push controls off-screen. */
+@media (max-width: 700px), (max-aspect-ratio: 2/3) {
+  .dialog-backdrop { align-items: flex-end; }
+  .dialog {
+    width: 100%;
+    max-width: 100%;
+    max-height: min(82dvh, 680px);
+    border-radius: var(--radius) var(--radius) 0 0;
+    padding: 16px;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  }
+  .dialog .actions { flex-wrap: wrap; }
+  .dialog .actions .btn { flex: 1 1 120px; }
+  .card { padding: 13px; }
+  .list > .row { min-height: 54px; padding-inline: 10px; }
+}
 .art[data-failed="true"]::after { content: "♪"; color: var(--bg4); font-size: 1.2rem; }
 .row .subtitle.wrap { white-space: normal; }
 

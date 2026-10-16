@@ -994,8 +994,13 @@ function renderContent() {
   layout.title.textContent = view ? view.title : "MusOak";
   // Keep one page shell mounted: views own their loading state, so navigation
   // changes content without blanking the whole layout or shifting the drawer.
-  const container = layout.viewContainer || (layout.viewContainer = h("div", { class: "page" }));
-  if (!container.isConnected) layout.content.appendChild(container);
+  // The outer page shell survives navigation; each view gets a fresh child so
+  // a slow response from the previous view becomes disconnected and cannot
+  // paint over the destination.
+  const shell = layout.viewContainer || (layout.viewContainer = h("div", { class: "page" }));
+  const container = h("div", { class: "view-surface" });
+  if (!shell.isConnected) layout.content.appendChild(shell);
+  mount(shell, container);
 
   if (!state.server) {
     layout.content.appendChild(
@@ -1022,9 +1027,9 @@ function renderContent() {
     }
   })();
   // A view that fetches before it draws can fail later than this call: that
-  // failure has to reach the user too.
+  // failure must reach only the current surface.
   Promise.resolve(rendered).catch((error) => {
-    if (container === layout.viewContainer) reportViewFailure(container, view, error);
+    if (container.isConnected && container === layout.viewContainer?.firstElementChild) reportViewFailure(container, view, error);
   });
 }
 

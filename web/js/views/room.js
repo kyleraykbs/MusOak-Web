@@ -34,9 +34,9 @@ import {
 
 const VOTE_LABELS = {
   1: "1 · bad",
-  2: "2 · semi-bad",
+  2: "2 · below average",
   3: "3 · neutral",
-  4: "4 · semi-good",
+  4: "4 · good",
   5: "5 · great",
 };
 
@@ -393,9 +393,7 @@ function queueRow(room, item, index, mine, draggable = false, playingNow = false
   const own = String(item.addedBy || "") === String(room.me || "");
   const row = h(
     "div",
-    { class: playingNow ? "row now" : "row", "data-key": String(item.id || "") },
-    h("span", { class: "time", text: playingNow ? "▶" : String(index + 1) }),
-    artworkTile(currentClient(), item.artworkUrl),
+    h("span", { class: "time", "aria-label": playingNow ? "Playing now" : `Queue position ${index + 1}` }, playingNow ? icon("play", 12) : String(index + 1)),
     h(
       "div",
       { class: "grow" },
