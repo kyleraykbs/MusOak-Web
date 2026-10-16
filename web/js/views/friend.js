@@ -109,7 +109,7 @@ function trackRow(client, track, { note = "", rating = null } = {}) {
     cover(client, track?.artworkUrl),
     h(
       "div",
-      { style: { flex: 1, minWidth: 0 } },
+      { class: "grow social-row-copy" },
       h("div", { class: "title", text: track?.title || "" }),
       artists ? artistLineNode(artists, (track?.artistIds || [])[0]) : null,
       ratingVisual(rating),
@@ -135,7 +135,7 @@ function playlistRow(client, playlist) {
     cover(client, playlist?.artworkUrl),
     h(
       "div",
-      { style: { flex: 1, minWidth: 0 } },
+      { class: "grow social-row-copy" },
       h("div", { class: "title", text: playlist?.name || "Untitled" }),
       h("div", { class: "subtitle", text: `${count} track${count === 1 ? "" : "s"}` })
     ),
@@ -159,7 +159,7 @@ function shareRow(client, share) {
       cover(client, "", true),
       h(
         "div",
-        { style: { flex: 1, minWidth: 0 } },
+        { class: "grow social-row-copy" },
         h("div", { class: "title", text: "Room invite" }),
         h("div", {
           class: "subtitle",
@@ -174,7 +174,7 @@ function shareRow(client, share) {
     cover(client, "", true),
     h(
       "div",
-      { style: { flex: 1, minWidth: 0 } },
+      { class: "grow social-row-copy" },
       h("div", { class: "title", text: "Shared a song" }),
       h("div", {
         class: "subtitle",

@@ -783,6 +783,8 @@ img.art[data-loaded="true"] { opacity: 1; }
 .room-votes { padding: 0 4px 6px; }
 .room-vote-buttons { border: 0; padding: 6px 0; gap: 6px; }
 .room-queue-clear { border: 0; padding: 0 0 6px; }
+.social-row-copy { min-width: 0; }
+.social-row-copy .subtitle { overflow-wrap: anywhere; }
 .source-action-icon { width: 18px; display: inline-flex; align-items: center; justify-content: center; }
 
 /* ---------- popovers (menus, source picker) ---------- */

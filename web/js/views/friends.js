@@ -108,7 +108,7 @@ function userRow(client, user, { onOpen, trailing = [] } = {}) {
     avatarFor(client, user),
     h(
       "div",
-      { style: { flex: 1, minWidth: 0 } },
+      { class: "grow social-row-copy" },
       h("div", { class: "title", text: displayName(user) }),
       h("div", { class: "subtitle", text: user?.username ? `@${user.username}` : "" }),
       listening ? h("div", { class: "subtitle", text: listening }) : null
