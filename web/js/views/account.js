@@ -324,7 +324,7 @@ async function chooseIcon() {
 // --- the two confirmations ---------------------------------------------------
 
 function dialogFields(...entries) {
-  return h("div", { style: { display: "flex", flexDirection: "column", gap: "10px" } }, entries);
+  return h("div", { class: "account-dialog-fields" }, entries);
 }
 
 function openPassword() {
@@ -341,7 +341,7 @@ function openPassword() {
   dialog({
     title: "Change password",
     body: dialogFields(
-      h("p", { style: { margin: "0" }, text: "The current password proves it is you." }),
+      h("p", { class: "dialog-intro", text: "The current password proves it is you." }),
       field("account-current-password", "Current password", current),
       field("account-new-password", "New password", next),
       field("account-confirm-password", "Repeat the new password", again),
@@ -388,7 +388,7 @@ function openUsername() {
   dialog({
     title: "Change username",
     body: dialogFields(
-      h("p", { style: { margin: "0" }, text: "Changing your username changes how everyone finds you. The old name stops working right away." }),
+      h("p", { class: "dialog-intro", text: "Changing your username changes how everyone finds you. The old name stops working right away." }),
       field("account-username-password", "Password", password),
       field("account-new-username", "New username", username),
       status
