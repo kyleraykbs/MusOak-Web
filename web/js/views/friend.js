@@ -9,7 +9,7 @@
 // stay within a second or two of each other without re-seeking every poll.
 
 import {
-  h, mount, popover, confirm, toast, fmtDuration, fmtAgo, icon, iconButton, artworkImage, loadingState,
+  h, mount, popover, confirm, toast, fmtDuration, fmtAgo, icon, iconButton, artworkImage, loadingState, skeletonRows,
 } from "../dom.js";
 import {
   navigate, currentClient, banner, requireLogin, openFavoriteDialog, favoriteRating, setFollowing,
@@ -356,6 +356,7 @@ async function unfriend(client, userId, user) {
 /** Render the page into `container`; the returned function re-fetches it. */
 export function renderFriend(container, userId) {
   let generation = 0;
+  mount(container, h("div", { class: "loading-panel friend-profile-loading" }, skeletonRows(5), h("span", { class: "loading-caption", text: "Loading profile…" })));
   const load = async () => {
     const client = currentClient();
     if (!client) return;
