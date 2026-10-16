@@ -149,8 +149,12 @@ async function renderArtist(container, params = {}) {
   const { client, sheet } = page;
 
   let artist;
+  let loadGeneration = 0;
   const load = async () => {
-    artist = await client.artist(params.id);
+    const mine = ++loadGeneration;
+    const next = await client.artist(params.id);
+    if (mine !== loadGeneration || !sheet.isConnected) return;
+    artist = next;
     paint();
   };
   const paint = () => {
@@ -158,32 +162,12 @@ async function renderArtist(container, params = {}) {
     const albums = artist.albums || [];
     clear(sheet);
     sheet.appendChild(backRow(params.from));
-    sheet.appendChild(
-      header({
-        client,
-        artworkUrl: artist.artworkUrl,
-        title: artist.name || "Artist",
-        lines: [
-          albums.length ? `${albums.length} album${albums.length === 1 ? "" : "s"}` : "Nothing in the library yet",
-          (artist.providers || []).join(", "),
-        ],
-        actions: [
-          syncControl({
-            label: "Sync into library",
-            running: "Syncing…",
-            title: "Bring every album this artist has into the library",
-            hint: "Asking the provider about every album this artist has. A big artist takes a minute or so.",
-            work: () => syncAndSay(client, { id: artist.id, name: artist.name }, load),
-          }),
-        ],
-      })
-    );
+    sheet.appendChild(header({ client, artworkUrl: artist.artworkUrl, title: artist.name || "Artist", lines: [
+      albums.length ? `${albums.length} album${albums.length === 1 ? "" : "s"}` : "Nothing in the library yet",
+      (artist.providers || []).join(", "),
+    ], actions: [syncControl({ label: "Sync into library", running: "Syncing…", title: "Bring every album this artist has into the library", hint: "Asking the provider about every album this artist has.", work: () => syncAndSay(client, { id: artist.id, name: artist.name }, load) })] }));
     sheet.appendChild(h("div", { class: "section-title", text: "Albums" }));
-    sheet.appendChild(
-      albums.length
-        ? h("div", { class: "list" }, albums.map((album) => albumRow(client, album, params, load)))
-        : emptyState("note", "No albums yet", "Sync the artist to find out what they released.")
-    );
+    sheet.appendChild(albums.length ? h("div", { class: "list" }, albums.map((album) => albumRow(client, album, params, load))) : emptyState("note", "No albums yet", "Sync the artist to find out what they released."));
   };
 
   try {
