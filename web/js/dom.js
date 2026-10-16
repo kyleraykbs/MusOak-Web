@@ -190,6 +190,8 @@ export function render(parent, build) {
 export function dialog({ title, body, actions = [], onOpen, closeButton = false }) {
   const backdrop = h("div", { class: "dialog-backdrop", role: "presentation" });
   const opener = document.activeElement;
+  // The backdrop is mounted on body below; views cannot create a competing
+  // stacking context around this modal.
   const close = () => {
     document.removeEventListener("keydown", onKey);
     backdrop.remove();

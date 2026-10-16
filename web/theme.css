@@ -570,6 +570,7 @@ img.art[data-loaded="true"] { opacity: 1; }
   z-index: 2147483000;
   isolation: isolate;
   pointer-events: auto;
+  transform: translateZ(0);
 }
 .modal-open { overflow: hidden; }
 .dialog-backdrop .dialog { pointer-events: auto; position: relative; z-index: 1; }
