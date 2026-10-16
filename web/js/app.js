@@ -435,13 +435,14 @@ function buildLayout() {
     sidebar: h("aside", { class: "sidebar", "aria-label": "Application sidebar" }),
     main: h("main", { class: "main" }),
     player: h("footer", { class: "player", "aria-label": "Player" }),
-    content: h("div", { class: "content", role: "region", "aria-busy": "false" }),
+    content: h("div", { class: "content", id: "app-content", role: "region", "aria-busy": "false" }),
     bannerSlot: h("div", { class: "banner-slot", role: "status", "aria-live": "polite" }),
     title: h("h1", { text: "MusOak", tabindex: "-1" }),
     bell: iconButton("bell", { title: "Notifications", onclick: openNotifications }),
     brand: h("div", { class: "brand" }),
     nav: h("nav", { class: "nav", "aria-label": "Primary navigation" }),
     corner: h("div", { class: "corner" }),
+    skip: h("a", { class: "skip-link", href: "#app-content", text: "Skip to content" }),
   };
   // The brand, the server and the sign-in live together so a phone can put them
   // on one line across the top while the tabs move down beside the player. The
@@ -465,7 +466,7 @@ function buildLayout() {
 
   const topbar = h("div", { class: "topbar" }, layout.title, layout.bell);
   mount(layout.main, topbar, layout.bannerSlot, layout.content);
-  mount(layout.sidebar, layout.top, layout.navWrap);
+  mount(layout.sidebar, layout.skip, layout.top, layout.navWrap);
   // The queue's own button floats above the bottom panels, clear of the bar:
   // the bar keeps the song's actions, and the queue is always one tap away.
   layout.fab = h(

@@ -802,9 +802,8 @@ export function openTrackPicker({ title = "Associate with a song" } = {}) {
       const text = query.value.trim();
       if (!text) return;
       generation += 1;
-      const mine = generation;
-      status.textContent = "Searching\u2026";
-      mount(results);
+      status.textContent = "Searching…";
+      mount(results, loadingState("Searching…"));
       try {
         const { groups } = await client.search(text, 10);
         if (mine !== generation) return;
