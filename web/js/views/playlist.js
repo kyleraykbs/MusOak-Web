@@ -546,26 +546,24 @@ function header(client, playlist, tracks) {
     : null;
   return h(
     "div",
-    { class: "card" },
+    { class: "card collection-header playlist-header" },
     h(
       "div",
-      { class: "row" },
+      { class: "collection-header-row" },
       h("button", {
         class: "btn round",
         title: "Back to playlists",
-        // An icon-only button: the tooltip is the pointer's, and a reader
-        // needs a name of its own.
         "aria-label": "Back to playlists",
         onclick: () => navigate("playlists"),
       }, icon("prev", 18)),
       artworkTile(client, playlist.artworkUrl, "big"),
       h(
         "div",
-        { class: "grow" },
+        { class: "grow collection-header-copy" },
         h(
           "div",
-          { style: { display: "flex", alignItems: "center", gap: "8px", minWidth: 0 } },
-          h("div", { class: "title", style: { fontSize: "22px", fontWeight: "600" }, text: playlist.name || "Playlist" }),
+          { class: "collection-header-title-row" },
+          h("div", { class: "title collection-header-title", text: playlist.name || "Playlist" }),
           playlist.public === false ? h("span", { class: "tag", text: "private" }) : null
         ),
         h("div", { class: "subtitle", text: trackCountLine(tracks) })

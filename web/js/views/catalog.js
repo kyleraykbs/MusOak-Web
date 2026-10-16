@@ -46,17 +46,17 @@ function backRow(from) {
 function header({ client, artworkUrl, title, lines = [], actions = [] }) {
   return h(
     "div",
-    { class: "card" },
+    { class: "card collection-header" },
     h(
       "div",
-      { class: "row", style: { alignItems: "flex-start", gap: "16px" } },
+      { class: "collection-header-row" },
       artTile(client, artworkUrl, "art big"),
       h(
         "div",
-        { class: "grow", style: { display: "flex", flexDirection: "column", gap: "6px" } },
-        h("div", { class: "title", style: { fontSize: "1.15rem" }, text: title }),
+        { class: "grow collection-header-copy" },
+        h("div", { class: "title collection-header-title", text: title }),
         ...lines.filter(Boolean).map((line) => h("div", { class: "subtitle wrap", text: line })),
-        actions.length ? h("div", { class: "form-row", style: { marginTop: "8px" } }, actions) : null
+        actions.length ? h("div", { class: "form-row collection-header-actions" }, actions) : null
       )
     )
   );

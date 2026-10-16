@@ -696,6 +696,13 @@ img.art[data-loaded="true"] { opacity: 1; }
 .search-toolbar .input { min-width: 0; flex: 1; }
 .search-provider-warning { color: var(--fg4); font-size: 13px; min-height: 18px; }
 .search-results { display: flex; flex-direction: column; gap: 18px; }
+.collection-header-row { display: flex; align-items: flex-start; gap: 16px; }
+.collection-header-copy { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.collection-header-title { font-size: 1.15rem; }
+.collection-header-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.collection-header-actions { margin-top: 8px; }
+.playlist-header .collection-header-title { font-size: 22px; font-weight: 600; }
+.playlist-header > .row { flex-wrap: wrap; }
 
 /* ---------- popovers (menus, source picker) ---------- */
 
