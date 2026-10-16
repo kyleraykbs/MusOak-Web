@@ -28,7 +28,6 @@ export function findSourceDialog(track, { onDone, query = "" } = {}) {
   const client = currentClient();
   if (!client || !track?.id) return;
 
-  const results = h("div", { class: "find-source-results" });
   const input = h("input", {
     class: "input",
     type: "search",
@@ -42,7 +41,9 @@ export function findSourceDialog(track, { onDone, query = "" } = {}) {
   });
   let filter = platformFilter({ providers: [] });
   const filterRow = h("div", { class: "search-filter" }, filter.node);
-  const note = h("div", { class: "subtitle", text: "" });
+  const note = h("div", { class: "subtitle search-status", role: "status" });
+  const results = h("div", { class: "find-source-results" });
+  let searchGeneration = 0;
 
   /** One result: a rendition a provider offers, ready to be attached. */
   const candidateRow = (group, variant) => {
@@ -85,27 +86,30 @@ export function findSourceDialog(track, { onDone, query = "" } = {}) {
   const run = async () => {
     const query = input.value.trim();
     if (!query) return;
-    note.textContent = "Searching\u2026";
-    clear(results);
+    const mine = ++searchGeneration;
+    note.textContent = "Searching…";
+    mount(results, loadingState("Searching…"));
     try {
       const answer = await client.search(query, 25, filter.selected());
+      if (mine !== searchGeneration) return;
       const rows = [];
       for (const group of answer.groups || []) {
-        if (group?.userUpload) continue; // an upload is already a source
+        if (group?.userUpload) continue;
         for (const variant of group.variants || []) {
-          // Only what can actually be played is worth offering.
           if (variant?.downloadable) rows.push(candidateRow(group, variant));
         }
       }
-      clear(results);
       if (!rows.length) {
         note.textContent = "Nothing playable matched. Try the other platforms, or a different spelling.";
+        mount(results);
         return;
       }
       note.textContent = "";
-      for (const row of rows) results.appendChild(row);
+      mount(results, rows);
     } catch (error) {
+      if (mine !== searchGeneration) return;
       note.textContent = error?.message || String(error);
+      mount(results);
     }
   };
 
@@ -118,7 +122,7 @@ export function findSourceDialog(track, { onDone, query = "" } = {}) {
         text: `\u201c${track.title || "This song"}\u201d has no source that can be played. Search the platforms and pick the one it is.`,
       }),
       filterRow,
-      h("div", { style: { display: "flex", gap: "8px" } }, input, h("button", { class: "btn", text: "Search", onclick: run })),
+      h("div", { class: "find-source-toolbar" }, input, h("button", { class: "btn", text: "Search", onclick: run })),
       note,
       results
     ),
