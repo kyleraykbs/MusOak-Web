@@ -5,7 +5,7 @@
 // into the container they are handed.
 
 import {
-  h, clear, mount, render, dialog, popover, confirm, prompt, toast, fmtAgo, icon, iconOr, iconButton,
+  h, clear, mount, render, dialog, popover, confirm, prompt, toast, fmtAgo, icon, iconOr, iconButton, artworkImage,
 } from "./dom.js";
 import {
   state, on, emit, loadLocal, saveLocal, sessionFor, session, updateSession,
@@ -806,7 +806,7 @@ function accountCard() {
   // not a list of them, and a row's 32px tile reads as a thumbnail of somebody
   // you barely know.
   const artwork = iconUrl
-    ? h("img", { class: "art round account-icon", src: iconUrl, alt: "" })
+    ? artworkImage(iconUrl, { className: "art round account-icon" })
     : h("span", { class: "art round account-icon placeholder" }, icon("users", 24));
   return h(
     "button",

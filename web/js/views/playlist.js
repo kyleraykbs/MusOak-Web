@@ -18,7 +18,7 @@ import {
   popover,
   prompt,
   toast,
-  artworkImage,
+  loadingState,
 } from "../dom.js";
 import { banner, currentClient, navigate, refreshCurrent, registerView, requireLogin, serverAnswered, openFavoriteDialog, favoriteRating, inBrowser } from "../app.js";
 import { isSignedIn, state } from "../state.js";
@@ -406,7 +406,7 @@ async function loadPlaylist() {
     return;
   }
 
-  if (!target.firstChild) mount(target, emptyState("note", "Loading playlist…", ""));
+  if (!target.firstChild) mount(target, loadingState("Loading playlist…"));
 
   // The same rule the play buttons follow: a page that already knows it has no
   // server goes straight to the copy kept here, rather than spending the wait

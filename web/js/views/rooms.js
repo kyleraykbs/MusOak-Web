@@ -4,7 +4,7 @@
 // room.js follows it. Both send their commands through rooms-state.js; neither
 // talks to the socket itself.
 
-import { h, mount, clear, dialog, toast, status, icon, scheduleFrame } from "../dom.js";
+import { h, mount, clear, dialog, toast, status, icon, scheduleFrame, loadingState } from "../dom.js";
 import { registerView, navigate, banner, requireLogin, currentClient } from "../app.js";
 import { roomsTabTarget } from "../rooms-state.js";
 import { state, saveLocal } from "../state.js";
@@ -195,7 +195,7 @@ function followingCard(room) {
 }
 
 function roomList() {
-  if (loading && !listed.length) return h("div", { class: "subtitle", style: { padding: "8px 4px" }, text: "Loading…" });
+  if (loading && !listed.length) return loadingState("Loading rooms…");
   if (!listed.length) {
     // A list nobody could read is not a server with no rooms on it: the one
     // that failed says so, and offers the ask again.

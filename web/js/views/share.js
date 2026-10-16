@@ -6,7 +6,7 @@
 //
 // The pure helpers at the top are what the unit tests import this module for.
 
-import { h, mount, dialog, toast, debounce, icon } from "../dom.js";
+import { h, mount, dialog, toast, debounce, icon, artworkImage } from "../dom.js";
 import { currentClient, banner, requireLogin } from "../app.js";
 import { iconVersion, userIdOf } from "../state.js";
 
@@ -208,7 +208,7 @@ export function avatarFor(client, user, className = "art round small") {
       ? client.artworkUrl(user.iconUrl, version)
       : user.iconUrl
     : "";
-  if (source) return h("img", { class: className, src: source, alt: "", loading: "lazy" });
+  if (source) return artworkImage(source, { className });
   const initial = displayName(user).trim().charAt(0).toUpperCase() || "?";
   return h("div", {
     class: className,

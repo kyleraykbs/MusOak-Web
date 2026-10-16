@@ -475,6 +475,14 @@ img.art { display: block; }
 .art[data-failed="true"]::after { content: "♪"; color: var(--bg4); font-size: 1.2rem; }
 .row .subtitle.wrap { white-space: normal; }
 
+/* Subtle interaction feedback makes rows feel like controls without turning
+   every page into a collection of floating cards. */
+.row.clickable { transition: background 120ms ease, border-color 120ms ease; }
+.row.clickable:active { background: var(--bg2); }
+.btn, .nav-item, .menu-item { -webkit-tap-highlight-color: transparent; }
+.btn:focus-visible, .nav-item:focus-visible, .menu-item:focus-visible { box-shadow: 0 0 0 2px var(--bg0), 0 0 0 4px var(--blue); }
+.view-surface { min-height: 100%; contain: layout style; }
+
 .art {
   width: 48px;
   height: 48px;

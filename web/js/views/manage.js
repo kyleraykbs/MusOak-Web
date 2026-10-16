@@ -6,7 +6,7 @@
 // edit that, play it, or remove it.
 
 import { currentClient, registerView, requireLogin, banner, toast } from "../app.js";
-import { h, mount, popover, confirm, icon, iconButton } from "../dom.js";
+import { h, mount, popover, confirm, icon, iconButton, artworkImage } from "../dom.js";
 import { artistLine, openEditUploadDialog, openTrackPicker, openUploadDialog, trackMatch } from "./upload.js";
 import { trackMenu } from "./playlist.js";
 import { playTracks } from "./queue.js";
@@ -191,8 +191,8 @@ function duplicateGroup(active, group) {
           "div",
           { class: "row" },
           upload.artworkUrl
-            ? h("img", { class: "art", alt: "", src: active.artworkUrl(upload.artworkUrl) })
-            : h("div", { class: "art" }),
+            ? artworkImage(active.artworkUrl(upload.artworkUrl), { className: "art" })
+            : h("div", { class: "art", "aria-hidden": "true" }),
           h(
             "div",
             { class: "grow" },
@@ -291,8 +291,8 @@ function uploadRow(active, upload, info, target) {
       },
     }),
     upload.artworkUrl
-      ? h("img", { class: "art", alt: "", src: active.artworkUrl(upload.artworkUrl) })
-      : h("div", { class: "art" }),
+      ? artworkImage(active.artworkUrl(upload.artworkUrl), { className: "art" })
+      : h("div", { class: "art", "aria-hidden": "true" }),
     h(
       "div",
       { class: "grow" },
