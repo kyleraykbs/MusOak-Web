@@ -124,7 +124,7 @@ function collectionPage(container, params, { icon, what, plural, loading }) {
     mount(sheet, emptyState(icon, `No ${what}`, `That link does not name an ${what}.`));
     return null;
   }
-  mount(sheet, h("div", { class: "loading-panel" }, skeletonRows(5), h("span", { class: "loading-caption", text: loading })));
+  mount(sheet, h("div", { class: "loading-panel search-loading catalog-loading" }, skeletonRows(5), h("span", { class: "loading-caption", text: loading })));
   return { client, sheet };
 }
 
