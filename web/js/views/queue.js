@@ -681,11 +681,12 @@ function downloadMark({ active = false, fraction = null } = {}) {
 }
 
 /**
- * Fill a mark, in place: one style write and at most one class per report.
+ * Fill a mark, in place: one style write per report.
  *
- * `active` is the transfer happening now. With no count for it the ink sweeps -
- * the honest drawing of a download nobody can measure - and with no transfer the
- * mark is left grey, which is what a song waiting its turn looks like.
+ * `active` is the transfer happening now. The yellow ink is drawn only when
+ * there is a fraction to draw; a transfer nobody can count stays the same quiet
+ * grey as one waiting its turn, because an arrow moving on its own would claim
+ * progress nobody measured. Songs still waiting are grey for the same reason.
  */
 function setMark(mark, { active = false, fraction = null } = {}) {
   if (!mark) return;
@@ -693,12 +694,9 @@ function setMark(mark, { active = false, fraction = null } = {}) {
   // an arrow pinned at nothing looks like a download that is not happening.
   const value = fraction === null || fraction === undefined ? NaN : Number(fraction);
   if (!active || !Number.isFinite(value)) {
-    if (active) mark.classList.add("unknown");
-    else mark.classList.remove("unknown");
     mark.style.removeProperty("--fill");
     return;
   }
-  mark.classList.remove("unknown");
   const share = Math.min(1, Math.max(0, value));
   mark.style.setProperty("--fill", `${Math.round(share * 100)}%`);
 }

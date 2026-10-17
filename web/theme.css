@@ -1800,10 +1800,12 @@ body:has(.drawer:not([hidden])) .player-bar > .btn[title="Open the room"] { disp
 .held { align-self: center; color: var(--fg4); display: inline-flex; }
 .held.ready { color: var(--green); }
 /* A song on its way to this device: the download arrow, filling with yellow
-   from the bottom up as the bytes arrive - the same ink the theme's own volume
-   and timeline use, so nothing new has to be learned to read it. The second
-   copy of the glyph is the ink, clipped to how far the download has got; a
-   download nobody can count sweeps instead of pretending to a fraction. */
+   from the bottom up once the bytes give it a fraction to draw - the same ink
+   the theme's own volume and timeline use, so nothing new has to be learned to
+   read it. The second copy of the glyph is the ink, clipped to how far the
+   download has got; without a count it stays at zero, so the arrow is grey. An
+   arrow that animated while nobody could measure it claimed progress it did not
+   have. */
 .held .dl { display: inline-block; position: relative; width: 14px; height: 14px; }
 .held .dl svg { display: block; }
 .held .dl .ink {
@@ -1811,9 +1813,4 @@ body:has(.drawer:not([hidden])) .player-bar > .btn[title="Open the room"] { disp
   inset: 0;
   color: var(--yellow);
   clip-path: inset(calc(100% - var(--fill, 0%)) 0 0 0);
-}
-.held .dl.unknown .ink { animation: dl-fill 2.6s linear infinite; }
-@keyframes dl-fill {
-  from { clip-path: inset(100% 0 0 0); }
-  to { clip-path: inset(0 0 0 0); }
 }

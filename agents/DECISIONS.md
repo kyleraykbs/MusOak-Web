@@ -307,3 +307,13 @@
 - Why: Kyle: "These inside of favorites need to be right aligned (the x/y
   count and + and ... length 'x:y' need to be right aligned)."
 - Reversible: yes.
+
+## 2026-10-16 An uncounted queue download is a grey arrow, not a sweeping one
+- Decision: the queue's mark draws the yellow ink only when the active transfer
+  reports a finite fraction - this page's own bytes, or the backend's stage
+  count. With no count it stays the grey download arrow; the `.unknown` sweep
+  and its keyframes are gone. A row queued behind another is grey as before.
+- Why: Kyle: "Until the download bar can show real progress, don't show the
+  yellow downloading animation on the side queue cards ... we should keep it as
+  a gray downloading icon." The sweep claimed progress nobody had measured.
+- Reversible: yes.

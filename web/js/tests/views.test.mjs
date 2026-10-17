@@ -105,11 +105,12 @@ test("the held mark says what this device has, wherever it is drawn", async () =
     assert.equal(mark.vars["--fill"], "42%", "filled by the share the player reports");
     assert.equal(mark.added.includes("unknown"), false, "a countable download does not sweep");
 
-    // A transfer nobody can count sweeps rather than pretending to a fraction.
+    // A transfer nobody can count is not drawn as progress at all: the arrow
+    // stays grey until a real fraction arrives.
     player.offlineProgress = () => null;
     const uncounted = queue.heldBadge("pending-1").children[0];
-    assert.equal(uncounted.added.includes("unknown"), true);
-    assert.equal(uncounted.vars["--fill"], undefined);
+    assert.equal(uncounted.added.includes("unknown"), false, "an uncounted download does not animate");
+    assert.equal(uncounted.vars["--fill"], undefined, "and it claims no fraction");
 
     // A song waiting its turn is grey: no ink, no sweep. The yellow is for the
     // one transfer that is happening, and a list of arrows all moving says
