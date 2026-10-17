@@ -1777,11 +1777,17 @@ class Player {
       return;
     }
     const running = this._startOffline(trackId);
+    // The selected song may have arrived while a lower-priority preload still
+    // owns the one slot. Promote this entry explicitly; the old fetch is
+    // aborted and the pump resumes it after this copy is ready.
+    if (!running && entry.state === "pending") this._pumpOffline(trackId);
+    const waiting = this._offlineInFlight.get(trackId);
+    const actual = waiting?.entry === entry ? waiting.promise : running;
     // A download that stops moving is a song nobody can play: the wait is
     // bounded, and what it was waiting for is said below.
     const timeout = deadline(READY_TIMEOUT_MS);
     try {
-      await Promise.race([running || Promise.resolve(null), timeout.promise]);
+      await Promise.race([actual || Promise.resolve(null), timeout.promise]);
     } finally {
       timeout.cancel();
     }
@@ -2073,20 +2079,26 @@ class Player {
    *  lands. Past that the order is the queue's own - the next song each time,
    *  never two - so what the queue's rows call "downloading" is one transfer.
    */
-  _pumpOffline() {
+  _pumpOffline(priorityId = "") {
     if (this._loading) return;
     const wanted = this._offlineWanted || [];
-    // The order is the wanted list, re-derived here rather than only when it
-    // changes: a fetch that has just been let go is picked up again in its
-    // place instead of staying out of the queue because it was in flight when
-    // the order was last written down.
+    const priority = String(priorityId || "");
+    // A selected song owns the pipe immediately. Stop a lower-priority fetch
+    // only when the selected copy is still pending; its entry remains pending
+    // and returns to the front after the selected copy is ready.
+    if (priority && this._offlineInFlight.size && !this._offlineInFlight.has(priority)) {
+      const entry = this._offline.get(priority);
+      if (entry?.state === "pending") {
+        for (const id of [...this._offlineInFlight.keys()]) this._abortOffline(id);
+      }
+    }
     const pending = wanted.filter((id) => {
       const entry = this._offline.get(id);
       return Boolean(entry) && entry.state === "pending" && !this._offlineInFlight.has(id);
     });
     this._offlineOrder = pending;
     if (!pending.length || this._offlineActive >= OFFLINE_FETCHES) return;
-    this._startOffline(pending[0]);
+    this._startOffline(priority && pending.includes(priority) ? priority : pending[0]);
   }
 
   /** Start one song's fetch and hold a slot for it.
