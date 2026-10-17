@@ -327,6 +327,23 @@ func TestSiteServesAssetsAndFallsBackToTheApp(t *testing.T) {
 	}
 }
 
+// The queue's preload ceiling is the deployment's: the frontend's "Songs ahead"
+// control stops where this says.
+func TestConfigEndpointCarriesThePreloadCeiling(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.PreloadMax = 9
+	server := newServer(t, cfg)
+	response := do(t, server.Handler(), "GET", "/ui/config", nil, nil)
+
+	var payload uiConfig
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if payload.PreloadMax != 9 {
+		t.Errorf("preloadMax = %d, want the configured 9", payload.PreloadMax)
+	}
+}
+
 // A deployment with nothing configured must still answer with an empty list: a
 // null here is what made "Choose a server" do nothing.
 func TestConfigEndpointNeverOmitsTheServerList(t *testing.T) {

@@ -158,26 +158,19 @@ export function keptGoneMessage(name, missing, total) {
 /** How many songs are fetched at once, unless the account page says otherwise.
  *
  * Every copy that lands in the cache goes through one queue - a playlist being
- * kept, the window the queue warms ahead, a sync after a load - and asking for
- * sixty songs is not asking for sixty downloads. The browser would open sixty
- * connections, the server would run sixty provider fetches at once, and the one
- * song the room is about to need would be last in line behind all of them. Five
- * at a time keeps the wire busy and the queue moving.
+ * kept, the window the queue preloads, a sync after a load - and it runs one at
+ * a time. Kyle's rule: no multi-download. A phone on a shared line asking for
+ * sixteen songs at once is sixteen provider fetches, sixteen browser
+ * connections, and the song somebody is waiting on queued behind all of them;
+ * one at a time is the same bytes, in the order they will be wanted.
  */
-export const DEFAULT_DOWNLOAD_LIMIT = 5;
-
-function downloadLimit() {
-  if (state.downloadLimit === "all") return Number.POSITIVE_INFINITY;
-  const wanted = Number(state.downloadLimit);
-  if (!Number.isFinite(wanted) || wanted <= 0) return DEFAULT_DOWNLOAD_LIMIT;
-  return Math.min(20, Math.floor(wanted));
-}
+export const DOWNLOAD_CONCURRENCY = 1;
 
 /** A queue of work with a ceiling on how much of it runs at once: first asked,
  *  first fetched, and a failure takes its own slot back rather than the queue's.
  *  Exported because the ceiling is the thing worth testing, and testing it
  *  through a browser cache is not worth anything. */
-export function createDownloadQueue({ limit = downloadLimit } = {}) {
+export function createDownloadQueue({ limit = () => DOWNLOAD_CONCURRENCY } = {}) {
   let running = 0;
   const waiting = [];
 
@@ -213,7 +206,7 @@ export function createDownloadQueue({ limit = downloadLimit } = {}) {
 /** The queue every cached copy goes through. */
 const downloads = createDownloadQueue();
 
-/** Run one server-backed media transfer under this device's concurrency limit. */
+/** Run one server-backed transfer with the device's one slot, in turn. */
 export function withDownloadSlot(task) {
   return downloads(task);
 }

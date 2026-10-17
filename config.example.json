@@ -10,5 +10,7 @@
   ],
 
   "allowCustomServer": true,
-  "blockPrivateServers": false
+  "blockPrivateServers": false,
+
+  "preloadMax": 15
 }

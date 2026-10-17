@@ -18,6 +18,15 @@ const appName = "musoak-web"
 // DefaultListen is the address the web UI binds to.
 const DefaultListen = ":4421"
 
+// DefaultPreloadMax is the most songs ahead a device may preload when the
+// deployment says nothing: the upper bound of the queue's own "Songs ahead"
+// control (the device chooses any number from zero to it).
+const DefaultPreloadMax = 15
+
+// PreloadMaxCeiling is the largest that setting may be. Every preloaded song is
+// a whole song fetched and held, so a number past this is a typo, not a policy.
+const PreloadMaxCeiling = 50
+
 // Server is one backend the web UI can route to.
 type Server struct {
 	Name string `json:"name"`
@@ -44,6 +53,9 @@ type Config struct {
 	// when this web UI is exposed to the internet and an open route would turn
 	// it into a fetch tunnel for anyone.
 	BlockPrivateServers bool `json:"blockPrivateServers"`
+	// PreloadMax is the most songs ahead a device may preload. The queue's
+	// "Songs ahead" control stops here; each song is fetched one at a time.
+	PreloadMax int `json:"preloadMax"`
 }
 
 // Load reads the configuration, or returns the defaults when there is no file.
@@ -64,6 +76,7 @@ func Defaults() *Config {
 	return &Config{
 		Listen:            DefaultListen,
 		AllowCustomServer: &yes,
+		PreloadMax:        DefaultPreloadMax,
 	}
 }
 
@@ -86,6 +99,9 @@ func Parse(raw []byte) (*Config, error) {
 func (c *Config) Validate() error {
 	if strings.TrimSpace(c.Listen) == "" {
 		return fmt.Errorf("config: listen is empty")
+	}
+	if c.PreloadMax < 0 || c.PreloadMax > PreloadMaxCeiling {
+		return fmt.Errorf("config: preloadMax must be between 0 and %d", PreloadMaxCeiling)
 	}
 	for index, server := range c.Servers {
 		if err := checkURL(server.URL); err != nil {

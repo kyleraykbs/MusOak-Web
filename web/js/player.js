@@ -19,53 +19,26 @@ import {
 import { ServerError } from "./client.js";
 import { h, mount, dialog, icon, iconButton, fmtBytes, artworkImage } from "./dom.js";
 import { lyricsPanel } from "./views/lyrics.js";
-import { session, state, updateSession } from "./state.js";
+import { session, state, updateSession, preloadAhead } from "./state.js";
 import { openSourcePicker, pickSource, sourceLabel, findSourceDialog } from "./views/sources.js";
 import { withDownloadSlot } from "./offline.js";
 
-/** How many tracks after the current one stay downloaded. */
-export const PREFETCH = 3;
-
 /**
- * How many songs ahead of the playhead this page keeps in memory.
+ * How many copies this page keeps in memory at most, played ones included.
  *
- * A road trip is the reason: with no server reachable the queue still plays,
- * song after song, out of this page's own memory. Memory on purpose - nothing
- * here survives a reload, which is what keeping a playlist is for - and this
- * window, with `OFFLINE_MAX_BYTES`, is the whole budget.
- *
- * The window is also a bound on the in-memory map: a copy that arrives stays
- * after its track leaves the window (see `_trimOffline`), but the map never
- * holds more than this many entries at once, and never more bytes than
- * `OFFLINE_MAX_BYTES` either.
+ * The look-ahead window is the device setting (`preloadAhead`: how many songs
+ * after the one playing are fetched), so this is only the bound on what stays
+ * behind it: a song just played is kept, so stepping back costs nothing, and the
+ * oldest are let go first. A count alone bounds nothing a phone notices - whole
+ * songs are megabytes each - so the bytes below are the budget that matters.
  */
-export const OFFLINE_AHEAD = 50;
-/**
- * How many of that window are fetched eagerly.
- *
- * These are the songs about to be heard: they are chased, two at a time, so
- * they are here before they are reached. The rest are still fetched, but
- * slowly (see `OFFLINE_TAIL_GAP_MS`), because the server's upstream is the
- * scarce thing and the song somebody is actually waiting for has to win it.
- */
-export const EAGER_AHEAD = 5;
-/**
- * How long between the starts of the songs fetched after the eager window.
- *
- * The tail is not being waited on by anyone and every byte it takes is a byte
- * the song someone asked for does not get; the same upstream serves the people
- * a member is sending songs to. So it is one song at a time with a real pause
- * between them, which is slow on purpose rather than a queue of downloads
- * racing the one thing that has to arrive now.
- */
-export const OFFLINE_TAIL_GAP_MS = 15000;
+export const OFFLINE_KEEP = 50;
 /**
  * How much memory the copies may take together.
  *
- * `OFFLINE_AHEAD` as a count bounds nothing a phone actually notices: fifty
- * whole songs is hundreds of megabytes and the tab is killed for holding them,
- * which is a session that ends with no error and nothing the listener did. A
- * phone can afford this much and no more, and the oldest copies outside the
+ * Fifty whole songs is hundreds of megabytes and the tab is killed for holding
+ * them, which is a session that ends with no error and nothing the listener did.
+ * A phone can afford this much and no more, and the oldest copies outside the
  * window are let go to stay inside it.
  */
 export const OFFLINE_MAX_BYTES = 256 * 1024 * 1024;
@@ -74,8 +47,9 @@ export const OFFLINE_MAX_BYTES = 256 * 1024 * 1024;
  *  hours; an entry that is dropped is resolved again when it is next asked
  *  for, which is a shortcut lost, not a promise broken. */
 const CACHE_ENTRIES = 256;
-/** How many eager songs are fetched at once; the account setting may raise it. */
-const OFFLINE_FETCHES = 2;
+/** How many songs this page fetches at once: one, always. The preload count is
+ *  how many are *wanted*, not how many run together - "no multi-download". */
+const OFFLINE_FETCHES = 1;
 /** How long a song that did not arrive is left before it is tried again. */
 const OFFLINE_RETRY_MS = 60000;
 /** How often the bar asks the backend whether a download is done. */
@@ -247,7 +221,7 @@ export function memorySource(known, variantId) {
 }
 
 /** The current track and the next `count` ones: what stays downloaded. */
-export function prefetchWindow(queue, index, count = PREFETCH) {
+export function prefetchWindow(queue, index, count = 0) {
   const list = queue || [];
   const ahead = Math.max(0, Math.floor(Number(count) || 0));
   const start = Math.max(0, Math.floor(Number(index) || 0));
@@ -447,8 +421,6 @@ class Player {
     this._offlineInFlight = new Map();
     this._offlineActive = 0;      // fetches in flight
     this._offlineBytes = 0;
-    this._tailAt = 0;             // when the last song after the eager window was started
-    this._tailTimer = 0;          // the wake-up that starts the next one
 
     this._token = 0;              // which track the async work is still for
     this._loading = false;
@@ -1831,15 +1803,13 @@ class Player {
       });
   }
 
-  /** Keep the current track and the next few fetched. */
+  /** Keep the preload window's songs fetched, in queue order.
+   *
+   *  No separate warm-ahead on top of it: a copy fetches the file the player
+   *  would play as part of making the copy, so asking the backend for the same
+   *  songs beside it was the same download twice over - and several at once,
+   *  which is what "no multi-download" is about. */
   _prefetch() {
-    for (const track of prefetchWindow(this.queue, this._index, PREFETCH)) {
-      // A song that says where its own bytes are needs nothing fetched: it is
-      // here, and asking the backend for it would be a request whose answer is
-      // already known - the reason a kept playlist plays with no server at all.
-      if (track?.localUrl) continue;
-      this.warm(track);
-    }
     // In a room the order offline play follows is the room's, and rooms-state
     // keeps it: this queue holds one song there, and would evict the room's.
     //
@@ -1859,9 +1829,13 @@ class Player {
     return state.online !== false;
   }
 
-  /** The songs ahead of the playhead, in order: what offline play needs. */
+  /** The songs ahead of the playhead, in order: what this device preloads.
+   *
+   *  The count is the device setting - songs *after* the one playing - and the
+   *  window always starts with the song on, which is the one the play path needs
+   *  first. */
   offlineWindow() {
-    return prefetchWindow(this.queue, this._index, OFFLINE_AHEAD).filter((track) => track?.id);
+    return prefetchWindow(this.queue, this._index, preloadAhead()).filter((track) => track?.id);
   }
 
   /** What this page holds for one track: none, pending, ready or failed. */
@@ -1926,7 +1900,11 @@ class Player {
    * one song at a time, and the order it would go through offline is the room's.
    */
   keepOffline(tracks = []) {
-    const wanted = (Array.isArray(tracks) ? tracks : []).filter((track) => track?.id).slice(0, OFFLINE_AHEAD);
+    // The window, or this call's list if it is shorter: a room hands over its
+    // whole remaining order, and only the songs in the preload window are wanted.
+    const wanted = (Array.isArray(tracks) ? tracks : [])
+      .filter((track) => track?.id)
+      .slice(0, preloadAhead() + 1);
     // The window is a priority, not a list that only grows. The songs the room
     // is about to reach are the ones that have to be here, so the order the
     // fetches take is re-derived from this call every time: a song that was
@@ -1972,7 +1950,7 @@ class Player {
     const spare = [...this._offline.entries()]
       .filter(([id, entry]) => entry.state !== "pending" && !inWindow.has(id) && id !== playing)
       .sort((left, right) => Number(left[1].at || 0) - Number(right[1].at || 0));
-    let over = this._offline.size - OFFLINE_AHEAD;
+    let over = this._offline.size - OFFLINE_KEEP;
     for (const [id] of spare) {
       if (over <= 0 && this._offlineBytes <= OFFLINE_MAX_BYTES) break;
       this._releaseOffline(id);
@@ -1993,30 +1971,16 @@ class Player {
     this._emit("offline-changed", this.offlineSummary());
   }
 
-  /**
-   * Start what the window can afford to fetch right now.
+  /** Start the next song the window wants, one at a time.
    *
-   * The songs within `EAGER_AHEAD` are chased, two at a time: they are the
-   * ones about to be heard, and they have to be here before they are reached.
-   * Past that the page still fetches, but one song at a time and only after
-   * `OFFLINE_TAIL_GAP_MS` since the last one started, and never while a file
-   * is being fetched for someone who is waiting to hear it. The tail yields to
-   * the play path; the play path never yields to the tail.
+   *  The song somebody is waiting to hear owns the pipe: nothing else is fetched
+   *  while its file is on the way, and the copies behind it start the moment it
+   *  lands. Past that the order is the queue's own - the next song each time,
+   *  never two - so what the queue's rows call "downloading" is one transfer.
    */
   _pumpOffline() {
-    // One system, one priority: while a song is being fetched for somebody who
-    // is waiting to hear it, nothing else is fetched at all. The songs behind
-    // the playhead start the moment that file lands, not before - a page that
-    // spent the link on the queue's copies is the page that showed a loading
-    // bar over a song that never started.
-    if (this._loading) {
-      // Held, not forgotten: the file landing pumps again, and this wake-up is
-      // the backstop for a load that ends somewhere that does not.
-      this._scheduleTail(OFFLINE_TAIL_GAP_MS);
-      return;
-    }
+    if (this._loading) return;
     const wanted = this._offlineWanted || [];
-    const eager = new Set(wanted.slice(0, EAGER_AHEAD));
     // The order is the wanted list, re-derived here rather than only when it
     // changes: a fetch that has just been let go is picked up again in its
     // place instead of staying out of the queue because it was in flight when
@@ -2026,25 +1990,8 @@ class Player {
       return Boolean(entry) && entry.state === "pending" && !this._offlineInFlight.has(id);
     });
     this._offlineOrder = pending;
-    let next = 0;
-    while (this._offlineActive < OFFLINE_FETCHES && next < pending.length && eager.has(pending[next])) {
-      this._startOffline(pending[next]);
-      next += 1;
-    }
-    // Nothing past the eager window until the eager window itself is under way:
-    // those songs come first, and the tail is what has room left over. A tail
-    // fetch already running also holds the one tail slot it is allowed, so the
-    // fetches in hand have to be done with before another tail one starts.
-    if (next >= pending.length || this._offlineInFlight.size > 0) return;
-    const now = Date.now();
-    const wait = Math.max(0, OFFLINE_TAIL_GAP_MS - (now - Number(this._tailAt || 0)));
-    if (this._loading || wait > 0) {
-      // Try again after the gap: the tail is slow on purpose, and a song being
-      // waited on gets the pipe in the meantime.
-      this._scheduleTail(wait > 0 ? wait : OFFLINE_TAIL_GAP_MS);
-      return;
-    }
-    if (this._startOffline(pending[next])) this._tailAt = now;
+    if (!pending.length || this._offlineActive >= OFFLINE_FETCHES) return;
+    this._startOffline(pending[0]);
   }
 
   /** Start one song's fetch and hold a slot for it.
@@ -2076,15 +2023,6 @@ class Player {
       this._pumpOffline();
     });
     return held.promise;
-  }
-
-  /** One wake-up pending is enough; a window change pumps on its own. */
-  _scheduleTail(waitMs) {
-    if (this._tailTimer) return;
-    this._tailTimer = setTimeout(() => {
-      this._tailTimer = 0;
-      this._pumpOffline();
-    }, waitMs);
   }
 
   /** Let go of a fetch whose song has left the window, or whose entry has been

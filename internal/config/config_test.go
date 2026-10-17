@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +21,9 @@ func TestMissingFileIsDefaults(t *testing.T) {
 	}
 	if !cfg.AllowCustom() {
 		t.Error("a fresh config should let people route to their own server")
+	}
+	if cfg.PreloadMax != DefaultPreloadMax {
+		t.Errorf("preloadMax = %d, want the default %d", cfg.PreloadMax, DefaultPreloadMax)
 	}
 }
 
@@ -55,7 +59,8 @@ func TestFullConfigParses(t *testing.T) {
 	  "loginPopup": true,
 	  "servers": [{"name": "Living room", "url": "https://music.example.com"}],
 	  "allowCustomServer": false,
-	  "blockPrivateServers": true
+	  "blockPrivateServers": true,
+	  "preloadMax": 8
 	}`
 	cfg, err := Parse([]byte(raw))
 	if err != nil {
@@ -69,6 +74,24 @@ func TestFullConfigParses(t *testing.T) {
 	}
 	if len(cfg.Servers) != 1 || cfg.Servers[0].Name != "Living room" {
 		t.Errorf("servers = %+v", cfg.Servers)
+	}
+	if cfg.PreloadMax != 8 {
+		t.Errorf("preloadMax = %d, want 8", cfg.PreloadMax)
+	}
+}
+
+// Every preloaded song is a whole song fetched and held: a number past the
+// ceiling is a typo, and a negative one is not a count at all.
+func TestPreloadMaxIsBounded(t *testing.T) {
+	for _, raw := range []string{`{"preloadMax": -1}`, fmt.Sprintf(`{"preloadMax": %d}`, PreloadMaxCeiling+1)} {
+		if _, err := Parse([]byte(raw)); err == nil {
+			t.Errorf("%s was accepted", raw)
+		}
+	}
+	for _, raw := range []string{`{"preloadMax": 0}`, fmt.Sprintf(`{"preloadMax": %d}`, PreloadMaxCeiling)} {
+		if _, err := Parse([]byte(raw)); err != nil {
+			t.Errorf("%s was refused: %v", raw, err)
+		}
 	}
 }
 

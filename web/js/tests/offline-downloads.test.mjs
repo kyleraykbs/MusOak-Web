@@ -1,13 +1,11 @@
-// The ceiling on how many songs are fetched at once. A queue of sixty songs is
-// sixty downloads asked for in a breath; without this they all start, the
-// browser opens sixty connections, and the song about to be played waits behind
-// every one of them.
+// One download at a time. A queue of sixty songs is sixty downloads asked for in
+// a breath; without this they all start, the browser opens sixty connections, and
+// the song about to be played waits behind every one of them.
 
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createDownloadQueue, DEFAULT_DOWNLOAD_LIMIT } from "../offline.js";
-import { state } from "../state.js";
+import { DOWNLOAD_CONCURRENCY, createDownloadQueue } from "../offline.js";
 
 function deferred() {
   let resolve;
@@ -47,27 +45,19 @@ test("a failed download gives its slot back rather than the queue's", async () =
   assert.equal(await queue(async () => "next"), "next", "the queue still moves");
 });
 
-test("the limit is the setting's, and the default is five", async () => {
-  assert.equal(DEFAULT_DOWNLOAD_LIMIT, 5, "five songs at a time by default");
-  const saved = state.downloadLimit;
-  try {
-    // The setting is read when a slot is handed out, so a change applies to the
-    // queue already running rather than to the next page load.
-    state.downloadLimit = 1;
-    const one = createDownloadQueue();
-    let running = 0;
-    let peak = 0;
-    const tasks = [1, 2, 3].map(() =>
-      one(async () => {
-        running += 1;
-        peak = Math.max(peak, running);
-        await new Promise((resolve) => setTimeout(resolve, 5));
-        running -= 1;
-      })
-    );
-    await Promise.all(tasks);
-    assert.equal(peak, 1, "the setting is what applies");
-  } finally {
-    state.downloadLimit = saved;
-  }
+test("the shared queue runs one at a time, whatever the device asks for", async () => {
+  assert.equal(DOWNLOAD_CONCURRENCY, 1, "one at a time, always");
+  const one = createDownloadQueue();
+  let running = 0;
+  let peak = 0;
+  const tasks = [1, 2, 3].map(() =>
+    one(async () => {
+      running += 1;
+      peak = Math.max(peak, running);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      running -= 1;
+    })
+  );
+  await Promise.all(tasks);
+  assert.equal(peak, 1, "and the queue is what enforces it");
 });

@@ -189,6 +189,9 @@ type uiConfig struct {
 	LoginPopup        bool            `json:"loginPopup"`
 	Servers           []config.Server `json:"servers"`
 	AllowCustomServer bool            `json:"allowCustomServer"`
+	// PreloadMax is the deployment's ceiling for the queue's "Songs ahead"
+	// control (the device's own preload count, in songs after the one playing).
+	PreloadMax int `json:"preloadMax"`
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, _ *http.Request) {
@@ -207,6 +210,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, _ *http.Request) {
 		LoginPopup:        s.cfg.LoginPopup && s.cfg.DefaultServer != "",
 		Servers:           servers,
 		AllowCustomServer: s.cfg.AllowCustom(),
+		PreloadMax:        s.cfg.PreloadMax,
 	})
 }
 

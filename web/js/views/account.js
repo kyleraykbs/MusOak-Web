@@ -8,9 +8,11 @@
 // consults when it picks which source of a song plays.
 
 import {
-  h, clear, mount, dialog, toast, pickFile, fileToBase64, icon, artworkImage, loadingState, skeletonRows,
+  h, clear, mount, dialog, toast, pickFile, fileToBase64, icon, iconButton, artworkImage, loadingState, skeletonRows,
 } from "../dom.js";
-import { state, saveLocal, isSignedIn, bumpIcon, iconVersion, userIdOf } from "../state.js";
+import {
+  state, saveLocal, isSignedIn, bumpIcon, iconVersion, userIdOf, preloadAhead, preloadMax, DEFAULT_PRELOAD_AHEAD,
+} from "../state.js";
 import { rejoinRoom } from "../rooms-state.js";
 import { registerView, banner, requireLogin, refreshMe, currentClient } from "../app.js";
 import { enabledPlatforms } from "../platforms.js";
@@ -170,20 +172,6 @@ function build() {
  * know, since it is about the browser fetching copies for itself - the queue it
  * warms and the playlists it keeps. */
 function deviceCard() {
-  const select = h("select", { class: "input", id: "account-download-limit" });
-  const options = [1, 2, 3, 5, 8, 12, 20];
-  for (const count of options) {
-    select.appendChild(
-      h("option", { value: String(count), text: `${count} song${count === 1 ? "" : "s"} at a time` })
-    );
-  }
-  select.appendChild(h("option", { value: "all", text: "All songs at a time" }));
-  select.value = String(state.downloadLimit || 5);
-  select.onchange = () => {
-    state.downloadLimit = select.value === "all" ? "all" : Number(select.value) || 5;
-    saveLocal();
-    toast(`Fetching ${select.value === "all" ? "all songs" : state.downloadLimit} at a time`);
-  };
   return h(
     "div",
     { class: "card" },
@@ -191,19 +179,76 @@ function deviceCard() {
     h(
       "div",
       { class: "list" },
-      h("div", { class: "row account-device-row" }, field("account-download-limit", "Download at a time", select)),
+      h("div", { class: "row account-device-row" }, field("account-preload-ahead", "Songs ahead", preloadStepper())),
       h("div", {
         class: "account-device-note",
-        text: "How many songs this device fetches at once when it warms the queue or keeps a playlist. Five by default.",
+        text:
+          "How many songs after the one playing this device downloads ahead of the playhead. " +
+          `It fetches them one at a time, in queue order. ${DEFAULT_PRELOAD_AHEAD} by default, ` +
+          `and your server allows up to ${preloadMax()}.`,
       })
     )
   );
 }
 
+/**
+ * A number of songs, by typing it or by one step at a time.
+ *
+ * The bounds are the deployment's: nothing below zero (only the song playing is
+ * fetched) and nothing above `preloadMax()`, which is the server config's ceiling
+ * on what a device may preload. A number typed past it is clamped rather than
+ * refused, so the control always shows what will happen.
+ */
+function preloadStepper() {
+  const max = preloadMax();
+  const step = (value) => {
+    const next = Math.min(max, Math.max(0, Math.floor(Number(value) || 0)));
+    state.preloadAhead = next;
+    saveLocal();
+    input.value = String(next);
+    less.disabled = next <= 0;
+    more.disabled = next >= max;
+    toast(next === 0 ? "Downloading only the song playing" : `Downloading ${next} song${next === 1 ? "" : "s"} ahead`);
+  };
+  const input = h("input", {
+    class: "input stepper-value",
+    type: "number",
+    min: "0",
+    max: String(max),
+    step: "1",
+    value: String(preloadAhead()),
+    inputmode: "numeric",
+    "aria-label": "Songs ahead",
+    onchange: () => step(input.value),
+  });
+  // The arrows are markup the browser draws differently on every platform, so
+  // the steps are our own buttons and the field's spinners are hidden.
+  const less = iconButton("minus", {
+    title: "One song fewer ahead",
+    class: "btn flat round stepper-step",
+    onclick: () => step(Number(input.value) - 1),
+  });
+  const more = iconButton("plus", {
+    title: "One song more ahead",
+    class: "btn flat round stepper-step",
+    onclick: () => step(Number(input.value) + 1),
+  });
+  less.disabled = Number(input.value) <= 0;
+  more.disabled = Number(input.value) >= max;
+  return h("div", { class: "stepper" }, less, input, more);
+}
+
+
+
 // --- the form ---------------------------------------------------------------
 
 function field(id, label, input) {
-  input.id = id;
+  // The id belongs to the control the label names, which is not always the
+  // element handed over: a stepper is a field with a button either side of it.
+  const control = input.matches?.("input, select, textarea")
+    ? input
+    : input.querySelector?.("input, select, textarea");
+  (control || input).id = id;
   return h("div", { class: "field" }, h("label", { for: id, text: label }), input);
 }
 

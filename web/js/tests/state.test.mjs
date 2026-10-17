@@ -13,7 +13,10 @@ globalThis.localStorage = {
   removeItem: (key) => store.delete(key),
 };
 
-import { state, knownServers, rememberServer, forgetServer, serverLabel, serverId, sessionFor, setServer, updateSession, loadLocal } from "../state.js";
+import {
+  state, knownServers, rememberServer, forgetServer, serverLabel, serverId, sessionFor, setServer, updateSession, loadLocal,
+  preloadAhead, preloadMax, DEFAULT_PRELOAD_AHEAD, DEFAULT_PRELOAD_MAX, PRELOAD_MAX_CEILING,
+} from "../state.js";
 
 const reset = () => {
   state.config = { defaultServer: "", loginPopup: false, servers: [], allowCustomServer: true };
@@ -22,6 +25,44 @@ const reset = () => {
   state.sessions = {};
   state.roomsShowing = null;
 };
+
+// The queue's "Songs ahead" count: the device's number, inside the deployment's
+// ceiling (`/ui/config` preloadMax, 15 by default).
+test("the preload count is the device's, inside the deployment's ceiling", () => {
+  const saved = { ahead: state.preloadAhead, config: state.config };
+  try {
+    state.config = { preloadMax: 15 };
+    state.preloadAhead = 5;
+    assert.equal(preloadMax(), 15, "the ceiling is what the deployment says");
+    assert.equal(preloadAhead(), 5, "and the device's own number stands inside it");
+
+    state.preloadAhead = 12;
+    assert.equal(preloadAhead(), 12);
+
+    // A ceiling lowered under a saved value is obeyed rather than remembered.
+    state.config.preloadMax = 8;
+    assert.equal(preloadAhead(), 8, "a saved 12 is clamped to a ceiling of 8");
+
+    // Zero is a real answer: only the song playing is preloaded.
+    state.preloadAhead = 0;
+    assert.equal(preloadAhead(), 0);
+
+    // Nothing configured, nothing sane, or an absurd number: the defaults hold.
+    state.preloadAhead = 5;
+    state.config = {};
+    assert.equal(preloadMax(), DEFAULT_PRELOAD_MAX, "the server config's own default");
+    assert.equal(DEFAULT_PRELOAD_MAX, 15);
+    state.config = { preloadMax: -3 };
+    assert.equal(preloadMax(), DEFAULT_PRELOAD_MAX, "a negative ceiling is not a ceiling");
+    state.config = { preloadMax: 10_000 };
+    assert.equal(preloadMax(), PRELOAD_MAX_CEILING, "and a typo is not a policy");
+    assert.equal(preloadAhead(), 5, "the default count when nothing is stored");
+    assert.equal(DEFAULT_PRELOAD_AHEAD, 5);
+  } finally {
+    state.preloadAhead = saved.ahead;
+    state.config = saved.config;
+  }
+});
 
 test("a deployment with no servers configured offers none, and does not throw", () => {
   reset();

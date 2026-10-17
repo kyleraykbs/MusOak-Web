@@ -114,6 +114,30 @@
   next songs are copied while the previous one plays.
 - Reversible: yes - the window filter in `_prefetch` and `_awaitCopy`.
 
+## 2026-10-16 The preload count is songs, and one download runs at a time
+- Decision: the device setting is `preloadAhead` - how many songs *after* the one
+  playing this page fetches ahead of the playhead, 5 by default - and it is the
+  window: `prefetchWindow(queue, index, preloadAhead())`, which the copy pipeline
+  and the room's warm-ahead both use. Downloads run one at a time, always: the
+  shared slot queue is `DOWNLOAD_CONCURRENCY = 1`, the copy pump starts the next
+  song only when the one before it is here, and `_prefetch` no longer fires a
+  parallel `warm` for each song in the window (a copy fetches the file it needs
+  as part of making the copy). The eager/tail split, the 15 s tail pacing and the
+  "All songs at a time" option are gone.
+- Why: Kyle's rule - "only download 1 song at a time, no multi-download at once" -
+  and the option was always meant to be "the number of songs ahead we preload",
+  not a concurrency limit (he had read it as the latter and it was the cause of
+  the queue's noise). Five transfers at once buy nothing on one line; they put
+  the song somebody is waiting on behind four others.
+- Also: the ceiling is the deployment's. The web server's config carries
+  `preloadMax` (default 15, hard ceiling 50), serves it in `/ui/config`, and the
+  account page's number box with step buttons stops there. The server owns it
+  because it owns the cost: preloading is bandwidth and disk on the machine that
+  serves the queue.
+- Supersedes this file's 2026-10-16 note that "the device download selector also
+  supports All, while the shared download queue enforces the selected limit".
+- Reversible: yes.
+
 ## 2026-10-16 The queue's mark fills only on the transfer that is happening
 - Decision: `heldBadge` draws the yellow ink on one row: the song nearest the
   playhead whose copy is being fetched (`player.downloading` - in flight, and the

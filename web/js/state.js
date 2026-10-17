@@ -9,9 +9,42 @@ const listeners = new Map();
 /** Whether a batched write is still owed to localStorage. */
 let saving = false;
 
+/** How many songs ahead a device preloads when nobody has said otherwise. */
+export const DEFAULT_PRELOAD_AHEAD = 5;
+/** The deployment's ceiling when its config says nothing (`preloadMax`), which
+ *  is also the server config's own default. */
+export const DEFAULT_PRELOAD_MAX = 15;
+/** The hard ceiling, whatever a config says: every preloaded song is a whole
+ *  song fetched and held, so a number past this is a typo, not a policy. */
+export const PRELOAD_MAX_CEILING = 50;
+
+/** The most songs ahead this deployment allows (`/ui/config`'s `preloadMax`).
+ *
+ *  The server owns this because it owns the cost: preloading is bandwidth and
+ *  disk on the machine that serves the queue, and an operator who has sized
+ *  their line says how far ahead people may go. */
+export function preloadMax() {
+  const configured = Math.floor(Number(state.config?.preloadMax));
+  if (!Number.isFinite(configured) || configured < 0) return DEFAULT_PRELOAD_MAX;
+  return Math.min(PRELOAD_MAX_CEILING, configured);
+}
+
+/** The preload count as the player uses it: a whole number, 0 to `preloadMax()`.
+ *
+ *  Zero is a real answer - only the song playing is fetched - which is why this
+ *  is a clamp and not an "if it is truthy" fallback. A value above a ceiling
+ *  that has since been lowered is clamped rather than obeyed. */
+export function preloadAhead() {
+  const max = preloadMax();
+  const wanted = Math.floor(Number(state.preloadAhead));
+  if (!Number.isFinite(wanted)) return Math.min(DEFAULT_PRELOAD_AHEAD, max);
+  return Math.min(max, Math.max(0, wanted));
+}
+
 export const state = {
-  /** How many songs this device fetches at once. See offline.js. */
-  downloadLimit: 5,
+  /** How many songs *after* the one playing this device downloads ahead of the
+   *  playhead. It fetches them one at a time, in queue order (player.js). */
+  preloadAhead: 5,
   /** GET /ui/config: what this deployment offers. */
   config: { defaultServer: "", loginPopup: false, servers: [], allowCustomServer: true },
   /** Backends this browser knows: the configured ones plus what users added. */
@@ -175,6 +208,13 @@ export function loadLocal() {
     state.serverNames = stored.serverNames && typeof stored.serverNames === "object" ? stored.serverNames : {};
     state.iconVersions = stored.iconVersions && typeof stored.iconVersions === "object" ? stored.iconVersions : {};
     state.searchKind = typeof stored.searchKind === "string" && stored.searchKind ? stored.searchKind : "tracks";
+    // "Downloads at a time" was this setting's old meaning and it wrote a number
+    // there; the number is what a preload count wants, so it is picked up rather
+    // than dropped (an "all" from the old list is not a count, so it is not).
+    const ahead = Number(stored.preloadAhead ?? stored.downloadLimit);
+    state.preloadAhead = Number.isFinite(ahead)
+      ? Math.min(PRELOAD_MAX_CEILING, Math.max(0, Math.floor(ahead)))
+      : DEFAULT_PRELOAD_AHEAD;
     state.sessions = stored.sessions && typeof stored.sessions === "object" ? stored.sessions : {};
     state.server = typeof stored.server === "string" ? stored.server : "";
     state.view = typeof stored.view === "string" ? stored.view : "";
@@ -237,7 +277,7 @@ function writeLocal() {
     serverNames: state.serverNames || {},
     iconVersions: state.iconVersions || {},
     searchKind: state.searchKind || "tracks",
-    downloadLimit: state.downloadLimit,
+    preloadAhead: preloadAhead(),
     sessions: state.sessions,
     view: state.view,
     room: state.room,

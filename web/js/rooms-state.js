@@ -17,7 +17,7 @@
 // the beat that republishes a room from rebuilding a view. That is also what
 // lets the reducers be tested without a browser.
 
-import { state, rememberRoom, forgetRoom } from "./state.js";
+import { state, rememberRoom, forgetRoom, preloadAhead } from "./state.js";
 import { TOLERANCE_MS, decide, driftAction, roomLength, roomPosition } from "./rooms/playback.js";
 import { toast } from "./dom.js";
 
@@ -72,14 +72,6 @@ const RESOLVE_BACKOFF_MS = 5000;
  *  the first few are quick (a provider having a bad minute is common) and a song
  *  that is really unplayable settles into one ask every five minutes. */
 const RESOLVE_BACKOFF_MAX_MS = 5 * 60 * 1000;
-
-/** How many of the room's upcoming songs to resolve and warm ahead of the song
- *  on. A song the server has never fetched is a search and a download before it
- *  can play, which is longer than the song it is queued behind, so the window is
- *  not one. It is the player's own eager window (EAGER_AHEAD): the songs are
- *  warmed through the player, and a window twice its size is a queue fetched in
- *  an order nobody is going to hear. */
-const PREFETCH_AHEAD = 5;
 
 const DEFAULT_SKIP = {
   skipThreshold: 2,
@@ -1459,7 +1451,8 @@ function warmAhead(running, room, itemId) {
   const key = `${player.online?.() ? "online" : "offline"}:${upcoming.map((entry) => entry.id).join(",")}`;
   if (key === running.warmedKey) return;
   running.warmedKey = key;
-  for (const entry of upcoming.slice(0, PREFETCH_AHEAD)) {
+  // The device's own preload window: its current song and the ones after it.
+  for (const entry of upcoming.slice(0, preloadAhead() + 1)) {
     player.warm?.(entry);
     prefetchResolution(running, entry.id);
   }

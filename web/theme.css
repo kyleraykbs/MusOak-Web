@@ -624,6 +624,19 @@ img.art[data-loaded="true"] { opacity: 1; }
  .account-icon-button { padding: 0; border: 0; background: transparent; }
  .account-action-button { flex: 1; min-width: 0; }
 .account-device-row { align-items: flex-start; }
+/* A count of songs: a field and a step either side. The field's own spinners are
+   hidden because the buttons are the same control on every platform, and they
+   are drawn in the theme's colours rather than the browser's. */
+.stepper { display: inline-flex; align-items: center; gap: 6px; }
+.stepper .stepper-value {
+  width: 74px;
+  text-align: center;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.stepper .stepper-value::-webkit-outer-spin-button,
+.stepper .stepper-value::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.stepper .stepper-step { flex: none; }
 .account-profile-row { align-items: center; }
 .account-profile-row > .grow { min-width: 0; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
