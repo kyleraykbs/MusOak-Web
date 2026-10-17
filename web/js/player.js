@@ -2019,38 +2019,21 @@ class Player {
    * Public because a room's order is not this player's queue: a follower holds
    * one song at a time, and the order it would go through offline is the room's.
    */
-  keepOffline(tracks = []) {
-    // The window, or this call's list if it is shorter: a room hands over its
-    // whole remaining order, and only the songs in the preload window are wanted.
+  keepOffline(tracks = [], { priorityId = "" } = {}) {
     const wanted = (Array.isArray(tracks) ? tracks : [])
       .filter((track) => track?.id)
       .slice(0, preloadAhead() + 1);
-    // The window is a priority, not a list that only grows. The songs the room
-    // is about to reach are the ones that have to be here, so the order the
-    // fetches take is re-derived from this call every time: a song that was
-    // queued when it was nearer and has since moved further out gives its turn
-    // to the ones now in front of it, and one that has left the window gives it
-    // up altogether instead of being fetched ahead of a song that is due next.
-    // A fetch already under way is never disturbed - it keeps its slot until the
-    // bytes are here - and is not queued a second time either.
     this._offlineWanted = wanted.map((track) => String(track.id));
     const ids = new Set(this._offlineWanted);
     for (const track of wanted) this._queueOffline(track);
     for (const queued of [...this._offlineOrder]) {
       if (!ids.has(queued)) this._releaseOffline(queued);
     }
-    // A fetch under way is given up only when its song has left the window
-    // altogether. Letting go of one that merely fell down the order was a fetch
-    // that never finished: the front of the window moves on every room load, so
-    // the same song was cancelled and restarted over and over, and the pipe it
-    // was meant to conserve was spent on the restarts instead of the songs.
-    // One that is still in the window keeps its slot, and the songs now due
-    // take the slots as they free up.
     for (const trackId of [...this._offlineInFlight.keys()]) {
       if (!ids.has(trackId)) this._abortOffline(trackId);
     }
     this._trimOffline(ids);
-    this._pumpOffline();
+    this._pumpOffline(priorityId);
   }
 
   /**

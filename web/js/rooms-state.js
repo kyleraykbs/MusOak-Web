@@ -1112,7 +1112,7 @@ async function followRoom(running) {
 
   // The room's next songs, on this device and in memory: what makes the next
   // transition instant is having been fetched while this one played.
-  warmAhead(running, room, itemId);
+  warmAhead(running, room, item);
 
   // With nothing reachable there is nothing to resolve and nothing to measure
   // drift against: the order and the copies this page holds are what is left.
@@ -1288,12 +1288,11 @@ function followOfflineRoom(running, room, { force = false } = {}) {
   if (!player.isPaused()) player.pause();
 }
 
-/** Keep upcoming room songs in the shared download pipeline. */
-function warmAhead(running, room, itemId) {
+/** Keep the current room item and upcoming songs in the shared scheduler. */
+function warmAhead(running, room, currentItem) {
   const player = running.player;
-  const order = list(room.masterQueue);
-  const at = order.findIndex((entry) => str(entry.id) === str(itemId));
-  const upcoming = order.slice(at < 0 ? 0 : at).map((entry) => ({
+  const order = [currentItem, ...list(room.masterQueue)].filter(Boolean);
+  const upcoming = order.map((entry) => ({
     id: str(entry.trackId),
     title: entry.title,
     artists: entry.artists,
@@ -1303,7 +1302,7 @@ function warmAhead(running, room, itemId) {
   const key = `${player.online?.() ? "online" : "offline"}:${upcoming.map((entry) => entry.roomItemId).join(",")}`;
   if (key === running.warmedKey) return;
   running.warmedKey = key;
-  player.keepOffline?.(upcoming);
+  player.keepOffline?.(upcoming, { priorityId: str(currentItem.trackId) });
 }
 
 /** Put the player in the room the rest of the app is in. */
