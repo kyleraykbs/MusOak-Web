@@ -545,12 +545,12 @@ function header(client, playlist, tracks) {
           "div",
           { class: "collection-header-title-row playlist-header-title-row" },
           h("div", { class: "title collection-header-title", text: playlist.name || "Playlist" }),
-          playlist.public === false ? h("span", { class: "tag", text: "private" }) : null,
-          management
+          playlist.public === false ? h("span", { class: "tag", text: "private" }) : null
         ),
         h("div", { class: "subtitle", text: trackCountLine(tracks) })
       )
     ),
+    management,
     mine ? visibilityControl(playlist) : null,
     h(
       "div",
