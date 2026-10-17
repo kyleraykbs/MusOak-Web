@@ -443,6 +443,7 @@ class Player {
     this._clockPosition = 0;
     this._clockAt = 0;
     this._clockRecovering = false;
+    this._positionTimer = 0;
     this._error = "";
     this._blocked = false;
     // null is "nothing to seek"; a number is where to put the file, and zero
@@ -1378,6 +1379,8 @@ class Player {
     this._clockPosition = 0;
     this._clockAt = Date.now();
     this._clockRecovering = false;
+    clearInterval(this._positionTimer);
+    this._positionTimer = 0;
     this._variant = "";
     this._source = null;
     this._sources = { sources: [], preferredVariantId: "" };
@@ -2245,6 +2248,15 @@ class Player {
     audio.addEventListener("playing", () => {
       if (audio !== this.audio) return;
       this._setBuffering(false);
+      clearInterval(this._positionTimer);
+      this._positionTimer = setInterval(() => {
+        if (audio !== this.audio || audio.paused || audio.ended) return;
+        const position = Number(audio.currentTime);
+        if (Number.isFinite(position) && Math.abs(position - this._clockPosition) >= 0.05) {
+          this._clockPosition = position;
+          this._clockAt = Date.now();
+        }
+      }, 500);
     });
     audio.addEventListener("waiting", () => {
       if (audio !== this.audio) return;
@@ -2474,8 +2486,9 @@ class Player {
    * The bar no longer says it - the queue's own row is where a download is
    * shown - but the room's status line does, and it names the same download:
    * giving it a second vocabulary there meant the room said "Loading the
-   * track…" while the page said "downloading 3.1 of 8.4 MB". */
-  downloadLabel() {
+   * track" while the queue said "downloading".
+   */
+  mediaProgressLabel() {
     return mediaProgressLabel(this._status.get(this._variant));
   }
 
@@ -2516,6 +2529,8 @@ class Player {
   _stopAudio() {
     this._playingWanted = false;
     this._resumeWhenReady = false;
+    clearInterval(this._positionTimer);
+    this._positionTimer = 0;
     if (!this.audio) return;
     this.audio.pause();
     this.audio.removeAttribute("src");
