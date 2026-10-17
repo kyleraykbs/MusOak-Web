@@ -132,10 +132,11 @@ function rangeFillPercent(input, fraction) {
   const style = getComputedStyle(input);
   const left = Number.parseFloat(style.paddingLeft) || 0;
   const right = Number.parseFloat(style.paddingRight) || left;
+  const track = Math.max(1, input.clientWidth - left - right);
   const thumb = Number.parseFloat(style.getPropertyValue("--range-thumb-width")) || 0;
-  const travel = Math.max(0, input.clientWidth - left - right - thumb);
-  const center = left + thumb / 2 + travel * share;
-  return `${Math.round((center / input.clientWidth) * 10000) / 100}%`;
+  const travel = Math.max(0, track - thumb);
+  const center = thumb / 2 + travel * share;
+  return `${Math.round((center / track) * 10000) / 100}%`;
 }
 
 /**
