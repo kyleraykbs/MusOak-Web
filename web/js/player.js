@@ -645,6 +645,25 @@ class Player {
     }
     return this._load(index, { startMs: positionMs, autoplay, variantId: String(variantId) });
   }
+  /** Play a room item through the normal source resolution and download pipeline. */
+  playRoomTrack(track, { positionMs = 0, autoplay = true } = {}) {
+    if (!track?.id) return Promise.resolve();
+    const current = this.current();
+    const same = current?.roomItemId && current.roomItemId === track.roomItemId;
+    if (same) {
+      if (this._loading) this._pendingSeek = Math.max(0, Math.round(Number(positionMs) || 0));
+      else {
+        this.seek(Math.max(0, Math.round(Number(positionMs) || 0)));
+        if (autoplay) this.resume();
+      }
+      return Promise.resolve();
+    }
+    this.queue = [track];
+    this._index = 0;
+    this._shuffle = false;
+    this._emit("queue-changed", this.queue);
+    return this._load(0, { startMs: positionMs, autoplay });
+  }
 
   /** The variant the current track is playing from, once it is known. */
   variantId() {

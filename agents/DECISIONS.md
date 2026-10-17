@@ -155,6 +155,11 @@
   queue's mark follows.
 - Reversible: yes.
 
+## 2026-10-17 Rooms use the shared download-first player pipeline
+- Decision: room followers no longer resolve renditions, warm songs, or fetch media in `rooms-state.js`. A room item is handed to the player's normal source-resolution and one-download pipeline; room state only supplies the item identity, clock position, and autoplay decision. Room look-ahead uses `keepOffline` so it shares the same queue and scheduler.
+- Why: the previous room-specific resolver and warm path predated the simpler queue-owned download contract. After that migration, rooms could wait on work that no longer corresponded to the file the player actually handed to the audio element.
+- Reversible: yes.
+
 ## 2026-10-16 Playlist selection preserves the pending queue and default queueing is next
 - Decision: clicking a song in a playlist replaces the current/top queue item with that song, skips the current item, and keeps every item that was pending behind it. The standard Queue action inserts immediately after the playing song; Queue last is the explicit append action. Song menus use `Queue` and `Queue last`.
 - Why: selecting a song should not silently discard songs already queued, while the common queue action should affect what plays next rather than hiding the song at the end of a long queue.

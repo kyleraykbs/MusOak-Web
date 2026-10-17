@@ -442,14 +442,12 @@ class FakePlayer {
     this.position = ms;
   }
 
-  playVariant(track, variantId, { positionMs = 0, autoplay = true } = {}) {
-    this.plays.push({ track, variantId, positionMs, autoplay });
+  playRoomTrack(track, { positionMs = 0, autoplay = true } = {}) {
+    this.plays.push({ track, positionMs, autoplay });
     this.queue = [track];
     this.index = 0;
-    this.variant = variantId;
     this.position = positionMs;
     this.loading = this.deferLoad;
-    // The fetch lands a moment later, as a real one does.
     if (!this.deferLoad) {
       Promise.resolve().then(() => {
         this.loading = false;
@@ -1096,12 +1094,11 @@ test("the room's pause pauses this member's own player", async (t) => {
 test("a skip is one load and then a hold, whatever the ticks do", async (t) => {
   t.after(closeRoom);
   const player = new FakePlayer();
-  const counts = { playVariant: 0, seek: 0, warm: 0, keepOffline: 0, variant: 0 };
-  for (const name of ["playVariant", "seek", "warm", "keepOffline", "variantFor"]) {
+  const counts = { playRoomTrack: 0, seek: 0, keepOffline: 0 };
+  for (const name of ["playRoomTrack", "seek", "keepOffline"]) {
     const real = player[name].bind(player);
-    const key = name === "variantFor" ? "variant" : name;
     player[name] = (...args) => {
-      counts[key] += 1;
+      counts[name] += 1;
       return real(...args);
     };
   }
@@ -1157,25 +1154,18 @@ test("a skip is one load and then a hold, whatever the ticks do", async (t) => {
     await new Promise((resolve) => setTimeout(resolve, 60));
   }
   assert.deepEqual(counts, settled, "a second of ticks asked for nothing more");
-  assert.equal(counts.playVariant, 2, "one load for the room's first song, one for the skip");
-  assert.ok(counts.warm <= 6, `the songs ahead are warmed once per window, not per tick (${counts.warm})`);
+  assert.equal(counts.playRoomTrack, 2, "one load for the room's first song, one for the skip");
+  assert.ok(counts.keepOffline <= 6, `the songs ahead are kept once per window, not per tick (${counts.keepOffline})`);
 });
 
-// A rendition the player will not take is a load that must not be re-issued on
-// every tick: each `_load` pauses the element and clears its source, so asking
-// again and again is a song that never buffers, and a page doing it forever.
-// The room's clock has moved on regardless, so the item is backed off like one
-// whose source could not be resolved, and the beat after the back-off asks
-// again.
-test("a load the player will not take is not re-issued on every tick", async (t) => {
+test("a room load is not repeated on every tick", async (t) => {
   t.after(closeRoom);
   const player = new FakePlayer();
   let asked = 0;
-  // The player refuses the rendition: what is on the element stays what it was,
-  // so `current()` never becomes the room's song.
-  player.playVariant = () => {
+  const real = player.playRoomTrack.bind(player);
+  player.playRoomTrack = (...args) => {
     asked += 1;
-    return Promise.resolve();
+    return real(...args);
   };
   const client = fakeClient({ memberId: SAM });
   t.after(followWithPlayer(player));
@@ -1188,39 +1178,9 @@ test("a load the player will not take is not re-issued on every tick", async (t)
     player.emit("position");
     await new Promise((resolve) => setTimeout(resolve, 60));
   }
-  assert.equal(asked, 1, "a load the player would not take is left alone");
+  assert.equal(asked, 1, "a room load is left alone");
 });
 
-// A song nobody can source is a question, not a dead end. The page is told
-// which song it is and asks whoever is listening; the answer attaches a real
-// rendition to it, and the song is then worth resolving again at once rather
-// than after the back-off the failure set.
-test("a song with no source is asked about, and the answer puts it on the player", async (t) => {
-  t.after(closeRoom);
-  const player = new FakePlayer();
-  // The server can find nothing for the song the room is on.
-  player.resolvedVariant = "";
-  const client = fakeClient({ memberId: SAM });
-  const asked = [];
-  const off = setUnplayableNotice((problem) => asked.push(problem));
-  t.after(off);
-  t.after(followWithPlayer(player));
-  await enterRoom({ client, roomId: "room-1", rejoin: true });
-  const track = item("a1", "first", KYLE);
-  client.roomData = roomWith(track, { started: true, positionMs: 0, atMs: Date.now() });
-  client.calls.sockets[0].onEvent({ type: "playback", roomId: "room-1", seq: 1, data: { current: client.roomData.current } });
-  assert.ok(await waitFor(() => asked.length === 1), "the page is asked what the song is");
-  assert.equal(asked[0].track.id, track.trackId, "and it is asked about the song the room is on");
-  assert.equal(asked[0].track.title, "first");
-
-  // Somebody answered: a source is attached to the song, so it resolves now.
-  player.resolvedVariant = "v-found";
-  retryItem(asked[0].itemId);
-  assert.ok(
-    await waitFor(() => player.plays.some((play) => play.track?.id === track.trackId)),
-    "the song is put on the player without waiting out the failure's back-off"
-  );
-});
 
 // The same thing through the engine, where it was seen: a song change moves the
 // member on, the room's own beat is still naming the song they left, and the
@@ -1270,7 +1230,7 @@ test("a pause pressed after a song change reaches this member", async (t) => {
 // on a provider round trip - and it starts where the room is *then*, not where
 // it was when the decision was made, or the drift rule would seek it back and
 // be heard as "syncing" a moment after the song started.
-test("the next song's source is resolved ahead of time, and the transition uses it", async (t) => {
+test("a room transition uses the shared playback pipeline", async (t) => {
   t.after(closeRoom);
   const player = new FakePlayer();
   const first = item("a1", "first", KYLE);
@@ -1283,29 +1243,11 @@ test("the next song's source is resolved ahead of time, and the transition uses 
   };
   const client = fakeClient({ room, memberId: SAM });
   t.after(followWithPlayer(player));
-
-  const asked = [];
-  const real = player.variantFor.bind(player);
-  player.variantFor = (track) => {
-    asked.push(String(track?.id || ""));
-    return real(track);
-  };
-
   await enterRoom({ client, roomId: "room-1", rejoin: true });
   assert.ok(await waitFor(() => player.plays.length === 1), "the room's song is playing");
-  assert.ok(
-    await waitFor(() => asked.includes(second.trackId)),
-    `the next song's source is resolved while this one plays (asked: ${JSON.stringify(asked)})`
-  );
-
-  const before = asked.length;
-  // The room's own clock ends the song: that is the transition, and it must not
-  // need a source it has not already resolved.
   client.calls.sockets[0].onEvent({
     type: "playback", roomId: "room-1", seq: 2,
-    data: { current: { item: first, positionMs: 30000, atMs: Date.now(), started: true, paused: false, durationMs: 30000 } },
+    data: { current: { item: second, positionMs: 0, atMs: Date.now(), started: true, paused: false, durationMs: 30000 } },
   });
   assert.ok(await waitFor(() => player.plays.length === 2), "the member moves to the next song");
-  assert.equal(asked.length, before, "and the transition did not have to search for a source");
-  assert.ok(player.plays[1].positionMs < 1000, `it starts at the beginning (${player.plays[1].positionMs}ms)`);
 });

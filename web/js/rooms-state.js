@@ -947,34 +947,12 @@ export function followWithPlayer(playbackPlayer) {
     unsub: null,
     itemId: "",
     loadedItemId: "",
-    variantId: "",
-    track: null,
     resolving: "",
-    failedItemId: "",
-    failedAt: 0,
-    // How many times each item has been tried and could not be played, which is
-    // what makes the wait before the next try grow (see `markUnplayable`).
-    failedTries: new Map(),
     roomId: "",
-    // The item ids this client has moved past on its own. The server's tick
-    // lags by up to a second, so a `current` still naming one of these says
-    // nothing new and must not drag this member back onto it.
     advancedPast: new Set(),
-    // Sources resolved ahead of the song that needs them: a transition is meant
-    // to be a switch, not a search (see prefetchResolution). `resolvingAhead` is
-    // the ones on their way - not to be confused with `pending`, which is the
-    // tick that landed while another was running. `warmedKey` is the window of
-    // songs ahead that has already been asked for, so a tick that finds the same
-    // one does not ask again (see warmAhead).
-    resolved: new Map(),
-    resolvingAhead: new Set(),
     warmedKey: "",
-    // When the file for the current item was handed to the player, and when a
-    // correction last landed: the two readings the drift rule needs.
     loadedAtMs: 0,
     lastCorrectMs: 0,
-    // The last thing said about this member's playback, so a status is said
-    // when it changes and not on every tick.
     status: "",
     syncing: false,
     pending: false,
@@ -1066,12 +1044,7 @@ function forgetTrack() {
   if (!plugin) return;
   plugin.itemId = "";
   plugin.loadedItemId = "";
-  plugin.variantId = "";
-  plugin.track = null;
   plugin.resolving = "";
-  plugin.failedItemId = "";
-  plugin.failedAt = 0;
-  plugin.failedTries = new Map();
   plugin.loadedAtMs = 0;
 }
 
@@ -1080,31 +1053,12 @@ function holdsItem(order, id) {
   return order.some((entry) => str(entry.id) === str(id));
 }
 
-/** Whether the room's own order still holds this track. */
-function holdsTrack(order, id) {
-  return order.some((entry) => str(entry.trackId) === str(id));
-}
-
-/** Drop what this client remembered about songs the room no longer has.
- *
- *  `advancedPast` is the items whose file ended here, `resolved` the sources
- *  worked out for the songs ahead, and the steps said about a song are keyed by
- *  its item: an answer is only ever needed again for a song the room still has.
- *  "Still has" is the order *and* the song on - the order holds only what is
- *  yet to come, so the item the beats still name while they lag is the song on,
- *  and forgetting it would let a stale beat drag the member back onto it. A
- *  session otherwise keeps one of each for every song the room has ever played. */
+/** Drop bookkeeping for room items that no longer exist. */
 function pruneBookkeeping(running, room) {
   const current = room.current && room.current.item ? room.current.item : null;
   const order = current ? [current, ...list(room.masterQueue)] : list(room.masterQueue);
   for (const itemId of running.advancedPast) {
     if (!holdsItem(order, itemId)) running.advancedPast.delete(itemId);
-  }
-  for (const trackId of running.resolved.keys()) {
-    if (!holdsTrack(order, trackId)) running.resolved.delete(trackId);
-  }
-  for (const trackId of running.resolvingAhead) {
-    if (!holdsTrack(order, trackId)) running.resolvingAhead.delete(trackId);
   }
   for (const key of saidSteps) {
     const itemId = key.slice(key.indexOf(":") + 1);
@@ -1130,8 +1084,6 @@ async function followRoom(running) {
   if (running.roomId !== room.roomId) {
     running.roomId = room.roomId;
     running.advancedPast.clear();
-    running.resolved.clear();
-    running.resolvingAhead.clear();
   }
   // Everything this client remembers is about a song the room still has, and a
   // song that has left makes it stale: left alone, the memory of a session is
@@ -1176,18 +1128,10 @@ async function followRoom(running) {
   const answer = decide({
     state: room,
     current,
-    // What this member is on, and whether its file is here.
     itemId: running.itemId,
-    loaded: onTrack && running.loadedItemId === itemId && Boolean(running.variantId),
+    loaded: onTrack && running.loadedItemId === itemId,
     loading: onTrack && Boolean(media.loading || media.buffering),
-    // What the bar says the download is doing, so the room's own line says the
-    // same thing rather than a second vocabulary for one download.
     loadLabel: onTrack ? player.downloadLabel?.() || "" : "",
-    // Whether this member's own player is playing - which is what pause and
-    // resume act on. Folding the room's own state into this is what made a room
-    // pause a no-op on this page: `playing` was already false because the room
-    // was paused, so the branch that pauses the local player never ran, and the
-    // sound kept going until a refresh. The room's state travels as `current`.
     playing: !player.isPaused(),
     autoplay: Boolean(current.started) && !current.paused,
     localPositionMs: player.positionMs?.() || 0,
@@ -1249,25 +1193,6 @@ async function followRoom(running) {
   }
 }
 
-/** Work out which rendition of a track this member would play, before anybody
- *  needs it. The answer is cached; a song already resolved or being resolved is
- *  left alone, and a failure is not cached - the song it belongs to will ask
- *  again, and say so, when it is reached. */
-function prefetchResolution(running, trackId) {
-  const id = str(trackId);
-  if (!id || running.resolved.has(id) || running.resolvingAhead.has(id)) return;
-  running.resolvingAhead.add(id);
-  Promise.all([resolveVariant(id, running.player), loadTrack(active, id)])
-    .then(([variantId, track]) => {
-      if (plugin !== running || !str(variantId)) return;
-      running.resolved.set(id, { variantId: str(variantId), track });
-    })
-    .catch(() => {
-      /* the song will say so when it is reached */
-    })
-    .finally(() => running.resolvingAhead.delete(id));
-}
-
 /** Where this member's copy of an item should start: the room's own position
  *  when the room is on that item, and the position it was handed otherwise.
  *
@@ -1284,91 +1209,24 @@ function startFor(itemId, at) {
   return onRoom ? Math.max(0, positionMs(live, Date.now())) : Math.max(0, num(at));
 }
 
-/** Put this member on one of the room's items: find a source for the track,
- *  fetch what the bar needs, and hand the player the rendition and where in it
- *  to start. */
+/** Put a room item through the player's normal source/download pipeline. */
 async function loadItem(running, item, { positionMs: at = 0, autoplay = true } = {}) {
   const player = running.player;
   const trackId = str(item.trackId);
   const itemId = str(item.id) || trackId;
-  if (!trackId || !itemId) return;
-
-  // A track whose sources could not be read is left alone for a while, and one
-  // already being resolved is not asked twice: the answer is on its way.
-  const tries = Number(running.failedTries?.get(itemId) || 0);
-  const cooling =
-    running.failedItemId === itemId &&
-    running.failedAt &&
-    Date.now() - running.failedAt <
-      Math.min(RESOLVE_BACKOFF_MS * 2 ** Math.max(0, tries - 1), RESOLVE_BACKOFF_MAX_MS);
-  if (cooling || running.resolving === trackId) return;
-
-  // The rendition for this item may already be in hand: it was resolved, and
-  // the track fetched, when the room first said this song. Handing it over
-  // again is a local call; resolving it again is two provider round trips, and
-  // this is asked for whenever the player is not on the item the room says it
-  // is. So the source is worked out once per item, and the item is put on the
-  // player as often as it takes.
+  if (!trackId || !itemId || running.resolving === itemId) return;
   running.itemId = itemId;
-  if (running.loadedItemId !== itemId || !running.variantId) {
-    running.loadedItemId = "";
-    running.variantId = "";
-    running.track = null;
-    running.failedItemId = "";
-    running.failedAt = 0;
-    sayStep(`song:${itemId}`, `Room: ${item.title || "the next song"}`);
-
-    // The source this member would play, if it was worked out while the song
-    // before this one was playing. It usually was.
-    const known = running.resolved.get(trackId);
-    if (known) {
-      running.track = known.track;
-      running.variantId = known.variantId;
-    } else {
-      running.resolving = trackId;
-      setStatus(running, "Finding a source…");
-      let variant = "";
-      let track = null;
-      try {
-        [variant, track] = await Promise.all([resolveVariant(trackId, player), loadTrack(active, trackId)]);
-      } finally {
-        if (plugin === running) running.resolving = "";
-      }
-      if (plugin !== running || running.itemId !== itemId) return;
-      running.track = track;
-      running.variantId = str(variant);
-      if (!running.variantId) {
-        markUnplayable(running, itemId);
-        setStatus(running, "That song could not be found.");
-        // A song nobody can source is not a dead end: somebody listening knows
-        // what it is, and the server can be told. Putting that question to them
-        // is the app's job, not this module's.
-        sayUnplayable({
-          itemId,
-          track: running.track || { id: trackId, title: item.title, artists: item.artists },
-        });
-        return;
-      }
-      running.resolved.set(trackId, { variantId: running.variantId, track });
-    }
-  }
-
+  running.resolving = itemId;
   running.loadedItemId = itemId;
   running.loadedAtMs = Date.now();
+  sayStep(`song:${itemId}`, `Room: ${item.title || "the next song"}`);
   setStatus(running, "");
-  player.playVariant(running.track || { id: trackId, title: item.title }, running.variantId, {
-    positionMs: startFor(itemId, at),
-    autoplay,
-  });
-  // The player took the rendition, or it did not. One it would not take - what
-  // it holds is still another song - must not be asked for on every tick: each
-  // `_load` pauses the element and clears its source, so a load that is
-  // re-issued is a song that never buffers and a page doing it for ever. The
-  // room's clock has moved on regardless, so the item is backed off the way an
-  // unresolvable source is, and the beat after the back-off asks again.
-  if (str(player.current?.()?.id) !== trackId) {
-    markUnplayable(running, itemId);
-    setStatus(running, "That song could not be played here.");
+  try {
+    await player.playRoomTrack({ id: trackId, title: item.title, artists: item.artists, artworkUrl: item.artworkUrl, roomItemId: itemId }, {
+      positionMs: startFor(itemId, at), autoplay,
+    });
+  } finally {
+    if (plugin === running) running.resolving = "";
   }
 }
 
@@ -1430,34 +1288,21 @@ function followOfflineRoom(running, room, { force = false } = {}) {
   if (!player.isPaused()) player.pause();
 }
 
-/** Have the room's next songs on disk, in memory for offline play, and their
- *  sources resolved. The source is the one part of a transition that is a
- *  provider round trip, and a round trip in the path of a song change is the
- *  second of "Finding a source…" before the music - so it is done while the
- *  song before it is still playing. */
+/** Keep upcoming room songs in the shared download pipeline. */
 function warmAhead(running, room, itemId) {
   const player = running.player;
   const order = list(room.masterQueue);
   const at = order.findIndex((entry) => str(entry.id) === str(itemId));
-  const from = at < 0 ? 0 : at;
-  const upcoming = order.slice(from).map((entry) => ({ id: str(entry.trackId), title: entry.title }));
-  // Asked for once per window, not once per tick. This runs on every beat and
-  // on every position event the player emits (several a second), and each call
-  // behind that slice is a provider resolution, a fetch and a re-derivation of
-  // the offline window across the whole order - so a song change spent the cost
-  // of the whole queue several times over. The callers are told again when the
-  // songs ahead actually change, which is the only time there is anything new
-  // to fetch; a source that failed is asked for again when its song is reached.
-  const key = `${player.online?.() ? "online" : "offline"}:${upcoming.map((entry) => entry.id).join(",")}`;
+  const upcoming = order.slice(at < 0 ? 0 : at).map((entry) => ({
+    id: str(entry.trackId),
+    title: entry.title,
+    artists: entry.artists,
+    artworkUrl: entry.artworkUrl,
+    roomItemId: str(entry.id),
+  }));
+  const key = `${player.online?.() ? "online" : "offline"}:${upcoming.map((entry) => entry.roomItemId).join(",")}`;
   if (key === running.warmedKey) return;
   running.warmedKey = key;
-  // The device's own preload window: its current song and the ones after it.
-  for (const entry of upcoming.slice(0, preloadAhead() + 1)) {
-    player.warm?.(entry);
-    prefetchResolution(running, entry.id);
-  }
-  // The order a follower would go through with nothing reachable is the room's,
-  // so that is what this page keeps the copies for.
   player.keepOffline?.(upcoming);
 }
 
