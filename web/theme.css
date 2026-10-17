@@ -925,6 +925,9 @@ img.art[data-loaded="true"] { opacity: 1; }
   .history-toolbar { align-items: stretch; flex-direction: column; }
   .history-toolbar .tabs { overflow-x: auto; }
 }
+.favourites-row-actions { display: inline-flex; align-items: center; gap: 10px; flex: none; }
+.favourites-rating-edit { color: var(--yellow); padding: 4px; }
+.favourites-rating-edit:hover { color: var(--yellow); }
  .source-popover-pending { visibility: hidden; }
 
 /* ---------- popovers (menus, source picker) ---------- */

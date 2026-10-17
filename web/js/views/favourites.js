@@ -4,7 +4,7 @@
 // shell's: this view only lists what the account starred, and offers to take
 // the star back.
 
-import { h, mount, skeletonRows, loadingState } from "../dom.js";
+import { h, icon, mount, skeletonRows, loadingState } from "../dom.js";
 import { currentClient, favoriteRating, on, ratingStage, registerView, requireLogin } from "../app.js";
 import { isSignedIn, state } from "../state.js";
 import { playOne, reportError } from "./queue.js";
@@ -140,19 +140,31 @@ function paint() {
     mount(
       results,
       visible.length
-        ? h("div", { class: "list" }, visible.map((track, position) =>
-            trackRow({
+        ? h("div", { class: "list" }, visible.map((track, position) => {
+            const editRating = h("button", {
+              class: "btn flat small favourites-rating-edit",
+              title: "Edit rating",
+              "aria-label": "Edit rating",
+              onclick: (event) => {
+                event.stopPropagation();
+                openFavoriteDialog(track.id);
+              },
+            }, icon("star", 16));
+            return trackRow({
               track,
               position,
               client,
               onActivate: () => playOne(visible, position),
               menu: trackMenu(track),
-              trailing: h("span", {
-                class: "subtitle favourites-rating",
-                text: `${Number(favoriteRating(track.id)).toFixed(1)}/5.0`,
-              }),
-            })
-          ))
+              trailing: h("span", { class: "favourites-row-actions" },
+                editRating,
+                h("span", {
+                  class: "subtitle favourites-rating",
+                  text: `${Number(favoriteRating(track.id)).toFixed(1)}/5.0`,
+                })
+              ),
+            });
+          }))
         : emptyState("star", "No matching favourites", `Nothing is rated ${filterRating.toFixed(1)} or higher.`)
     );
   }
