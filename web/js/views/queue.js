@@ -340,6 +340,24 @@ export function renderQueue(container, { compact = false } = {}) {
     subscribe(repaint);
   }
   paint();
+  // The drawer is opened onto a queue that can be any length, and the row worth
+  // finding is the one that is playing: it is put in the middle of the panel, so
+  // what has just played and what is coming are both in view. Only a fresh draw
+  // of the drawer does this - a repaint (a copy landing, a download reporting)
+  // must not drag the list back under somebody's thumb.
+  if (compact) centrePlayingRow(sheet);
+}
+
+/**
+ * Put the playing song in the middle of the drawer, once.
+ *
+ * `scrollIntoView` and not arithmetic: the list's scroll container is whichever
+ * ancestor actually scrolls (the drawer body here, the view surface on the Queue
+ * page), and the browser is the one that knows which.
+ */
+function centrePlayingRow(sheet) {
+  const row = sheet.querySelector?.(".row[data-playing='true']");
+  row?.scrollIntoView?.({ block: "center", inline: "nearest" });
 }
 
 const repaint = scheduleFrame(() => paint());
@@ -352,7 +370,7 @@ function fillMarks() {
   for (const entry of sheets) {
     if (hiddenSheet(entry.sheet)) continue;
     for (const mark of entry.sheet.querySelectorAll?.(".held.pending .dl") || []) {
-      setDownloadFill(mark, player.offlineProgress?.(mark.closest(".held")?.dataset.track || ""));
+      setMark(mark, markState(mark.closest?.(".held")?.dataset.track || ""));
     }
   }
 }
@@ -611,9 +629,9 @@ export function titleClass(roomOrder, own) {
 
 /**
  * What this device holds of a song, as the mark both queues put on a row: the
- * green diamond when the copy is here, the download arrow while it is on its
- * way - filled with yellow from the bottom up as the bytes arrive, and sweeping
- * when nobody can count them - and nothing at all when there is nothing to say.
+ * green diamond when the copy is here, and the download arrow while it is on its
+ * way - filled with yellow by the one copy being fetched right now, and quiet
+ * grey on the rows still waiting their turn.
  *
  * Shared, because the room page's own queue says the same thing as the player's
  * queue, and two lists deciding it separately is how they come to disagree. The
@@ -634,31 +652,49 @@ export function heldBadge(trackId) {
       title: kept ? "In memory, on device" : "Downloading to this device",
       "aria-label": kept ? "in memory, on device" : "downloading to this device",
     },
-    kept ? icon("diamond", 14) : downloadMark(player.offlineProgress?.(id))
+    kept ? icon("diamond", 14) : downloadMark(markState(id))
   );
+}
+
+/**
+ * What a song's mark says: the count its own transfer has, or the sweep when
+ * that transfer is the one happening and nobody can count it.
+ *
+ * A download that is queued behind another is not drawn as one in progress: one
+ * yellow arrow is the transfer on the wire, and a list of arrows all moving says
+ * nothing about which song is being waited on.
+ */
+function markState(trackId) {
+  if (!player.downloading?.(trackId)) return { active: false, fraction: null };
+  return { active: true, fraction: player.offlineProgress?.(trackId) ?? null };
 }
 
 /**
  * The download arrow, with the ink that fills it: two of the one glyph, the
  * second clipped to how far the download has got, so the mark fills the way a
- * bar fills without being a second thing to read. `null` is "nobody can count
- * this", which sweeps rather than pretending to a fraction.
+ * bar fills without being a second thing to read.
  */
-function downloadMark(fraction = null) {
+function downloadMark({ active = false, fraction = null } = {}) {
   const mark = h("span", { class: "dl" }, icon("download", 14), h("span", { class: "ink" }, icon("download", 14)));
-  setDownloadFill(mark, fraction);
+  setMark(mark, { active, fraction });
   return mark;
 }
 
-/** How full that mark is, in place: one style write per progress report. */
-function setDownloadFill(mark, fraction) {
+/**
+ * Fill a mark, in place: one style write and at most one class per report.
+ *
+ * `active` is the transfer happening now. With no count for it the ink sweeps -
+ * the honest drawing of a download nobody can measure - and with no transfer the
+ * mark is left grey, which is what a song waiting its turn looks like.
+ */
+function setMark(mark, { active = false, fraction = null } = {}) {
   if (!mark) return;
-  // `null` is "nobody can count this", which is not the same as zero: Number()
-  // would read it as one, and a download pinned at nothing looks like one that
-  // is not happening at all.
+  // `null` is "no count", which is not zero: Number() would read it as one, and
+  // an arrow pinned at nothing looks like a download that is not happening.
   const value = fraction === null || fraction === undefined ? NaN : Number(fraction);
-  if (!Number.isFinite(value)) {
-    mark.classList.add("unknown");
+  if (!active || !Number.isFinite(value)) {
+    if (active) mark.classList.add("unknown");
+    else mark.classList.remove("unknown");
     mark.style.removeProperty("--fill");
     return;
   }
@@ -714,6 +750,10 @@ function queueRow(projection, row) {
     {
       class: jumpable ? "row clickable" : "row",
       "data-key": row.key,
+      // Which row is the song being played, in the page as well as in the
+      // player: the drawer centres this one when it opens, and a test can say
+      // which row it looked at without counting icons.
+      "data-playing": row.playing ? "true" : null,
       // A tap jumps inside the queue, a scroll is a scroll: the drawer is a
       // list you scroll under your thumb, and without the guard every scroll
       // ends by playing whatever the thumb stopped over.

@@ -174,11 +174,15 @@ test("a click that was a scroll does not get through", async () => {
   const fired = [];
   const handlers = tapOnly((event) => fired.push(event.clientX));
 
-  handlers.pointerdown({ clientX: 40, clientY: 100 });
-  handlers.click({ clientX: 52, clientY: 104 });
+  // The names carry `on`, because that is the only shape h() attaches: a bare
+  // `click` prop becomes an attribute and the row is unclickable.
+  assert.deepEqual(Object.keys(handlers).sort(), ["onclick", "onpointerdown"]);
+
+  handlers.onpointerdown({ clientX: 40, clientY: 100 });
+  handlers.onclick({ clientX: 52, clientY: 104 });
   assert.deepEqual(fired, [], "twelve pixels is a scroll");
 
-  handlers.pointerdown({ clientX: 40, clientY: 100 });
-  handlers.click({ clientX: 44, clientY: 103 });
+  handlers.onpointerdown({ clientX: 40, clientY: 100 });
+  handlers.onclick({ clientX: 44, clientY: 103 });
   assert.deepEqual(fired, [44], "a few pixels of tremor is a tap");
 });

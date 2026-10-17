@@ -114,6 +114,45 @@
   next songs are copied while the previous one plays.
 - Reversible: yes - the window filter in `_prefetch` and `_awaitCopy`.
 
+## 2026-10-16 The queue's mark fills only on the transfer that is happening
+- Decision: `heldBadge` draws the yellow ink only for a song whose copy is being
+  fetched this moment (`player.downloading`, the in-flight map), filled by its own
+  count and sweeping when nothing can be counted. A copy that is queued behind
+  another - pending, but not in flight - is a plain grey arrow. A finished copy is
+  the green diamond. `_startOffline` announces the moment a fetch starts, so a row
+  that becomes the active one does not wait for its first status report to say so.
+- Why: Kyle's rule - "only one download icon should do the yellow progress thing
+  (the actively downloading one) the rest should just be gray". Every pending row
+  sweeping at once is a list of arrows that says nothing about which song is being
+  waited on, and six of them animating is noise. The pipeline already knows the
+  difference; the mark just had not been asked.
+- Reversible: yes (one predicate in `markState`).
+
+## 2026-10-16 The queue drawer opens centred on the playing row
+- Decision: a fresh draw of the playbar's drawer (`renderQueue(..., {compact})`)
+  scrolls the playing row to the panel's middle with `scrollIntoView({block:
+  "center"})`. Rows carry `data-playing="true"` so the row is findable in the DOM.
+  Only a fresh draw does it: a repaint - a copy landing, a download reporting -
+  never moves the list. The Queue *page* does not do it (it is a page a person is
+  already reading; the drawer is what pops up over it).
+- Why: a queue of any length opens at the top, and the row worth finding is the
+  one that is playing - which, picking a session back up, can be sixteen rows
+  down. Centred rather than at the top so the songs on both sides of it are in
+  view.
+- Reversible: yes.
+
+## 2026-10-16 `tapOnly` returns the prop names `h()` attaches
+- Decision: `tapOnly` answers `{onpointerdown, onclick}` instead of
+  `{pointerdown, click}`.
+- Why: `h()` attaches a listener only for a key that starts with `on`; a bare
+  `click` prop was written as an attribute, so the queue row's handler had never
+  run - clicking a row did not jump in the queue, and the guard against a scroll
+  being read as a tap was guarding nothing. Found while writing the drawer test,
+  which needed a row click to move the playing row and got row 8 for row 16
+  (the driver kept aiming at rows that never reacted). The unit test now pins the
+  names, which is what would have caught it.
+- Reversible: yes.
+
 ## 2026-10-15 A late source does not reset the element that is playing
 - Decision: `_handOverTo` only moves the element in hand onto a new source when
   that source is playable, or when nothing is playing. A source that is not ready

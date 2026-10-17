@@ -1869,6 +1869,15 @@ class Player {
     return this._offline.get(String(trackId || ""))?.state || "none";
   }
 
+  /** Whether that song's copy is being fetched this moment.
+   *
+   *  The rows of the queue that are waiting their turn are pending too, and the
+   *  difference is the whole of what their mark says: the transfer happening now
+   *  is the one that fills, and the ones behind it stay quiet. */
+  downloading(trackId) {
+    return this._offlineInFlight.has(String(trackId || ""));
+  }
+
   /**
    * How far that copy is, as the queue's own mark draws it: a fraction 0-1, or
    * null when nothing countable is known yet (the mark sweeps instead).
@@ -2050,6 +2059,10 @@ class Player {
     const held = { entry, controller, promise: null };
     this._offlineInFlight.set(id, held);
     this._offlineActive += 1;
+    // A row that was waiting its turn is the one filling now, and it is said out
+    // loud at the moment it starts: waiting for the first status report to say so
+    // is a row that looks asleep while its transfer is under way.
+    this._emit("download-progress", id);
     held.promise = this._fetchOffline(id, controller.signal).finally(() => {
       // Only what is still this song's is forgotten: a fetch that was replaced
       // must not take the entry that replaced it out of the maps.

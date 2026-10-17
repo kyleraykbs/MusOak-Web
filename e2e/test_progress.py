@@ -22,6 +22,9 @@ from test_library import assert_clock_moves, wait_sounding
 pytestmark = [pytest.mark.slow]
 
 QUERY = TITLE = "E2E Slow Tone"
+#: Two more of the fake's songs, queued behind the one this test watches: the
+#: rows whose downloads are only queued, which is what the yellow is not for.
+BEHIND = ("E2E Stream One", "E2E Stream Two")
 PROVIDER = "e2e-slow"
 SONG_SECONDS = 30
 CONVERT_TOTAL_MS = SONG_SECONDS * 1000
@@ -46,12 +49,19 @@ const row = rows.find((r) => ((r.querySelector('.title') || {}).textContent || '
 const held = row ? row.querySelector('.held') : null;
 const mark = held ? held.querySelector('.dl') : null;
 const audio = document.querySelector('audio[data-e2e=audio]');
+const helds = [...document.querySelectorAll('.held.pending')].filter((h) => !h.closest('[hidden]'));
+const inked = helds.filter((h) => {
+  const m = h.querySelector('.dl');
+  return !!m && (m.classList.contains('unknown') || (m.style.getPropertyValue('--fill') || '') !== '');
+});
 return {
   found: !!row,
   held: held ? held.className : '',
   fill: mark ? (mark.style.getPropertyValue('--fill') || '') : '',
   unknown: !!(mark && mark.classList.contains('unknown')),
   filled: !!mark,
+  pending: helds.length,
+  ink: inked.length,
   subtitle: bar && bar.querySelector('.subtitle') ? bar.querySelector('.subtitle').textContent.trim() : '',
   loader: !!(bar && bar.querySelector('.track-text .progress')),
   src: audio ? (audio.currentSrc || audio.src || '') : '',
@@ -112,20 +122,30 @@ def watch(ui, backend, token, variant_id):
         time.sleep(STEP)
 
 
+def search_for(ui, title):
+    """Search the fake provider's own title, and wait for its row to be drawn."""
+    ui.click_tab("Search")
+    ui.type("input[type='search']", title)
+    ui.click("button[title='Search again']")
+    ui.wait_xpath(row_xpath(title), f"the {title!r} search result")
+
+
 def test_the_queue_row_shows_the_song_s_download_and_the_sound_waits_for_it(ui, backend, signed_in):
     variant, named = find_variant(backend, signed_in.token)
     variant_id = variant["id"]
-    row = row_xpath(named)
     sign_in_ui(ui, signed_in)
-    ui.click_tab("Search")
-    ui.type("input[type='search']", QUERY)
-    ui.click("button[title='Search again']")
-    ui.wait_xpath(row, f"the {named!r} search result")
-    ui.click_xpath(row, f"the {named!r} search result")
-    # The queue is where this download is watched, and the song's own row is the
-    # one that carries it.
-    ui.wait_css(".player-bar", "the playbar")
+    # The song this test is about goes on first, with two more of the fake's
+    # songs behind it: a queue whose rows are only queued is where "the yellow is
+    # for the transfer on the wire" can be seen.
+    search_for(ui, named)
+    ui.click_xpath(row_xpath(named) + "//button[@title='Queue']", "the song's own Queue button")
+    for behind in BEHIND:
+        search_for(ui, behind)
+        ui.click_xpath(row_xpath(behind) + "//button[@title='Queue']", f"the Queue button for {behind!r}")
+    # Playing it from the queue's own first row keeps the two behind it queued.
     ui.click_tab("Queue")
+    ui.wait_xpath(row_xpath(named), "the queued song's own row")
+    ui.click_xpath("(" + row_xpath(named) + ")[1]", f"the queue row for {named!r}")
 
     samples = watch(ui, backend, ui.token(), variant_id)
     downloads = [sample for sample in samples if sample["api"]["stage"] == "download"]
@@ -158,6 +178,17 @@ def test_the_queue_row_shows_the_song_s_download_and_the_sound_waits_for_it(ui, 
     fills = [fill_percent(sample["fill"]) for sample in marked if fill_percent(sample["fill"]) is not None]
     assert fills, f"the mark never showed a count: {[s['fill'] for s in marked]!r}"
     assert max(fills) >= 80, f"the mark never filled: {fills!r}"
+
+    # Only the transfer on the wire is drawn as one: the rows behind it are
+    # pending too, and they stay grey. A list of arrows all filling says nothing
+    # about which song is being waited on.
+    census = [(sample["pending"], sample["ink"]) for sample in waiting]
+    assert any(pending >= 3 and ink == 1 for pending, ink in census), (
+        f"the marks were not one transfer among queued rows: {census!r}"
+    )
+    assert all(ink <= 1 for _, ink in census), (
+        f"more than the one transfer was drawn as downloading: {census!r}"
+    )
 
     # Nothing was heard before the row said the copy was here.
     ready = [index for index, sample in enumerate(samples) if sample["held"].startswith("held ready")]

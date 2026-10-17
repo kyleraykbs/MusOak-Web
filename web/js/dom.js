@@ -39,20 +39,24 @@ function append(node, children) {
 
 /**
  * A pair of handlers that only lets a click through when the press did not move:
- * `{pointerdown, click}` for h().
+ * `{onpointerdown, onclick}`, the shape h() attaches.
  *
  * A list that scrolls under the finger still fires a click when the finger
  * lifts, so a scroll is read as a tap - and on a queue that means the song under
  * the thumb starts playing. Ten pixels is a thumb's tremor rather than a
  * gesture; anything past it was a scroll, and the click is dropped.
+ *
+ * The `on` is not decoration: h() attaches a listener only for a prop that names
+ * an event that way, and a bare `click` is an attribute nothing ever calls. The
+ * queue's rows were unclickable for as long as this returned the bare names.
  */
 export function tapOnly(handler, { slop = 10 } = {}) {
   let start = null;
   return {
-    pointerdown: (event) => {
+    onpointerdown: (event) => {
       start = { x: Number(event.clientX) || 0, y: Number(event.clientY) || 0 };
     },
-    click: (event) => {
+    onclick: (event) => {
       const from = start;
       start = null;
       if (from) {

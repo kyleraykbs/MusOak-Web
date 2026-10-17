@@ -468,10 +468,16 @@ test("the queue's next songs are kept in memory, and the window is the limit", a
     player.queue = queue("a", "b", "c");
     player._index = 0;
     player.keepOffline(player.offlineWindow());
+    // Two fetches are under way and the third is waiting its turn: what the
+    // queue's marks are drawn from - the rows being fetched now, and the ones
+    // that are only queued.
+    assert.equal(player.downloading("a"), true, "the first song's copy is being fetched");
+    assert.equal(player.downloading("c"), false, "a song waiting its turn is not");
     await settle();
 
     assert.deepEqual(fetched, ["/media/v-a", "/media/v-b", "/media/v-c"]);
     assert.equal(player.offlineState("a"), "ready");
+    assert.equal(player.downloading("a"), false, "and a copy that is here is not being fetched");
     assert.equal(player.offlineSummary().ready, 3);
     assert.equal(player.offlineSummary().bytes, 3072);
 

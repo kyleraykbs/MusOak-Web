@@ -81,10 +81,12 @@ test("the held mark says what this device has, wherever it is drawn", async () =
   const { player } = await import("../player.js");
   const savedState = player.offlineState;
   const savedProgress = player.offlineProgress;
+  const savedDownloading = player.downloading;
   try {
     player.offlineState = (id) =>
       id === "held-1" ? "ready" : id === "pending-1" ? "pending" : "none";
-    player.offlineProgress = (id) => (id === "pending-1" ? 0.42 : null);
+    player.downloading = (id) => id === "pending-1";
+    player.offlineProgress = () => 0.42;
 
     const kept = queue.heldBadge("held-1");
     assert.equal(kept.className, "held ready", "a copy that is here");
@@ -103,16 +105,26 @@ test("the held mark says what this device has, wherever it is drawn", async () =
     assert.equal(mark.vars["--fill"], "42%", "filled by the share the player reports");
     assert.equal(mark.added.includes("unknown"), false, "a countable download does not sweep");
 
-    // A download nobody can count sweeps rather than pretending to a fraction.
+    // A transfer nobody can count sweeps rather than pretending to a fraction.
     player.offlineProgress = () => null;
     const uncounted = queue.heldBadge("pending-1").children[0];
     assert.equal(uncounted.added.includes("unknown"), true);
     assert.equal(uncounted.vars["--fill"], undefined);
 
+    // A song waiting its turn is grey: no ink, no sweep. The yellow is for the
+    // one transfer that is happening, and a list of arrows all moving says
+    // nothing about which song is being waited on.
+    player.downloading = () => false;
+    player.offlineProgress = () => 0.42;
+    const waiting = queue.heldBadge("pending-1").children[0];
+    assert.equal(waiting.vars["--fill"], undefined, "a queued download is not filled");
+    assert.equal(waiting.added.includes("unknown"), false, "and it does not sweep");
+
     assert.equal(queue.heldBadge("nothing-1"), null, "nothing worth saying for a song with no copy");
   } finally {
     player.offlineState = savedState;
     player.offlineProgress = savedProgress;
+    player.downloading = savedDownloading;
   }
 });
 
