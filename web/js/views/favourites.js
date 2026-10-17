@@ -114,10 +114,19 @@ function paint() {
           "div",
           { class: "list" },
           list.map((track, position) =>
-            h("div", { class: "row favourites-track-row" },
-              trackRow({ track, position, client, onActivate: () => playOne(list, position), menu: trackMenu(track) }),
-              h("span", { class: "subtitle", text: `${Number(favoriteRating(track.id)).toFixed(1)}/5.0` })
-            )
+            trackRow({
+              track,
+              position,
+              client,
+              onActivate: () => playOne(list, position),
+              menu: trackMenu(track),
+              // The rating is the row's last column, so the grow before the
+              // time pushes it and the controls into one right-aligned edge.
+              trailing: h("span", {
+                class: "subtitle favourites-rating",
+                text: `${Number(favoriteRating(track.id)).toFixed(1)}/5.0`,
+              }),
+            })
           )
         )
       : loadFailed

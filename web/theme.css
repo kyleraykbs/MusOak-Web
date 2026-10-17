@@ -868,8 +868,7 @@ img.art[data-loaded="true"] { opacity: 1; }
 .share-song-results .row { min-width: 0; }
 .history-section { display: flex; flex-direction: column; gap: 8px; }
 .history-section + .history-section { margin-top: 18px; }
-.favourites-track-row { align-items: center; }
-.favourites-track-row > .subtitle { flex: none; white-space: nowrap; }
+.favourites-rating { flex: none; white-space: nowrap; }
 
  .source-popover-pending { visibility: hidden; }
 
@@ -945,10 +944,11 @@ img.art[data-loaded="true"] { opacity: 1; }
 .player .btn.round:hover { border-color: currentColor; }
 
 /* The volume: the part up to the position bar is green whatever the transport is
-   doing - it says how loud, not whether it is playing. Firefox fills with
-   ::-moz-range-progress; everywhere else the fill is a gradient driven by
-   --fill, which player.js keeps up to date. The thumb's own shape and hover
-   growth live with the sliders below. */
+   doing - it says how loud, not whether it is playing. The bar's travel is the
+   fader position; player.js maps it through the loudness curve before the
+   element sees it. Firefox fills with ::-moz-range-progress; everywhere else
+   the fill is a gradient driven by --fill, which player.js keeps up to date.
+   The thumb's own shape and hover growth live with the sliders below. */
 .player input[type="range"].volume::-moz-range-track { background: var(--bg3); height: var(--range-track-height); border-radius: var(--range-track-radius); }
 .player input[type="range"].volume::-moz-range-progress { background: var(--green); height: var(--range-track-height); border-radius: var(--range-track-radius) 0 0 var(--range-track-radius); }
 .player input[type="range"].volume::-webkit-slider-runnable-track {

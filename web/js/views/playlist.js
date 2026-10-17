@@ -275,8 +275,9 @@ function fileName(value) {
   return `${cleaned || "song"}.opus`;
 }
 
-/** One track in a list: number, artwork, title, artist, time and a ⋮ menu. */
-export function trackRow({ track, position, client, onActivate, menu = [] }) {
+/** One track in a list: number, artwork, title, artist, time, a ⋮ menu and an
+ *  optional trailing control (the favourites list's rating). */
+export function trackRow({ track, position, client, onActivate, menu = [], trailing = null }) {
   return h(
     "div",
     {
@@ -299,7 +300,11 @@ export function trackRow({ track, position, client, onActivate, menu = [] }) {
     iconButton("dots", {
       title: "More actions",
       onclick: (event) => popover(event.currentTarget, menu),
-    })
+    }),
+    // A row's own extra, after the controls it shares with every other row:
+    // the favourites list puts its rating here, so the grow before it is what
+    // pushes the time, the buttons and the rating into one right-hand column.
+    trailing
   );
 }
 

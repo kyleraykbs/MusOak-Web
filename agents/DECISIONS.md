@@ -283,3 +283,27 @@
   so the corner looked like it changed with the position. The gradient browsers
   already paint a square end there.
 - Reversible: yes.
+
+## 2026-10-16 The volume fader follows loudness, not voltage
+- Decision: the stored volume is the fader's position; the audio element gets
+  position^(5/3). That inverts Stevens' loudness exponent (0.3 on intensity,
+  0.6 on amplitude), so equal travel is an equal perceived step: half the bar
+  is 0.315 amplitude (-10 dB), not 0.5. Full stays 0 dB and zero is silence.
+- Why: Kyle: "Can the volume bar be in lufs or something similar thats
+  calibrated for human hearing so the bar feels linear?" LUFS is a program
+  loudness measurement, not a gain scale; a bar in LUFS would need every
+  track's loudness measured and normalized. This makes the fader linear in
+  loudness without changing what is stored per track. The element's own
+  `volume` is documented as a linear amplitude, so the curve belongs here.
+- Reversible: yes.
+
+## 2026-10-16 A favourites row's trailing controls share one right edge
+- Decision: `trackRow` takes an optional trailing control. The favourites list
+  passes its rating there, so the single row's grow pushes the time, the +,
+  the ⋮ and the rating into one right-aligned column. The outer row that
+  wrapped a second row is gone; it made the inner grow content-sized, so the
+  controls sat after the title and moved with it, and it doubled the row's
+  padding and border.
+- Why: Kyle: "These inside of favorites need to be right aligned (the x/y
+  count and + and ... length 'x:y' need to be right aligned)."
+- Reversible: yes.

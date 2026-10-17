@@ -11,6 +11,7 @@ import {
   albumLine, artistLine, documentKey, mediaProgressLabel, mediaStateLabel, nextIndex, OFFLINE_KEEP, OFFLINE_MAX_BYTES,
   playbackDocument,
   memorySource, playbackStateFrom, prefetchWindow, queueFromDocument, shouldSavePlayback, shuffleWhole, player,
+  volumeGain,
 } from "../player.js";
 import {
   groupSources, netVotes, pickSource, sourceLabel,
@@ -21,6 +22,46 @@ const track = (id) => ({ id, title: id.toUpperCase(), artists: ["Someone"] });
 const queue = (...ids) => ids.map(track);
 const ids = (tracks) => tracks.map((entry) => entry.id);
 const sourceIds = (sources) => sources.map((source) => source.variantId);
+
+test("volumeGain makes equal travel an equal loudness step", () => {
+  assert.equal(volumeGain(0), 0);
+  assert.equal(volumeGain(1), 1);
+  // Half the bar is half the loudness, which under Stevens is amplitude^0.6:
+  // 0.5^(1/0.6) = 0.315, not the 0.5 a raw linear element would take.
+  assert.ok(Math.abs(volumeGain(0.5) - Math.pow(0.5, 5 / 3)) < 1e-12);
+  assert.ok(volumeGain(0.5) > 0.31 && volumeGain(0.5) < 0.32);
+  // Out of range is clamped, and the curve never goes backwards.
+  assert.equal(volumeGain(-1), 0);
+  assert.equal(volumeGain(2), 1);
+  assert.ok(volumeGain(0.25) < volumeGain(0.5));
+});
+
+test("setVolume hands the element the perceptual gain", () => {
+  const saved = {
+    volume: player._volume, muted: player._muted, audio: player.audio,
+    renderBar: player.renderBar, remember: player._remember,
+  };
+  try {
+    const audio = { volume: 1, muted: true };
+    player.audio = audio;
+    player._muted = false;
+    player.renderBar = () => {};
+    player._remember = () => {};
+    player.setVolume(0.5);
+    assert.ok(Math.abs(audio.volume - volumeGain(0.5)) < 1e-12);
+    assert.equal(audio.muted, false);
+    player.setVolume(1);
+    assert.equal(audio.volume, 1);
+    player.setVolume(0);
+    assert.equal(audio.volume, 0);
+  } finally {
+    player._volume = saved.volume;
+    player._muted = saved.muted;
+    player.audio = saved.audio;
+    player.renderBar = saved.renderBar;
+    player._remember = saved.remember;
+  }
+});
 
 test("mediaStateLabel says what a file is doing", () => {
   assert.equal(mediaStateLabel("ready"), "ready");

@@ -127,6 +127,20 @@ const FETCH_RETRY_PAUSE_MS = 700;
 const METADATA_TIMEOUT_MS = 10000;
 const clamp01 = (value) => Math.min(1, Math.max(0, value));
 
+/**
+ * Fader position (0..1) to the element's amplitude.
+ *
+ * `.volume` is a linear amplitude multiplier, but hearing is not: loudness
+ * grows roughly as the 0.6 power of amplitude (Stevens' exponent of 0.3 on
+ * intensity), so a fader written straight into it packs the audible change
+ * into the top of its travel. Raising the position to 1 / 0.6 = 5/3 makes a
+ * step of travel sound like a step - half the bar is half the loudness, not
+ * half the voltage. The ends stay exact: full is 0 dB, empty is silence.
+ */
+export function volumeGain(position) {
+  return Math.pow(clamp01(Number(position) || 0), 5 / 3);
+}
+
 // The bar is repainted from the audio element's own events, several times a
 // second: writing only what changed keeps that quiet work.
 
@@ -776,6 +790,7 @@ class Player {
     return this._knownDurationMs();
   }
 
+  /** The fader position (0..1). The element gets volumeGain(position). */
   setVolume(value) {
     this._volume = clamp01(Number(value) || 0);
     this._applyVolume();
@@ -797,7 +812,7 @@ class Player {
    *  to repeat those four steps. */
   _applyVolume() {
     if (this.audio) {
-      this.audio.volume = this._volume;
+      this.audio.volume = volumeGain(this._volume);
       this.audio.muted = this._muted;
     }
     this._emit("volume-changed", this._volume);
@@ -2119,7 +2134,7 @@ class Player {
    * move the queue on or consume a position.
    */
   _wireAudio(audio) {
-    audio.volume = this._volume;
+    audio.volume = volumeGain(this._volume);
     audio.muted = this._muted;
     audio.addEventListener("timeupdate", () => {
       if (audio !== this.audio) return;
@@ -2476,7 +2491,7 @@ class Player {
     this._volume = Number.isFinite(volume) ? clamp01(volume) : 1;
     this._muted = Boolean(saved.muted);
     if (this.audio) {
-      this.audio.volume = this._volume;
+      this.audio.volume = volumeGain(this._volume);
       this.audio.muted = this._muted;
     }
     this._emit("volume-changed", this._volume);
