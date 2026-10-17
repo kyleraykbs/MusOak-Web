@@ -944,14 +944,13 @@ img.art[data-loaded="true"] { opacity: 1; }
 .player .btn.play svg { display: block; width: 22px; height: 22px; }
 .player .btn.round:hover { border-color: currentColor; }
 
-/* The volume: the part up to the dot is green whatever the transport is doing -
-   it says how loud, not whether it is playing. Firefox fills with
+/* The volume: the part up to the position bar is green whatever the transport is
+   doing - it says how loud, not whether it is playing. Firefox fills with
    ::-moz-range-progress; everywhere else the fill is a gradient driven by
-   --fill, which player.js keeps up to date. */
-.player input[type="range"].volume::-moz-range-track { background: var(--bg3); height: 5px; border-radius: 3px; }
-.player input[type="range"].volume::-moz-range-progress { background: var(--green); height: 5px; border-radius: 3px; }
-.player input[type="range"].volume::-moz-range-thumb { background: var(--fg1); border: 0; width: 14px; height: 14px; }
-.player input[type="range"].volume::-webkit-slider-thumb { background: var(--fg1); }
+   --fill, which player.js keeps up to date. The thumb's own shape and hover
+   growth live with the sliders below. */
+.player input[type="range"].volume::-moz-range-track { background: var(--bg3); height: var(--range-track-height); border-radius: var(--range-track-radius); }
+.player input[type="range"].volume::-moz-range-progress { background: var(--green); height: var(--range-track-height); border-radius: var(--range-track-radius); }
 .player input[type="range"].volume::-webkit-slider-runnable-track {
   background: linear-gradient(
     to right,
@@ -1070,8 +1069,8 @@ img.art[data-loaded="true"] { opacity: 1; }
 .player-bar[data-state="playing"] { --play-color: var(--orange); }
 .player[data-state="paused"],
 .player-bar[data-state="paused"] { --play-color: var(--green); }
-.player .timeline input[type="range"]::-moz-range-progress { background: var(--play-color); height: 5px; border-radius: 3px; }
-.player .timeline input[type="range"]::-moz-range-track { background: var(--bg3); height: 5px; border-radius: 3px; }
+.player .timeline input[type="range"]::-moz-range-progress { background: var(--play-color); height: var(--range-track-height); border-radius: var(--range-track-radius); }
+.player .timeline input[type="range"]::-moz-range-track { background: var(--bg3); height: var(--range-track-height); border-radius: var(--range-track-radius); }
 /* Where ::-moz-range-progress does not exist, the played part is a gradient on
    the element, driven by --fill the way the volume's is: the Firefox pseudo
    element paints over it, so the two never disagree. */
@@ -1081,15 +1080,6 @@ img.art[data-loaded="true"] { opacity: 1; }
     var(--play-color) 0 var(--fill, 0%),
     var(--bg3) var(--fill, 0%) 100%
   );
-}
-.player .timeline input[type="range"]::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  background: var(--fg1);
-  border: 0;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
 }
 
 .source-pill {
@@ -1115,7 +1105,7 @@ img.art[data-loaded="true"] { opacity: 1; }
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
-  height: 5px;
+  height: var(--range-track-height);
   outline: none;
   /* The bar itself is drawn by the track, not by this element's background: a
      background cannot be rounded at its ends, and a track can. The element is
@@ -1123,13 +1113,13 @@ input[type="range"] {
   background: transparent;
 }
 input[type="range"]::-webkit-slider-runnable-track {
-  height: 5px;
-  border-radius: 3px;
+  height: var(--range-track-height);
+  border-radius: var(--range-track-radius);
   background: var(--bg3);
 }
 input[type="range"]::-moz-range-track {
-  height: 5px;
-  border-radius: 3px;
+  height: var(--range-track-height);
+  border-radius: var(--range-track-radius);
   background: var(--bg3);
 }
 /* A thin bar in a control as tall as the panel it sits in, so a click anywhere
@@ -1147,25 +1137,47 @@ input[type="range"],
      two sliders side by side cannot overlap however narrow they get. */
   padding: 0 7px;
 }
+/* The position is a vertical bar, not a disc: narrow at rest, and it grows
+   outwards from its own centre under the pointer or the keyboard, so the bar
+   says where the hand is without leaving the line. */
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 14px;
-  height: 14px;
+  width: var(--range-thumb-width);
+  height: var(--range-thumb-height);
   /* Centred on the track, not on the element: the element is as tall as the
      panel it fills, and the track is painted down the middle of that. */
-  margin-top: -4.5px;
-  border-radius: 50%;
+  margin-top: calc((var(--range-track-height) - var(--range-thumb-height)) * 0.5);
+  border-radius: 999px;
   background: var(--fg1);
   cursor: pointer;
+  transition: width 120ms ease, height 120ms ease, margin-top 120ms ease;
 }
 input[type="range"]::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
+  width: var(--range-thumb-width);
+  height: var(--range-thumb-height);
   border: 0;
-  border-radius: 50%;
+  border-radius: 999px;
   background: var(--fg1);
   cursor: pointer;
+  transition: width 120ms ease, height 120ms ease;
+}
+input[type="range"]:hover::-webkit-slider-thumb,
+input[type="range"]:focus-visible::-webkit-slider-thumb,
+input[type="range"]:active::-webkit-slider-thumb {
+  width: var(--range-thumb-width-hover);
+  height: var(--range-thumb-height-hover);
+  margin-top: calc((var(--range-track-height) - var(--range-thumb-height-hover)) * 0.5);
+}
+input[type="range"]:hover::-moz-range-thumb,
+input[type="range"]:focus-visible::-moz-range-thumb,
+input[type="range"]:active::-moz-range-thumb {
+  width: var(--range-thumb-width-hover);
+  height: var(--range-thumb-height-hover);
+}
+@media (prefers-reduced-motion: reduce) {
+  input[type="range"]::-webkit-slider-thumb,
+  input[type="range"]::-moz-range-thumb { transition: none; }
 }
 /* The volume fills what the sound group leaves once the mute has its share; in
    the phone's grid the group is a `display: contents` and the mobile rule sizes
