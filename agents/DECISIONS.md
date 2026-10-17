@@ -390,3 +390,15 @@
   restored position. The visible sequence was a position bar that moved and
   then jumped back; the stale pending restore was the state that won late.
 - Reversible: yes.
+
+## 2026-10-16 Retry playback whose element is stuck before future data
+- Decision: the playback watchdog retries not only a paused refusal, but also an
+  element that reports playing while its clock is buffering/stalled or its
+  readyState is below `HAVE_FUTURE_DATA`. The first `playing` event no longer
+  cancels the watchdog while the player still intends to play; a later stalled
+  state must be recoverable without a reload. Ended media remains excluded.
+- Why: Kyle's player could show the pause state while the position stayed at
+  zero across every song and every reload attempt. That is the HTML media
+  element's dead/stalled state, not a user pause; `isPlaying()` alone made the
+  existing retry watchdog declare it healthy forever.
+- Reversible: yes.

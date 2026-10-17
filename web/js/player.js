@@ -1314,7 +1314,10 @@ class Player {
       if (audio !== this.audio) return;
       this._blocked = false;
       this._blockedError = "";
-      this._wantResume(false);
+      // Keep the watchdog alive while the player intends to play. A later
+      // waiting/stalled state can leave `paused === false` while the clock is
+      // dead; clearing it on the first `playing` event made that state last
+      // until a reload.
     });
     if (typeof document !== "undefined") {
       document.addEventListener("visibilitychange", () => {
@@ -2659,13 +2662,15 @@ class Player {
    *  backgrounded session running instead of quietly ending.
    */
   _retryWanted() {
-    // "Not playing" is the state to recover from, not "paused": a browser that
-    // refuses a backgrounded play() leaves the element paused, which is exactly
-    // what a working pause looks like - so a gate on isPaused() never fires and
-    // the session ends quietly. An ended file is the one bare "not playing"
-    // that must be left alone: play() would start it again from the top.
-    if (!this._resumeWanted || this.isPlaying() || this.hasEnded()) return;
-    const playing = this.audio?.play();
+    // A media element can be paused, or can report itself as playing while it
+    // is stuck before future data. The latter is the dead state: `isPlaying()`
+    // alone makes the retry gate believe sound is moving forever, even though
+    // currentTime and the position bar never advance.
+    const audio = this.audio;
+    const readyState = Number(audio?.readyState);
+    const waitingForData = Boolean(this._buffering || (audio?.src && Number.isFinite(readyState) && readyState < 3));
+    if (!this._resumeWanted || (this.isPlaying() && !waitingForData) || this.hasEnded()) return;
+    const playing = audio?.play();
     if (playing?.catch) playing.catch(() => { /* still not allowed: it waits */ });
   }
 

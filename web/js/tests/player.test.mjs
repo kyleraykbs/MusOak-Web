@@ -992,6 +992,25 @@ test("a refused play is asked for again, but an ended file is not", () => {
     player._resumeWanted = saved.resume;
   }
 });
+test("a playing element with dead ready state is retried", () => {
+  const played = [];
+  const audio = {
+    src: "/media/v-a", paused: false, ended: false, readyState: 2,
+    play() { played.push(this.src); return { catch() {} }; },
+  };
+  const saved = { audio: player.audio, resume: player._resumeWanted, buffering: player._buffering };
+  try {
+    player.audio = audio;
+    player._resumeWanted = true;
+    player._buffering = true;
+    player._retryWanted();
+    assert.deepEqual(played, ["/media/v-a"], "a stalled element is asked to resume");
+  } finally {
+    player.audio = saved.audio;
+    player._resumeWanted = saved.resume;
+    player._buffering = saved.buffering;
+  }
+});
 
 
 // --- songs this page already holds -----------------------------------------
