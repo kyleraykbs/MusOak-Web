@@ -343,6 +343,22 @@ test("in a room the plus queues for the room, not for this device", async () => 
     closeRoom();
   }
 });
+test("room progress uses the shared held badge", async () => {
+  const queue = await import("../views/queue.js");
+  const { player } = await import("../player.js");
+  const saved = { offlineState: player.offlineState, downloading: player.downloading, offlineProgress: player.offlineProgress };
+  try {
+    player.offlineState = (id) => id === "track-1" ? "pending" : "none";
+    player.downloading = (id) => id === "track-1";
+    player.offlineProgress = () => 0.42;
+    const badge = queue.heldBadge("track-1");
+    assert.equal(badge.children[0].vars["--fill"], "42%");
+  } finally {
+    player.offlineState = saved.offlineState;
+    player.downloading = saved.downloading;
+    player.offlineProgress = saved.offlineProgress;
+  }
+});
 
 test("a server that refuses is a server that answered", async () => {
   // The clock probe throws on a 401, and treating that as "not answering" made
