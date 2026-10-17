@@ -277,7 +277,7 @@ function fileName(value) {
 }
 
 /** One track in a list: number, artwork, title, artist, rating, time and actions. */
-export function trackRow({ track, position, client, onActivate, menu = [], trailing = null }) {
+export function trackRow({ track, position, client, onActivate, menu = [], trailing = null, drag = null }) {
   const rating = favoriteRating(track.id);
   const rate = iconButton("star", {
     class: "btn flat small track-rating-edit",
@@ -300,7 +300,7 @@ export function trackRow({ track, position, client, onActivate, menu = [], trail
       },
     },
     h("span", { class: "time playlist-track-number", text: String(position + 1) }),
-    artworkTile(client, track.artworkUrl),
+    drag,
     h("div", { class: "grow" }, h("div", { class: "title", text: track.title || "" }), artistLineNode(artistLine(track), (track.artistIds || [])[0])),
     rating != null ? h("span", { class: "time track-rating-value", text: `${Number(rating).toFixed(1)}/5.0` }) : null,
     h("span", { class: "time", text: track.durationMs ? fmtDuration(track.durationMs) : "" }),
@@ -468,17 +468,18 @@ async function reorderPlaylistTracks(tracks, from, to, list) {
 
 async function appendPlaylistRows(list, tracks, client, mine) {
   const rows = tracks.map((track, position) => {
+    const handle = dragHandle("Drag track to reorder");
     const row = trackRow({
       track,
       position,
       client,
+      drag: handle,
       onActivate: () => playOne(tracks, position, { playlistId: activeId }),
       menu: trackMenu(track, [{ label: "Remove from playlist", onClick: () => removeEntry(position) }], {
         playlistId: activeId,
       }),
     });
-    const handle = dragHandle("Drag track to reorder");
-    row.insertBefore(handle, row.firstChild);
+    row.dataset.key = track.id;
     listDrag({ row, handle, entry: track, entries: tracks, onDrop: (from, to) => void reorderPlaylistTracks(tracks, from, to, list) });
     return row;
   });

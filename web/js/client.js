@@ -459,6 +459,9 @@ export class Client {
   reorderPlaylist(id, order) {
     return this.post(`/api/v1/me/playlists/${encodeURIComponent(id)}/reorder`, { order }).then((payload) => payload || {});
   }
+  reorderPlaylists(ids) {
+    return this.post("/api/v1/me/playlists/reorder", { ids }).then((payload) => payload || {});
+  }
   /** What was playing last on this account, as the document itself. */
   playbackState() {
     return this.get("/api/v1/me/playback").then((payload) => payload?.state || payload || {});

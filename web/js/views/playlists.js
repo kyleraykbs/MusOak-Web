@@ -330,24 +330,24 @@ function playlistMenu(playlist) {
 
 // --- rows and loading ------------------------------------------------------
 
-function playlistRow(playlist) {
+function playlistRow(playlist, entries) {
   // The download/cloud control does its own thing: its clicks must not also
   // open the playlist the way a click anywhere else in the row does.
   const keep = offline.button(playlist);
   keep.addEventListener("click", (event) => event.stopPropagation());
-  return h(
+  const row = h(
     "div",
     {
       class: "row clickable",
+      "data-key": playlist.id,
       onclick: () => navigate("playlist", { id: playlist.id }),
     },
+    dragHandle("Drag playlist to reorder"),
     artwork(playlist.artworkUrl),
     h(
       "div",
       { class: "grow" },
-      h(
-        "div",
-        { class: "playlist-row-title" },
+      h("div", { class: "playlist-row-title" },
         h("div", { class: "title", text: playlist.name || "Untitled" }),
         playlist.public === false ? h("span", { class: "tag", text: "private" }) : null
       ),
@@ -356,6 +356,28 @@ function playlistRow(playlist) {
     keep,
     menuButton((anchor) => popover(anchor, playlistMenu(playlist)))
   );
+  listDrag({ row, handle: row.querySelector(".drag-handle"), entry: playlist, entries, onDrop: (from, to) => void reorderPlaylists(entries, from, to, row.parentNode) });
+  return row;
+}
+
+async function reorderPlaylists(entries, from, to, list) {
+  const fromIndex = entries.indexOf(from);
+  const toIndex = entries.indexOf(to);
+  if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return;
+  const original = [...entries];
+  entries.splice(fromIndex, 1);
+  entries.splice(toIndex, 0, from);
+  const rows = [...list.children];
+  const moved = rows[fromIndex];
+  list.removeChild(moved);
+  list.insertBefore(moved, list.children[toIndex] || null);
+  try {
+    await currentClient().reorderPlaylists(entries.map((entry) => entry.id));
+  } catch (error) {
+    entries.splice(0, entries.length, ...original);
+    show(entries);
+    handle(error);
+  }
 }
 
 function show(playlists) {
@@ -371,7 +393,7 @@ function show(playlists) {
     );
     return;
   }
-  mount(listEl, h("div", { class: "list" }, playlists.map(playlistRow)));
+  mount(listEl, h("div", { class: "list" }, playlists.map((playlist) => playlistRow(playlist, playlists))));
 }
 
 /**
