@@ -364,6 +364,10 @@ test("room control buttons use the card action group", async () => {
   const { dragHandle } = await import("../views/queue.js");
   assert.equal(dragHandle("unused").className.includes("drag-handle"), true);
 });
+test("room view module keeps its section builder available", async () => {
+  const room = await import("../views/room.js");
+  assert.equal(typeof room.hostOnly, "function");
+});
 test("a server that refuses is a server that answered", async () => {
   // The clock probe throws on a 401, and treating that as "not answering" made
   // every logged-out visitor to a requireLogin deployment see a dead server.

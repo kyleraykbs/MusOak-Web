@@ -185,6 +185,7 @@ export function hostOnly(action) {
 
 function nowPlaying(room) {
   const current = room.current;
+  const section = sectionBlock("Playing now");
   const drives = mayDrive(room, room.me);
   const actions = h("div", { class: "room-card-actions" });
   if (current?.started) {
