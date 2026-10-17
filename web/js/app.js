@@ -1194,15 +1194,15 @@ export function favoriteRating(trackId) {
  * drag anywhere on the rectangle sets the rating; it is the only part that
  * takes the pointer, and the only part a reader hears.
  */
-function ratingStage(value, onInput) {
+export function ratingStage(value, onInput, { min = "0.1", max = "5", step = "0.1", ariaLabel = "Your rating" } = {}) {
   const row = (className) => h(
     "div",
     { class: className, "aria-hidden": "true" },
     ...Array.from({ length: 5 }, () => h("span", { class: "rating-glyph" }, icon("star")))
   );
   const input = h("input", {
-    class: "rating-range", type: "range", min: "0.1", max: "5", step: "0.1",
-    value: String(value), "aria-label": "Your rating",
+    class: "rating-range", type: "range", min, max, step,
+    value: String(value), "aria-label": ariaLabel,
   });
   const stage = h(
     "div",

@@ -830,7 +830,11 @@ img.art[data-loaded="true"] { opacity: 1; }
 .playlist-header .collection-header-title { font-size: 22px; font-weight: 600; }
 .playlist-header { padding-top: 20px; }
 .playlist-header .collection-header-row { min-height: 168px; align-items: center; }
-.playlist-header .playlist-detail-actions { border-top: 1px solid var(--bg1); }
+.playlist-header-title-row { width: 100%; }
+.playlist-header-management { display: flex; align-items: center; gap: 10px; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
+.playlist-visibility { padding-top: 4px; }
+.playlist-visibility .input { max-width: 220px; }
+.playlist-header .playlist-detail-actions { border-top: 1px solid var(--bg1); padding-top: 16px; }
 .profile-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .profile-banner { display: flex; flex-direction: column; gap: 12px; }
 .profile-identity { display: flex; gap: 18px; align-items: center; }
@@ -898,6 +902,12 @@ img.art[data-loaded="true"] { opacity: 1; }
 .history-section { display: flex; flex-direction: column; gap: 8px; }
 .history-section + .history-section { margin-top: 18px; }
 .favourites-rating { flex: none; white-space: nowrap; }
+.favourites-filter {
+  width: min(100%, 620px);
+  margin: 0 auto;
+}
+.favourites-filter .rating-stage { width: 100%; }
+.favourites-filter-label { margin-top: 6px; color: var(--fg4); text-align: center; font-size: 12.5px; }
 
  .source-popover-pending { visibility: hidden; }
 

@@ -160,6 +160,11 @@
 - Why: selecting a song should not silently discard songs already queued, while the common queue action should affect what plays next rather than hiding the song at the end of a long queue.
 - Reversible: yes.
 
+## 2026-10-16 Playlist controls use a compact header and visibility field
+- Decision: playlist management actions sit at the title row's right edge; visibility is a labeled public/private select below the header row; playback actions remain below it with a padded divider.
+- Why: separates playlist administration from playback and makes the default-public state explicit without using a toggle whose label changes meaning.
+- Reversible: yes.
+
 ## 2026-10-16 The queue's mark fills only on the transfer that is happening
 - Decision: `heldBadge` draws the yellow ink on one row: the song nearest the
   playhead whose copy is being fetched (`player.downloading` - in flight, and the
@@ -360,4 +365,18 @@
   pressed during the wait, discarded the restored start position, and moved the
   eventual play outside the press that requested it. The e2e restore path passed
   six runs, so the race needed a state-level guard rather than a timing-only test.
+- Reversible: yes.
+
+## 2026-10-16 Favourites sort by rating and filter from a centred star range
+- Decision: favourites are sorted highest rating first, preserving server order
+  for ties. A centred, panel-wide five-star control sits above the list; its
+  invisible range input spans the stars, zero means all ratings, and a higher
+  position filters to ratings at least that value. The stars use the same grey
+  base/yellow clipped fill as the rating dialog, and the count plus playback
+  actions update with the filtered rows.
+- Why: Kyle: "Favorites should be sorted so the highest rated is nearest to the
+  top and lowest is nearest to the bottom. There should also be a slider at the
+  top that allows you to select a star range by dragging on a given zone. We
+  should bring over the nice looking stars for that and affix them centered at
+  the top of the screen to filter."
 - Reversible: yes.

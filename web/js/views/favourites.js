@@ -5,11 +5,10 @@
 // the star back.
 
 import { h, mount, skeletonRows, loadingState } from "../dom.js";
-import { currentClient, on, registerView, requireLogin } from "../app.js";
+import { currentClient, favoriteRating, on, ratingStage, registerView, requireLogin } from "../app.js";
 import { isSignedIn, state } from "../state.js";
 import { playOne, reportError } from "./queue.js";
 import { emptyState, playButtons, trackCountLine, trackMenu, trackRow } from "./playlist.js";
-import { favoriteRating } from "../app.js";
 
 registerView({
   id: "favourites",
@@ -96,40 +95,19 @@ function paint() {
     return;
   }
 
-  // What the account starred, in the order the server listed it: a star taken
-  // back in a row menu drops out of the list at once. Playing from here is not
-  // playing a playlist, so no playlist is recorded for a restore.
-  const list = tracks.filter((track) => favoriteRating(track.id) != null);
+  // The account's scores are the order of this page: highest first, with the
+  // server's order preserved for equal scores. The filter below works against
+  // this stable list, so moving its threshold never shuffles equal ratings.
+  const list = tracks
+    .filter((track) => favoriteRating(track.id) != null)
+    .map((track, index) => ({ track, index, rating: Number(favoriteRating(track.id)) || 0 }))
+    .sort((left, right) => right.rating - left.rating || left.index - right.index)
+    .map(({ track }) => track);
   const client = currentClient();
-  mount(
-    sheet,
-    h(
-      "div",
-      { class: "favourites-actions" },
-      h("div", { class: "grow" }, h("div", { class: "subtitle", text: trackCountLine(list) })),
-      ...playButtons(list, { withShuffleQueue: false })
-    ),
-    list.length
-      ? h(
-          "div",
-          { class: "list" },
-          list.map((track, position) =>
-            trackRow({
-              track,
-              position,
-              client,
-              onActivate: () => playOne(list, position),
-              menu: trackMenu(track),
-              // The rating is the row's last column, so the grow before the
-              // time pushes it and the controls into one right-aligned edge.
-              trailing: h("span", {
-                class: "subtitle favourites-rating",
-                text: `${Number(favoriteRating(track.id)).toFixed(1)}/5.0`,
-              }),
-            })
-          )
-        )
-      : loadFailed
+  if (!list.length) {
+    mount(
+      sheet,
+      loadFailed
         ? emptyState(
             "star",
             "Your favourites could not be loaded",
@@ -137,5 +115,48 @@ function paint() {
             h("button", { class: "btn suggested", text: "Try again", onclick: () => loadFavourites() })
           )
         : emptyState("star", "No favourites", "Star tracks and they collect here.")
-  );
+    );
+    return;
+  }
+
+  let filterRating = 0;
+  const filterLabel = h("div", { class: "favourites-filter-label", text: "All ratings" });
+  const actions = h("div", { class: "favourites-actions" });
+  const results = h("div");
+  const filter = ratingStage(filterRating, (rating) => {
+    filterRating = rating;
+    filterLabel.textContent = rating > 0 ? `At least ${rating.toFixed(1)} stars` : "All ratings";
+    renderResults();
+  }, { min: "0", ariaLabel: "Filter favourites by minimum rating" });
+  const filterBox = h("div", { class: "favourites-filter" }, filter.stage, filterLabel);
+
+  function renderResults() {
+    const visible = list.filter((track) => Number(favoriteRating(track.id)) >= filterRating);
+    mount(
+      actions,
+      h("div", { class: "grow" }, h("div", { class: "subtitle", text: trackCountLine(visible) })),
+      ...playButtons(visible, { withShuffleQueue: false })
+    );
+    mount(
+      results,
+      visible.length
+        ? h("div", { class: "list" }, visible.map((track, position) =>
+            trackRow({
+              track,
+              position,
+              client,
+              onActivate: () => playOne(visible, position),
+              menu: trackMenu(track),
+              trailing: h("span", {
+                class: "subtitle favourites-rating",
+                text: `${Number(favoriteRating(track.id)).toFixed(1)}/5.0`,
+              }),
+            })
+          ))
+        : emptyState("star", "No matching favourites", `Nothing is rated ${filterRating.toFixed(1)} or higher.`)
+    );
+  }
+
+  renderResults();
+  mount(sheet, filterBox, actions, results);
 }
