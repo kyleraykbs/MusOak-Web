@@ -522,15 +522,14 @@ function header(client, playlist, tracks) {
   // A server that predates visibilities says nothing about who owns a
   // playlist, and then this is the owner looking at their own.
   const mine = playlist.mine !== false;
-  const visibility = mine
-    ? h("button", {
-        class: "btn",
-        text: playlist.public === false ? "Make public" : "Make private",
-        title: playlist.public === false
-          ? "Anyone who can see your page would be able to see it"
-          : "Only you would be able to see it",
-        onclick: () => toggleVisibility(playlist),
-      })
+  const management = mine
+    ? h(
+        "div",
+        { class: "playlist-header-management" },
+        h("button", { class: "btn", text: "Upload cover", title: "Set this playlist's cover", onclick: uploadCover }),
+        h("button", { class: "btn", text: "Rename", title: "Rename this playlist", onclick: renamePlaylist }),
+        h("button", { class: "btn destructive", text: "Delete", title: "Delete this playlist", onclick: deletePlaylist })
+      )
     : null;
   return h(
     "div",
@@ -544,36 +543,56 @@ function header(client, playlist, tracks) {
         { class: "grow collection-header-copy" },
         h(
           "div",
-          { class: "collection-header-title-row" },
+          { class: "collection-header-title-row playlist-header-title-row" },
           h("div", { class: "title collection-header-title", text: playlist.name || "Playlist" }),
-          playlist.public === false ? h("span", { class: "tag", text: "private" }) : null
+          playlist.public === false ? h("span", { class: "tag", text: "private" }) : null,
+          management
         ),
         h("div", { class: "subtitle", text: trackCountLine(tracks) })
       )
     ),
+    mine ? visibilityControl(playlist) : null,
     h(
       "div",
       { class: "playlist-detail-actions" },
-      ...playButtons(tracks, { playlistId: activeId }),
-      mine ? h("button", { class: "btn", text: "Rename", title: "Rename this playlist", onclick: renamePlaylist }) : null,
-      mine ? h("button", { class: "btn", text: "Upload cover", title: "Set this playlist's cover", onclick: uploadCover }) : null,
-      visibility,
-      mine ? h("button", { class: "btn destructive", text: "Delete", title: "Delete this playlist", onclick: deletePlaylist }) : null
+      ...playButtons(tracks, { playlistId: activeId })
     )
   );
 }
 
-/** Show a playlist to everybody who can see your page, or to nobody but you. */
-async function toggleVisibility(playlist) {
+function visibilityControl(playlist) {
+  const isPublic = playlist.public !== false;
+  return h(
+    "div",
+    { class: "field playlist-visibility" },
+    h("label", { text: "Visibility" }),
+    h(
+      "select",
+      {
+        class: "input",
+        "aria-label": "Playlist visibility",
+        onchange: (event) => setPlaylistVisibility(playlist, event.currentTarget.value === "public", event.currentTarget),
+      },
+      h("option", { value: "public", text: "Public", selected: isPublic }),
+      h("option", { value: "private", text: "Private", selected: !isPublic })
+    )
+  );
+}
+
+/** Set the playlist's visibility and redraw the header with the server's answer. */
+async function setPlaylistVisibility(playlist, isPublic, control) {
   const client = currentClient();
   if (!client) return;
-  const wanted = playlist.public === false;
+  control.disabled = true;
   try {
-    await client.setPlaylistPublic(activeId, wanted);
-    toast(wanted ? "Anyone who can see your page can see it now." : "Only you can see it now.");
+    await client.setPlaylistPublic(activeId, isPublic);
+    toast(isPublic ? "Anyone who can see your page can see it now." : "Only you can see it now.");
     await loadPlaylist();
   } catch (error) {
+    control.value = playlist.public === false ? "private" : "public";
     reportError(error);
+  } finally {
+    control.disabled = false;
   }
 }
 
