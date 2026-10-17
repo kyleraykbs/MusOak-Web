@@ -925,11 +925,22 @@ img.art[data-loaded="true"] { opacity: 1; }
   .history-toolbar { align-items: stretch; flex-direction: column; }
   .history-toolbar .tabs { overflow-x: auto; }
 }
+.grid-2 .scroll-list {
+  height: min(340px, 38vw);
+  min-height: 220px;
+  max-height: none;
+}
+@media (max-width: 700px), (max-aspect-ratio: 2/3) {
+  .grid-2 .scroll-list { height: min(340px, 78vw); }
+}
 .favourites-row-actions { display: inline-flex; align-items: center; gap: 10px; flex: none; }
 .favourites-rating-edit { color: var(--yellow); padding: 4px; }
 .favourites-rating-edit:hover { color: var(--yellow); }
  .source-popover-pending { visibility: hidden; }
 
+.track-rating-edit { color: var(--fg4); padding: 4px; }
+.track-rating-edit:hover { color: var(--yellow); }
+.track-rating-value { white-space: nowrap; }
 /* ---------- popovers (menus, source picker) ---------- */
 
 .popover {

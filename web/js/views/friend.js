@@ -215,17 +215,20 @@ function listsGrid(client, detail, uploads = []) {
     section(
       "Uploaded songs",
       own.map((track) => trackRow(client, track)),
-      EMPTY_UPLOADS
+      EMPTY_UPLOADS,
+      { scroll: true }
     ),
     section(
       "Public playlists",
       playlists.map((playlist) => playlistRow(client, playlist)),
-      EMPTY_PLAYLIST
+      EMPTY_PLAYLIST,
+      { scroll: true }
     ),
     section(
-      "Favourite songs",
+      "Rated Songs",
       favorites.map((track) => trackRow(client, track, { rating: track.rating })),
-      EMPTY_FAVOURITES
+      EMPTY_FAVOURITES,
+      { scroll: true }
     ),
     // A listening history has no natural end, so it gets a box of its own
     // rather than making the page as long as the person's week.

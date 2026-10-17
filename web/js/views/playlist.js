@@ -216,7 +216,7 @@ export function trackMenu(track, extra = [], { playlistId = "" } = {}) {
   items.push({ label: "Share…", onClick: () => shareTrack(track) });
   const rating = favoriteRating(track.id);
   items.push({
-    label: rating == null ? "Rate favourite…" : `Rating ${Number(rating).toFixed(1)}/5.0…`,
+    label: rating == null ? "Rate…" : `Rating ${Number(rating).toFixed(1)}/5.0…`,
     onClick: () => openFavoriteDialog(track.id),
   });
   // Only when the track names an artist: an artist's page needs an id, and a
@@ -276,9 +276,20 @@ function fileName(value) {
   return `${cleaned || "song"}.opus`;
 }
 
-/** One track in a list: number, artwork, title, artist, time, a ⋮ menu and an
- *  optional trailing control (the favourites list's rating). */
+/** One track in a list: number, artwork, title, artist, rating, time and actions. */
 export function trackRow({ track, position, client, onActivate, menu = [], trailing = null }) {
+  const rating = favoriteRating(track.id);
+  const rate = iconButton("star", {
+    class: "btn flat small track-rating-edit",
+    title: rating == null ? "Rate" : `Rating ${Number(rating).toFixed(1)}/5.0`,
+    "aria-label": "Edit rating",
+    onclick: (event) => {
+      event.stopPropagation();
+      openFavoriteDialog(track.id);
+    },
+  });
+  rate.setAttribute("aria-label", "Edit rating");
+  rate.style.color = rating == null ? "var(--fg4)" : "var(--yellow)";
   return h(
     "div",
     {
@@ -290,21 +301,12 @@ export function trackRow({ track, position, client, onActivate, menu = [], trail
     },
     h("span", { class: "time playlist-track-number", text: String(position + 1) }),
     artworkTile(client, track.artworkUrl),
-    h(
-      "div",
-      { class: "grow" },
-      h("div", { class: "title", text: track.title || "" }),
-      artistLineNode(artistLine(track), (track.artistIds || [])[0])
-    ),
+    h("div", { class: "grow" }, h("div", { class: "title", text: track.title || "" }), artistLineNode(artistLine(track), (track.artistIds || [])[0])),
+    rating != null ? h("span", { class: "time track-rating-value", text: `${Number(rating).toFixed(1)}/5.0` }) : null,
     h("span", { class: "time", text: track.durationMs ? fmtDuration(track.durationMs) : "" }),
     queueButton(track, { class: "btn flat round" }),
-    iconButton("dots", {
-      title: "More actions",
-      onclick: (event) => popover(event.currentTarget, menu),
-    }),
-    // A row's own extra, after the controls it shares with every other row:
-    // the favourites list puts its rating here, so the grow before it is what
-    // pushes the time, the buttons and the rating into one right-hand column.
+    rate,
+    iconButton("dots", { title: "More actions", onclick: (event) => popover(event.currentTarget, menu) }),
     trailing
   );
 }

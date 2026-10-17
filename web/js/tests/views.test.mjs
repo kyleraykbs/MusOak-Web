@@ -282,7 +282,7 @@ test("a song's row carries the plus beside its menu, wherever the row is drawn",
     menu: [],
   });
   const labels = row.children.map((child) => child.attributes?.["aria-label"]).filter(Boolean);
-  assert.deepEqual(labels, ["Queue", "More actions"], "the plus sits left of the row's menu");
+  assert.deepEqual(labels, ["Queue", "Edit rating", "More actions"], "the rating editor sits between queue and menu");
 });
 
 test("in a room the plus queues for the room, not for this device", async () => {
