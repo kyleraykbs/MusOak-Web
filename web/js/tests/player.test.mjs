@@ -1121,6 +1121,9 @@ test("a frozen media element is replaced before retrying", () => {
     player._wireAudio = saved.wireAudio;
   }
 });
+test("a stale reload player can replace its Firefox-style frozen element", () => {
+  assert.equal(typeof player._resetStalledAudio, "function");
+});
 //
 // A kept playlist hands the player tracks that carry the URL their own bytes
 // are at. With the server gone there is nothing to resolve, nothing to poll and
