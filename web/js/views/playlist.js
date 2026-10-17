@@ -98,12 +98,11 @@ export function artworkTile(client, path, size = "") {
  * `playlistId` is the playlist the tracks came from when the buttons belong to
  * a playlist page, so playing from here records what to reopen next time.
  */
-export function playButtons(tracks, { withShuffleQueue = true, playlistId = "" } = {}) {
+export function playButtons(tracks, { withShuffleQueue = true, playlistId = "", offline = false } = {}) {
   const list = Array.from(tracks || []);
   const empty = !list.length;
   const buttons = [];
-
-  if (inRoom()) {
+  if (inRoom() && !offline) {
     buttons.push(
       h("button", {
         class: "btn suggested",
@@ -399,24 +398,18 @@ async function loadPlaylist() {
 
   if (!target.firstChild || !target.querySelector(".playlist-refresh-loading")) mount(target, h("div", { class: "loading-panel playlist-refresh-loading" }, skeletonRows(5), h("span", { class: "loading-caption", text: "Loading playlist…" })));
 
-  // The same rule the play buttons follow: a page that already knows it has no
-  // server goes straight to the copy kept here, rather than spending the wait
-  // on a request whose only possible answer is "no". A page that still believes
-  // the server is there asks it first, as it always did.
-  if (!player.online() && (await drawKept(target))) return;
-
+  // A kept playlist is immediately playable from this browser. Draw that copy
+  // before asking a server that may be stopped or slow, so the Play control is
+  // not held behind the request timeout on a fresh reload.
+  const keptShown = await drawKept(target);
+  if (keptShown && !player.online()) return;
   let detail;
   try {
     detail = await client.playlist(activeId);
   } catch (error) {
     // The server cannot say what this playlist holds, but this browser can: a
-    // playlist kept here plays with no server at all, so its page is drawn from
-    // the index and the cache instead of being left as a failure. Without this
-    // the one page a kept playlist has was the one page that would not open. A
-    // server that *answered* is not one that cannot answer - a refusal is the
-    // server's own word on it, and that word is what the page shows.
-    if (!serverAnswered(error) && (await drawKept(target))) return;
-    reportError(error);
+    // kept playlist is still playable from its local copy.
+    if (await drawKept(target)) return;
     mount(target, emptyState("note", "Could not load this playlist", error?.message || ""));
     return;
   }
@@ -511,7 +504,7 @@ async function drawKept(target) {
   const list = h("div", { class: "list" });
   mount(
     target,
-    header(currentClient(), { id: activeId, name: kept.name, mine: false }, tracks),
+    header(currentClient(), { id: activeId, name: kept.name, mine: false }, tracks, { offline: true }),
     h("div", {
       class: "subtitle",
       text: "Kept on this machine \u2014 this page plays without the server.",
@@ -543,7 +536,7 @@ function keptTrackRow(tracks, track, position) {
   });
 }
 
-function header(client, playlist, tracks) {
+function header(client, playlist, tracks, { offline = false } = {}) {
   // A server that predates visibilities says nothing about who owns a
   // playlist, and then this is the owner looking at their own.
   const mine = playlist.mine !== false;
@@ -575,12 +568,12 @@ function header(client, playlist, tracks) {
         h("div", { class: "subtitle", text: trackCountLine(tracks) })
       )
     ),
-    management,
+    mine ? management : null,
     mine ? visibilityControl(playlist) : null,
     h(
       "div",
       { class: "playlist-detail-actions" },
-      ...playButtons(tracks, { playlistId: activeId })
+      ...playButtons(tracks, { playlistId: activeId, offline })
     )
   );
 }
