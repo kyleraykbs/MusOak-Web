@@ -158,30 +158,22 @@ function paint() {
 
 function header(room) {
   const policy = room.controls === "everyone" ? "everyone can control playback" : "the host controls playback";
-  const pieces = [
-    h(
-      "div",
-      { class: "grow" },
-      h("div", { class: "room-title", text: room.name || "Room" }),
-      h("div", { class: "subtitle", text: `${room.memberCount} listening · ${policy}` })
+  const actions = h("div", { class: "room-card-actions" },
+    h("button", { class: "btn", text: "Invite", title: `Invite friends to “${room.name}”`, onclick: () => inviteFriendsToRoom(room) }),
+    h("button", { class: "btn destructive", text: "Leave", title: `Leave “${room.name}”`, onclick: () => leave() })
+  );
+  return h("div", { class: "card room-header" },
+    h("div", { class: "room-card-heading" },
+      h("button", { class: "btn flat small", title: "Back to the rooms list", onclick: () => {
+        state.roomsShowing = "list";
+        saveLocal();
+        navigate("rooms");
+      } }, icon("prev", 16), "Rooms"),
+      actions
     ),
-    h("button", {
-      class: "btn",
-      text: "Invite",
-      title: `Invite friends to “${room.name}”`,
-      onclick: () => inviteFriendsToRoom(room),
-    }),
-  ];
-  pieces.push(h("button", { class: "btn destructive", text: "Leave", title: `Leave “${room.name}”`, onclick: () => leave() }));
-  return h("div", { class: "card room-header" }, h("button", {
-    class: "btn flat small",
-    title: "Back to the rooms list",
-    onclick: () => {
-      state.roomsShowing = "list";
-      saveLocal();
-      navigate("rooms");
-    },
-  }, icon("prev", 16), "Rooms"), ...pieces);
+    h("div", { class: "room-title", text: room.name || "Room" }),
+    h("div", { class: "subtitle", text: `${room.memberCount} listening · ${policy}` })
+  );
 }
 
 /** The room's control policy is the host's to set: say so, and say the way out.
@@ -193,7 +185,15 @@ export function hostOnly(action) {
 
 function nowPlaying(room) {
   const current = room.current;
-  const section = sectionBlock("Playing now");
+  const drives = mayDrive(room, room.me);
+  const actions = h("div", { class: "room-card-actions" });
+  if (current?.started) {
+    actions.append(
+      h("button", { class: "btn", title: current.paused ? "Resume" : "Pause", "aria-label": current.paused ? "Resume" : "Pause", "aria-disabled": drives ? null : "true", onclick: () => (drives ? act(() => (current.paused ? resume() : pause())) : hostOnly("pause")) }, icon(current.paused ? "play" : "pause")),
+      h("button", { class: "btn", title: "Skip to the next track", "aria-label": "Skip to the next track", "aria-disabled": drives ? null : "true", onclick: () => (drives ? act(() => skip()) : hostOnly("skip")) }, icon("next"))
+    );
+  }
+  section.appendChild(h("div", { class: "room-card-heading" }, h("div", { class: "section-title", text: "Playing now" }), actions));
   if (!current || !current.item) {
     section.appendChild(
       h("div", {
@@ -235,42 +235,8 @@ function nowPlaying(room) {
   const text = h("div", { class: "grow" }, title, credit, line, offlineNow);
   updateClock();
 
-  const drives = mayDrive(room, room.me);
-  // A room on host controls leaves these to the host. They stay clickable and
-  // say why, rather than going dead: a disabled button cannot explain itself.
-  const playPause = h(
-    "button",
-    {
-      class: "btn",
-      title: current.paused ? "Resume" : "Pause",
-      // The button is an icon and nothing else, so its name has to be spelled
-      // out for a reader: a tooltip is a pointer's, not theirs.
-      "aria-label": current.paused ? "Resume" : "Pause",
-      "aria-disabled": drives ? null : "true",
-      onclick: () => (drives ? act(() => (current.paused ? resume() : pause())) : hostOnly("pause")),
-    },
-    icon(current.paused ? "play" : "pause")
-  );
-  const next = h(
-    "button",
-    {
-      class: "btn",
-      title: "Skip to the next track",
-      "aria-label": "Skip to the next track",
-      "aria-disabled": drives ? null : "true",
-      onclick: () => (drives ? act(() => skip()) : hostOnly("skip")),
-    },
-    icon("next")
-  );
 
-  section.appendChild(
-    h(
-      "div",
-      { class: "room-now-playing-row" },
-      text,
-      h("div", { class: "room-transport" }, playPause, next)
-    )
-  );
+  section.appendChild(h("div", { class: "room-now-playing-row" }, text));
   section.appendChild(votes(room, current));
   return section;
 }

@@ -852,9 +852,9 @@ img.art[data-loaded="true"] { opacity: 1; }
 .friends-section { display: flex; flex-direction: column; gap: 8px; }
 .friends-search-toolbar { display: flex; gap: 8px; align-items: center; }
 .friends-search-toolbar .input { min-width: 0; flex: 1; }
-.friends-tab-body { display: flex; flex-direction: column; gap: 12px; }
-.room-header { padding: 14px 16px; }
-.room-title { font-size: 20px; color: var(--fg0); }
+.room-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.room-card-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.room-card-heading .section-title { margin: 0; }
 .room-now-playing-row { display: flex; align-items: center; gap: 8px; border: 0; padding: 6px 0; }
 .room-queue-title { font-size: 15px; font-weight: 600; }
 .search-playlist-menu { display: flex; flex-direction: column; gap: 4px; max-height: min(50vh, 360px); overflow-y: auto; }
