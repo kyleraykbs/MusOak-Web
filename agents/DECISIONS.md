@@ -115,9 +115,11 @@
 - Reversible: yes - the window filter in `_prefetch` and `_awaitCopy`.
 
 ## 2026-10-16 The queue's mark fills only on the transfer that is happening
-- Decision: `heldBadge` draws the yellow ink only for a song whose copy is being
-  fetched this moment (`player.downloading`, the in-flight map), filled by its own
-  count and sweeping when nothing can be counted. A copy that is queued behind
+- Decision: `heldBadge` draws the yellow ink on one row: the song nearest the
+  playhead whose copy is being fetched (`player.downloading` - in flight, and the
+  first of the window's in-flight songs), filled by its own count and sweeping
+  when nothing can be counted. The window behind it is chased two at a time, so a
+  second transfer runs quietly and its row stays grey. A copy that is queued behind
   another - pending, but not in flight - is a plain grey arrow. A finished copy is
   the green diamond. `_startOffline` announces the moment a fetch starts, so a row
   that becomes the active one does not wait for its first status report to say so.

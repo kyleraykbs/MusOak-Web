@@ -471,8 +471,9 @@ test("the queue's next songs are kept in memory, and the window is the limit", a
     // Two fetches are under way and the third is waiting its turn: what the
     // queue's marks are drawn from - the rows being fetched now, and the ones
     // that are only queued.
-    assert.equal(player.downloading("a"), true, "the first song's copy is being fetched");
-    assert.equal(player.downloading("c"), false, "a song waiting its turn is not");
+    assert.equal(player.downloading("a"), true, "the first song's copy is the transfer the page leads with");
+    assert.equal(player.downloading("b"), false, "the copy chased beside it fills nothing: one arrow at a time");
+    assert.equal(player.downloading("c"), false, "a song waiting its turn is not downloading");
     await settle();
 
     assert.deepEqual(fetched, ["/media/v-a", "/media/v-b", "/media/v-c"]);

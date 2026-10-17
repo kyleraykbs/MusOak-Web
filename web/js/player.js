@@ -1869,13 +1869,18 @@ class Player {
     return this._offline.get(String(trackId || ""))?.state || "none";
   }
 
-  /** Whether that song's copy is being fetched this moment.
+  /** Whether that song's copy is the transfer the page is leading with.
    *
-   *  The rows of the queue that are waiting their turn are pending too, and the
-   *  difference is the whole of what their mark says: the transfer happening now
-   *  is the one that fills, and the ones behind it stay quiet. */
+   *  One mark at a time, which is Kyle's rule: the song nearest the playhead that
+   *  is being fetched is the one whose arrow fills. The window behind it is chased
+   *  two at a time, so a second transfer runs quietly beside it - it is a copy for
+   *  later, and an arrow filling for it says nothing about the song anybody is
+   *  waiting on. A row that is pending but not this one is grey. */
   downloading(trackId) {
-    return this._offlineInFlight.has(String(trackId || ""));
+    const id = String(trackId || "");
+    if (!this._offlineInFlight.has(id)) return false;
+    const leading = (this._offlineWanted || []).find((each) => this._offlineInFlight.has(each));
+    return !leading || leading === id;
   }
 
   /**
