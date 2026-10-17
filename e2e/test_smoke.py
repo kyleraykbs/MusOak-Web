@@ -42,6 +42,20 @@ def test_servers_come_up_and_the_shell_renders(ui, backend):
     assert backend.get("/api/v1/providers")[0] == 200
 
 
+def test_a_guest_can_search_without_signing_in(ui):
+    """Search is public discovery; an account is not required to ask a question."""
+    ui.goto("/")
+    ui.click_tab("Search")
+    ui.type("input[type='search']", "guest discovery")
+    ui.click("button[title='Search again']")
+    ui.wait(
+        lambda: bool(ui.js("return document.querySelector('.search-results')?.textContent;")),
+        "guest search never rendered its answer",
+    )
+    assert not ui.has("div.dialog"), "guest search opened a sign-in dialog"
+    assert ui.token() == "", "the guest search silently signed the browser in"
+    ui.assert_no_errors("guest search")
+
 def test_the_ui_can_reach_the_backend(ui, backend):
     """The web UI is a router: what it says about its backend must be true."""
     ui.goto("/")
