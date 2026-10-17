@@ -302,6 +302,11 @@ test("playlist list rows can build their reorder handle", async () => {
   const { dragHandle } = await import("../views/queue.js");
   assert.equal(dragHandle("Drag playlist to reorder").className.includes("drag-handle"), true);
 });
+test("playlist list drag wiring has both helpers available", async () => {
+  const { dragHandle, listDrag } = await import("../views/queue.js");
+  assert.equal(typeof dragHandle, "function");
+  assert.equal(typeof listDrag, "function");
+});
 test("in a room the plus queues for the room, not for this device", async () => {
   const { queueButton } = await import("../views/queue.js");
   const { player } = await import("../player.js");
