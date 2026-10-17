@@ -50,14 +50,14 @@
   --radius: 8px;
   --radius-small: 5px;
   /* The bars: a rounded rectangle, not a pill - the track's corner is well
-     short of half its height - and a vertical bar for the position, which grows
-     a little under the pointer. */
-  --range-track-height: 8px;
+     short of half its height - and a tall rounded rectangle for the position,
+     which grows only taller under the pointer. */
+  --range-track-height: 12px;
   --range-track-radius: 3px;
-  --range-thumb-width: 5px;
-  --range-thumb-height: 18px;
-  --range-thumb-width-hover: 7px;
-  --range-thumb-height-hover: 22px;
+  --range-thumb-width: 7px;
+  --range-thumb-height: 24px;
+  --range-thumb-height-hover: 30px;
+  --range-thumb-radius: 3px;
   --sidebar-width: 232px;
   --player-height: 92px;
 
@@ -1137,8 +1137,8 @@ input[type="range"],
      two sliders side by side cannot overlap however narrow they get. */
   padding: 0 7px;
 }
-/* The position is a vertical bar, not a disc: narrow at rest, and it grows
-   outwards from its own centre under the pointer or the keyboard, so the bar
+/* The position is a tall rounded rectangle, not a disc: it grows taller from
+   its own centre under the pointer or the keyboard, never wider, so the bar
    says where the hand is without leaving the line. */
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
@@ -1148,31 +1148,29 @@ input[type="range"]::-webkit-slider-thumb {
   /* Centred on the track, not on the element: the element is as tall as the
      panel it fills, and the track is painted down the middle of that. */
   margin-top: calc((var(--range-track-height) - var(--range-thumb-height)) * 0.5);
-  border-radius: 999px;
+  border-radius: var(--range-thumb-radius);
   background: var(--fg1);
   cursor: pointer;
-  transition: width 120ms ease, height 120ms ease, margin-top 120ms ease;
+  transition: height 120ms ease, margin-top 120ms ease;
 }
 input[type="range"]::-moz-range-thumb {
   width: var(--range-thumb-width);
   height: var(--range-thumb-height);
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--range-thumb-radius);
   background: var(--fg1);
   cursor: pointer;
-  transition: width 120ms ease, height 120ms ease;
+  transition: height 120ms ease;
 }
 input[type="range"]:hover::-webkit-slider-thumb,
 input[type="range"]:focus-visible::-webkit-slider-thumb,
 input[type="range"]:active::-webkit-slider-thumb {
-  width: var(--range-thumb-width-hover);
   height: var(--range-thumb-height-hover);
   margin-top: calc((var(--range-track-height) - var(--range-thumb-height-hover)) * 0.5);
 }
 input[type="range"]:hover::-moz-range-thumb,
 input[type="range"]:focus-visible::-moz-range-thumb,
 input[type="range"]:active::-moz-range-thumb {
-  width: var(--range-thumb-width-hover);
   height: var(--range-thumb-height-hover);
 }
 @media (prefers-reduced-motion: reduce) {

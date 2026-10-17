@@ -261,15 +261,20 @@
 - Why: persistent view nodes made stale responses and page transitions visually inconsistent, while desktop-centered dialogs and glyph symbols were awkward on phones and dependent on font rendering.
 - Reversible: yes.
 
-## 2026-10-16 Sliders are rounded rectangles with a vertical position bar
-- Decision: every range input shares one geometry: an 8px track with a 3px
-  corner (a rounded rectangle, not the pill its old 5px/3px made), and a 5x18
-  position thumb - a vertical capsule rather than a 14px disc. The thumb grows
-  to 7x22 under the pointer, the keyboard's focus ring, and while held, with a
-  120ms transition that stands down under reduced motion. The dimensions are
-  theme variables so the seek, volume, and the rating slider cannot drift.
+## 2026-10-16 Sliders are tall rounded rectangles with a tall position bar
+- Decision: every range input shares one geometry: a 12px track with a 3px
+  corner (a rounded rectangle, not the pill its old 5px/3px made), and a 7x24
+  position thumb - a tall rounded rectangle rather than a 14px disc. The thumb
+  grows taller (24 to 30) under the pointer, the keyboard's focus ring, and
+  while held, never wider, with a 120ms transition that stands down under
+  reduced motion. The dimensions are theme variables so the seek, volume, and
+  the rating slider cannot drift.
 - Why: Kyle, on the seek and volume: "a bit taller, we are going for rounded
   rect vibes not bar with round edges ... for the white position bar it will be
   a vertical bar ... hovering the bar should make the position bar expand/pop
-  out a lil bit / edges grow. All bars should look like this."
+  out a lil bit". Then, on the first pass: "No width growth, I just want a
+  taller bar with a tall rounded rectangle for the position ... that when
+  hovering over the bar it should grow a lil bit (the position bar)", and after
+  the second: "just make the playbar a lil taller keep the position bar at that
+  height".
 - Reversible: yes.
