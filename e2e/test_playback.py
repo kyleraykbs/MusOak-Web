@@ -152,6 +152,29 @@ def test_a_restored_song_seeks_inside_the_downloaded_file(ui, backend, signed_in
     ui.assert_no_errors("restoring a downloaded song")
 
 
+def test_a_restored_playback_clock_does_not_stick_at_zero(ui, backend, signed_in):
+    """A restored copy that reports playing must advance its media clock."""
+    title = "E2E Stream Eight"
+    _, variant = search_track(backend, signed_in.token, title)
+    sign_in_ui(ui, signed_in)
+    play_search(ui, title)
+    wait_for_file(backend, signed_in.token, variant["id"])
+    wait_file_sounding(ui, title)
+
+    ui.js('document.querySelector(".timeline input[type=range]").value = 400;')
+    ui.js('document.querySelector(".timeline input[type=range]").dispatchEvent(new Event("input", {bubbles:true}));')
+    wait_for(lambda: position_ms(ui) >= 10_000, "the first playback clock never moved", timeout=15)
+    ui.reload()
+    ui.wait(lambda: ui.now_playing() == title or None, f"{title!r} was not restored", timeout=30)
+    ui.click(".player-bar button.play")
+    state = wait_sounding(ui, title, SONG_SECONDS, timeout=45)
+    before = state["currentTime"]
+    time.sleep(1.5)
+    after = (ui.player() or {}).get("currentTime", 0)
+    assert after > before + 0.4, f"restored player clock stuck: {before:.2f}s -> {after:.2f}s"
+    ui.assert_no_errors("restored playback clock")
+
+
 
 
 def test_a_guest_joining_a_downloaded_song_starts_at_the_room_position(host, guest, backend):
