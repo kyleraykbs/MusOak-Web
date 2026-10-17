@@ -150,6 +150,28 @@ function artworkFallback(className, alt) {
   return h("span", { class: `${className} art-fallback`, role: alt ? "img" : null, "aria-label": alt || "Artwork unavailable" }, icon("note", 18));
 }
 
+/** Append children in order, waiting for each row's artwork before advancing. */
+export async function appendProgressively(parent, rows, { isCurrent = () => true, waitFor = waitForImages } = {}) {
+  for (const row of rows || []) {
+    if (!isCurrent()) return false;
+    parent.appendChild(row);
+    await waitFor(row);
+  }
+  return true;
+}
+
+function waitForImages(root) {
+  const images = [...(root.querySelectorAll?.("img.art") || [])]
+    .filter((image) => image.dataset.loaded !== "true");
+  if (!images.length) return Promise.resolve();
+  return Promise.all(images.map((image) => new Promise((resolve) => {
+    const done = () => { image.removeEventListener("load", done); image.removeEventListener("error", done); resolve(); };
+    image.addEventListener("load", done, { once: true });
+    image.addEventListener("error", done, { once: true });
+    setTimeout(done, 6000);
+  })));
+}
+
 /**
  * A function that runs `fn` at most once per frame.
  *

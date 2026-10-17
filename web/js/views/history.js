@@ -6,7 +6,7 @@
 // length or a count where a playlist row carries a number and a duration.
 
 import { currentClient, on, registerView, requireLogin } from "../app.js";
-import { fmtDuration, h, mount, loadingState } from "../dom.js";
+import { appendProgressively, fmtDuration, h, mount, loadingState } from "../dom.js";
 import { isSignedIn } from "../state.js";
 import { artistLine, playOne, playTracks, queueButton, reportError } from "./queue.js";
 import { artworkTile, emptyState } from "./playlist.js";
@@ -37,6 +37,7 @@ export function playCountLabel(plays) {
   const count = Math.max(0, Number(plays) || 0);
   return `${count} play${count === 1 ? "" : "s"}`;
 }
+
 
 // --- the view ---------------------------------------------------------------
 
@@ -104,16 +105,25 @@ function paint() {
     return;
   }
 
+  const search = h("input", {
+    class: "input history-search", type: "search", placeholder: "Search history",
+    value: historyQuery,
+    oninput: (event) => { historyQuery = event.currentTarget.value; paint(); },
+  });
+  const recentButton = h("button", { class: `tab ${historyMode === "recent" ? "active" : ""}`, text: "Recently played", onclick: () => { historyMode = "recent"; paint(); } });
+  const topButton = h("button", { class: `tab ${historyMode === "top" ? "active" : ""}`, text: "Most played", onclick: () => { historyMode = "top"; paint(); } });
+  const entries = historyMode === "recent" ? recent : mostPlayed;
+  const shaped = entries.map(historyMode === "recent"
+    ? (play) => ({ track: play.track, detail: playedLengthLabel(play.playedMs) })
+    : (entry) => ({ track: entry.track, detail: playCountLabel(entry.plays) }));
+  const filtered = shaped.filter((item) => {
+    const text = `${item.track?.title || ""} ${artistLine(item.track || {})}`.toLowerCase();
+    return text.includes(historyQuery.trim().toLowerCase());
+  });
   mount(
     sheet,
-    section("Recently played", recent, (play) => ({
-      track: play.track,
-      detail: playedLengthLabel(play.playedMs),
-    })),
-    section("Most played", mostPlayed, (entry) => ({
-      track: entry.track,
-      detail: playCountLabel(entry.plays),
-    }))
+    h("div", { class: "history-toolbar" }, search, h("div", { class: "tabs" }, recentButton, topButton)),
+    section(historyMode === "recent" ? "Recently played" : "Most played", filtered)
   );
 }
 

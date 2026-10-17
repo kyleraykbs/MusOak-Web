@@ -5,6 +5,7 @@
 // file down, in queue.js.
 
 import {
+  appendProgressively,
   confirm,
   dialog,
   fileToBase64,
@@ -443,37 +444,17 @@ async function loadPlaylist() {
  * anybody. The header's own actions are the ones the server would have to
  * perform, so a kept copy shows none of them.
  */
-function waitForArtwork(row) {
-  const image = row.querySelector?.("img.art");
-  if (!image || image.dataset.loaded === "true") return Promise.resolve();
-  return new Promise((resolve) => {
-    const done = () => {
-      clearTimeout(timer);
-      image.removeEventListener("load", done);
-      image.removeEventListener("error", done);
-      resolve();
-    };
-    const timer = setTimeout(done, 6000);
-    image.addEventListener("load", done, { once: true });
-    image.addEventListener("error", done, { once: true });
-  });
-}
-
 async function appendPlaylistRows(list, tracks, client, mine) {
-  for (const [position, track] of tracks.entries()) {
-    if (mine !== loadGeneration || !sheet?.isConnected) return;
-    const row = trackRow({
-      track,
-      position,
-      client,
-      onActivate: () => playOne(tracks, position, { playlistId: activeId }),
-      menu: trackMenu(track, [{ label: "Remove from playlist", onClick: () => removeEntry(position) }], {
-        playlistId: activeId,
-      }),
-    });
-    list.appendChild(row);
-    await waitForArtwork(row);
-  }
+  const rows = tracks.map((track, position) => trackRow({
+    track,
+    position,
+    client,
+    onActivate: () => playOne(tracks, position, { playlistId: activeId }),
+    menu: trackMenu(track, [{ label: "Remove from playlist", onClick: () => removeEntry(position) }], {
+      playlistId: activeId,
+    }),
+  }));
+  await appendProgressively(list, rows, { isCurrent: () => mine === loadGeneration && Boolean(sheet?.isConnected) });
 }
 
 async function drawKept(target) {

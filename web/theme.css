@@ -918,6 +918,13 @@ img.art[data-loaded="true"] { opacity: 1; }
 .favourites-filter .rating-stage { width: 100%; }
 .favourites-filter-label { margin-top: 6px; color: var(--fg4); text-align: center; font-size: 12.5px; }
 
+.history-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.history-search { flex: 1 1 280px; min-width: 0; }
+.history-toolbar .tabs { flex: none; }
+@media (max-width: 700px), (max-aspect-ratio: 2/3) {
+  .history-toolbar { align-items: stretch; flex-direction: column; }
+  .history-toolbar .tabs { overflow-x: auto; }
+}
  .source-popover-pending { visibility: hidden; }
 
 /* ---------- popovers (menus, source picker) ---------- */
