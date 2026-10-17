@@ -1792,6 +1792,7 @@ class Player {
     this._startDownload(attempt.variantId, null, true);
     if (entry.state === "ready") {
       this._loading = false;
+      this._pumpOffline();
       this._handCopyToElement(entry, attempt);
       return;
     }
