@@ -284,7 +284,7 @@ test("a song's row carries the plus beside its menu, wherever the row is drawn",
   const labels = row.children.map((child) => child.attributes?.["aria-label"]).filter(Boolean);
   assert.deepEqual(labels, ["Queue", "Edit rating", "More actions"], "the rating editor sits between queue and menu");
 });
-test("playlist track rows expose a drag key when a handle is supplied", async () => {
+test("playlist track rows expose their reorder handle", async () => {
   const { trackRow } = await import("../views/playlist.js");
   const { dragHandle } = await import("../views/queue.js");
   const row = trackRow({
@@ -295,8 +295,7 @@ test("playlist track rows expose a drag key when a handle is supplied", async ()
     menu: [],
     drag: dragHandle("Drag track to reorder"),
   });
-  row.dataset.key = "t1";
-  assert.equal(row.dataset.key, "t1");
+  assert.ok(row.querySelector?.(".drag-handle"), "the row contains its drag handle");
 });
 
 test("in a room the plus queues for the room, not for this device", async () => {
