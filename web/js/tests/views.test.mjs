@@ -295,9 +295,13 @@ test("playlist track rows expose their reorder handle", async () => {
     menu: [],
     drag: dragHandle("Drag track to reorder"),
   });
-  assert.ok(row.querySelector?.(".drag-handle"), "the row contains its drag handle");
+  assert.ok(row.children.some((child) => child.className?.includes?.("drag-handle")), "the row contains its drag handle");
 });
 
+test("playlist list rows can build their reorder handle", async () => {
+  const { dragHandle } = await import("../views/queue.js");
+  assert.equal(dragHandle("Drag playlist to reorder").className.includes("drag-handle"), true);
+});
 test("in a room the plus queues for the room, not for this device", async () => {
   const { queueButton } = await import("../views/queue.js");
   const { player } = await import("../player.js");

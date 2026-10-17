@@ -13,6 +13,7 @@ import {
 import { isSignedIn } from "../state.js";
 import * as offline from "../offline.js";
 import { player } from "../player.js";
+import { dragHandle } from "./queue.js";
 import {
   AUDIO_ACCEPT, audioContentType, guessMetadata, isAudioFile, pickFolder, pickFiles,
   uploadSizeError,

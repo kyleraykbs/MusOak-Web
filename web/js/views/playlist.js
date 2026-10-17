@@ -26,7 +26,7 @@ import { isSignedIn, state } from "../state.js";
 import { currentRoom } from "../rooms-state.js";
 import * as offline from "../offline.js";
 import { player } from "../player.js";
-import { artistLine, artistLineNode, goToArtistItem, listDrag, dragHandle, playOne, playTracks, providerErrorLines, queueButton, queueNextTracks, queueLastTracks, reportError, shuffleItems } from "./queue.js";
+import { artistLine, artistLineNode, dragHandle, goToArtistItem, listDrag, playOne, playTracks, providerErrorLines, queueButton, queueNextTracks, queueLastTracks, reportError, shuffleItems } from "./queue.js";
 import { shareTrack } from "./share.js";
 
 registerView({
