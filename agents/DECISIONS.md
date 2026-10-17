@@ -277,4 +277,9 @@
   hovering over the bar it should grow a lil bit (the position bar)", and after
   the second: "just make the playbar a lil taller keep the position bar at that
   height".
+- Follow-up: in Firefox the played part (`::-moz-range-progress`) is rounded
+  only at its left end. Its right end meets the position bar, and rounding that
+  end too made a short fill near the start of the track collapse into a pill,
+  so the corner looked like it changed with the position. The gradient browsers
+  already paint a square end there.
 - Reversible: yes.

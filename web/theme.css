@@ -950,7 +950,7 @@ img.art[data-loaded="true"] { opacity: 1; }
    --fill, which player.js keeps up to date. The thumb's own shape and hover
    growth live with the sliders below. */
 .player input[type="range"].volume::-moz-range-track { background: var(--bg3); height: var(--range-track-height); border-radius: var(--range-track-radius); }
-.player input[type="range"].volume::-moz-range-progress { background: var(--green); height: var(--range-track-height); border-radius: var(--range-track-radius); }
+.player input[type="range"].volume::-moz-range-progress { background: var(--green); height: var(--range-track-height); border-radius: var(--range-track-radius) 0 0 var(--range-track-radius); }
 .player input[type="range"].volume::-webkit-slider-runnable-track {
   background: linear-gradient(
     to right,
@@ -1069,7 +1069,12 @@ img.art[data-loaded="true"] { opacity: 1; }
 .player-bar[data-state="playing"] { --play-color: var(--orange); }
 .player[data-state="paused"],
 .player-bar[data-state="paused"] { --play-color: var(--green); }
-.player .timeline input[type="range"]::-moz-range-progress { background: var(--play-color); height: var(--range-track-height); border-radius: var(--range-track-radius); }
+/* The fill's left end takes the track's corner; its right end is square,
+   because it meets the position bar. Rounding that end too made a short fill
+   (the bar near the start of the track) collapse into a pill, so the corner
+   looked like it changed with the position. The gradient browsers already
+   paint a square end here. */
+.player .timeline input[type="range"]::-moz-range-progress { background: var(--play-color); height: var(--range-track-height); border-radius: var(--range-track-radius) 0 0 var(--range-track-radius); }
 .player .timeline input[type="range"]::-moz-range-track { background: var(--bg3); height: var(--range-track-height); border-radius: var(--range-track-radius); }
 /* Where ::-moz-range-progress does not exist, the played part is a gradient on
    the element, driven by --fill the way the volume's is: the Firefox pseudo
