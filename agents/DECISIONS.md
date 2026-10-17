@@ -317,3 +317,29 @@
   yellow downloading animation on the side queue cards ... we should keep it as
   a gray downloading icon." The sweep claimed progress nobody had measured.
 - Reversible: yes.
+
+## 2026-10-16 The rating is five big stars with an invisible slider over them
+- Decision: the rating dialog draws five stars the width of the panel, twice -
+  grey underneath, the same stars in yellow on top clipped to value/5 - so the
+  yellow ends exactly where the position is. The range input is invisible and
+  covers the whole rectangle, so a drag anywhere sets the rating; it stays the
+  keyboard- and reader-visible control, and the stage takes the focus ring when
+  it has focus. The "x/5.0" line stays under the stars.
+- Why: Kyle: "The rating bar should also be yellow ... instead of being a slider
+  it should be 5 stars lined up next to each other, then you can slide on a
+  giant rectangle that encompasses them all and the position you set will then
+  be marked by using yellow on the left side and the slider bg color on the
+  right for the stars backgrounds ... big stars too, large enough to span the
+  dialogue".
+- Reversible: yes.
+
+## 2026-10-16 The importer's tabs move their highlight, and a pasted link moves with the mode
+- Decision: the importer's platform and mode buttons toggle `.active` between
+  themselves on click (85f7aa7 dropped the line while adding the search
+  generation guard, so the highlight stuck on the first tab). A pasted playlist
+  link that switches the dialog to "From a link" is put back in the box after
+  the tab's own restyle clears it, so the paste is not lost in the move.
+- Why: Kyle, on Import a playlist: "clicking spotify or from a link doesn't
+  change the highlight. Pasting a link changes the mode but doesn't move the
+  paste over."
+- Reversible: yes.

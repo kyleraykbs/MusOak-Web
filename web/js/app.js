@@ -1184,22 +1184,60 @@ export function favoriteRating(trackId) {
   return state.favorites instanceof Map ? state.favorites.get(String(trackId)) : null;
 }
 
+/**
+ * The rating control: five big stars side by side, with an invisible range
+ * input over the whole row.
+ *
+ * The stars are drawn twice - grey underneath, the same five again on top -
+ * and the top row is clipped to the fraction the value stands for, so the
+ * yellow always ends where the position is. The input covers every star, so a
+ * drag anywhere on the rectangle sets the rating; it is the only part that
+ * takes the pointer, and the only part a reader hears.
+ */
+function ratingStage(value, onInput) {
+  const row = (className) => h(
+    "div",
+    { class: className, "aria-hidden": "true" },
+    ...Array.from({ length: 5 }, () => h("span", { class: "rating-glyph" }, icon("star")))
+  );
+  const input = h("input", {
+    class: "rating-range", type: "range", min: "0.1", max: "5", step: "0.1",
+    value: String(value), "aria-label": "Your rating",
+  });
+  const stage = h(
+    "div",
+    { class: "rating-stage" },
+    row("rating-stars"),
+    row("rating-stars rating-stars-fill"),
+    input
+  );
+  const paint = () => {
+    const rating = Number(input.value) || 0;
+    stage.style.setProperty("--rating-fill", `${Math.min(100, Math.max(0, (rating / 5) * 100))}%`);
+    onInput?.(rating);
+  };
+  input.addEventListener("input", paint);
+  paint();
+  return { stage, input };
+}
+
 /** Open the rating dialog for a track. Existing favourites can be removed here. */
 export function openFavoriteDialog(trackId) {
   if (!requireLogin()) return;
   const id = String(trackId || "");
   if (!id) return;
   const existing = favoriteRating(id);
-  const slider = h("input", { class: "input", type: "range", min: "0.1", max: "5", step: "0.1", value: String(existing || 5) });
-  const value = h("strong", { text: `${Number(slider.value).toFixed(1)}/5.0` });
-  slider.addEventListener("input", () => { value.textContent = `${Number(slider.value).toFixed(1)}/5.0`; });
+  const value = h("strong");
+  const { stage, input } = ratingStage(existing == null ? 5 : existing, (rating) => {
+    value.textContent = `${rating.toFixed(1)}/5.0`;
+  });
   const status = h("div", { class: "subtitle", text: "" });
   const actions = [{ label: "Cancel" }];
   if (existing != null) actions.push({ label: "Remove rating", class: "destructive", onClick: () => saveFavoriteRating(id, null) });
-  actions.push({ label: existing == null ? "Rate" : "Save", class: "suggested", onClick: () => saveFavoriteRating(id, Number(slider.value), status) });
+  actions.push({ label: existing == null ? "Rate" : "Save", class: "suggested", onClick: () => saveFavoriteRating(id, Number(input.value), status) });
   dialog({
     title: existing == null ? "Rate favourite" : "Change rating",
-    body: h("div", { class: "field" }, h("label", { text: "Your rating" }), slider, value, status),
+    body: h("div", { class: "field" }, h("label", { text: "Your rating" }), stage, value, status),
     actions,
   });
 }

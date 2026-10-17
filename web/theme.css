@@ -527,6 +527,35 @@ img.art[data-loaded="true"] { opacity: 1; }
  .row .subtitle.wrap { white-space: normal; }
  .rating { display: inline-flex; align-items: center; gap: 2px; }
  .rating-star { display: inline-flex; color: var(--orange); opacity: var(--rating-opacity, 1); }
+ /* The rating dialog's own control: five big stars side by side, wide enough to
+    span the panel, the ones left of the position in yellow and the rest in the
+    track's grey - the same left-fills-first the player's bars are. The stars are
+    drawn twice and the top row is clipped to the fraction, so the yellow ends
+    exactly where the value is. The input over them is invisible and covers the
+    whole rectangle, so a drag anywhere sets the position. */
+ .rating-stage { position: relative; --rating-fill: 0%; }
+ .rating-stars { display: flex; gap: 6px; color: var(--bg2); }
+ .rating-stars-fill {
+   position: absolute;
+   inset: 0;
+   color: var(--yellow);
+   clip-path: inset(0 calc(100% - var(--rating-fill)) 0 0);
+   pointer-events: none;
+ }
+ .rating-glyph { display: block; flex: 1 1 0; aspect-ratio: 1 / 1; }
+ .rating-glyph svg { display: block; width: 100%; height: 100%; }
+ .rating-stage input.rating-range {
+   position: absolute;
+   inset: 0;
+   width: 100%;
+   height: 100%;
+   margin: 0;
+   padding: 0;
+   opacity: 0;
+   cursor: pointer;
+   touch-action: none;
+ }
+ .rating-stage:has(input.rating-range:focus-visible) { outline: 2px solid var(--blue); outline-offset: 2px; }
  .art-fallback { display: inline-flex; align-items: center; justify-content: center; background: var(--bg2); color: var(--fg4); }
 
 /* Subtle interaction feedback makes rows feel like controls without turning

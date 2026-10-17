@@ -497,8 +497,14 @@ function importDialog() {
       const value = event.currentTarget.value;
       // A link in the search box is not a search. What the platform does with a
       // URL is read that playlist, which is the other tab - so the dialog moves
-      // to it, and the value stays exactly where it was pasted.
-      if (mode !== "link" && looksLikePlaylistLink(value)) modeRow.children[1]?.click();
+      // to it, and the value stays exactly where it was pasted: the tab's own
+      // restyle clears the box for a mode somebody chose, but this paste is the
+      // thing being switched for, so it is put back after.
+      if (mode !== "link" && looksLikePlaylistLink(value)) {
+        modeRow.children[1]?.click();
+        input.value = value;
+        input.setSelectionRange?.(value.length, value.length);
+      }
     },
   });
   const results = h("div", { class: "playlist-import-results" });
@@ -527,6 +533,7 @@ function importDialog() {
           searchGeneration += 1;
           picked = null;
           mount(results);
+          for (const button of row.children) button.classList.toggle("active", button === event.currentTarget);
           restyle();
         },
       }
