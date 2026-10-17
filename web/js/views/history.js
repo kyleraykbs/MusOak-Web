@@ -44,9 +44,10 @@ export function playCountLabel(plays) {
 let sheet = null; // the piece of the page this view owns
 let recent = [];
 // The songs played most. Named for what it holds rather than `top`: an
-// assignment to a bare `top` lands on the window's own accessor, which has no
-// setter, and the page died on "setting getter-only property top".
+// assignment to a bare `top` lands on the window's own accessor.
 let mostPlayed = [];
+let historyMode = "recent";
+let historyQuery = "";
 let loadGeneration = 0;
 
 function onScreen() {
