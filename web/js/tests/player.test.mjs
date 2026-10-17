@@ -992,23 +992,33 @@ test("a refused play is asked for again, but an ended file is not", () => {
     player._resumeWanted = saved.resume;
   }
 });
-test("a playing element with dead ready state is retried", () => {
+test("a playing element with a frozen media clock is retried", () => {
   const played = [];
   const audio = {
-    src: "/media/v-a", paused: false, ended: false, readyState: 2,
+    src: "/media/v-a", paused: false, ended: false, readyState: 4, currentTime: 0,
+    loads: 0, pause() { this.paused = true; }, load() { this.loads += 1; },
     play() { played.push(this.src); return { catch() {} }; },
   };
-  const saved = { audio: player.audio, resume: player._resumeWanted, buffering: player._buffering };
+  const saved = {
+    audio: player.audio, resume: player._resumeWanted, buffering: player._buffering,
+    clockPosition: player._clockPosition, clockAt: player._clockAt, recovering: player._clockRecovering,
+  };
   try {
     player.audio = audio;
     player._resumeWanted = true;
-    player._buffering = true;
+    player._buffering = false;
+    player._clockPosition = 0;
+    player._clockAt = Date.now() - 4_000;
     player._retryWanted();
-    assert.deepEqual(played, ["/media/v-a"], "a stalled element is asked to resume");
+    assert.deepEqual(played, ["/media/v-a"], "a frozen clock is asked to resume");
+    assert.equal(audio.loads, 1, "the dead media source is reset once");
   } finally {
     player.audio = saved.audio;
     player._resumeWanted = saved.resume;
     player._buffering = saved.buffering;
+    player._clockPosition = saved.clockPosition;
+    player._clockAt = saved.clockAt;
+    player._clockRecovering = saved.recovering;
   }
 });
 

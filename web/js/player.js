@@ -438,8 +438,11 @@ class Player {
 
     this._token = 0;              // which track the async work is still for
     this._loading = false;
-    this._loadFor = "";           // the "track|variant" the load under way is for
+    this._loadFor = "";           // the "track|variant" load under way is for
     this._buffering = false;      // the file is here, the sound is not yet
+    this._clockPosition = 0;
+    this._clockAt = 0;
+    this._clockRecovering = false;
     this._error = "";
     this._blocked = false;
     // null is "nothing to seek"; a number is where to put the file, and zero
@@ -1372,6 +1375,9 @@ class Player {
     this._error = "";
     this._loading = Boolean(track);
     this._loadFor = target;
+    this._clockPosition = 0;
+    this._clockAt = Date.now();
+    this._clockRecovering = false;
     this._variant = "";
     this._source = null;
     this._sources = { sources: [], preferredVariantId: "" };
@@ -2195,6 +2201,14 @@ class Player {
       // business outliving the playback it was about.
       this._blocked = false;
       this._blockedError = "";
+      const position = Number(audio.currentTime);
+      // Browsers can emit timeupdate while a media element is stalled. Refresh
+      // the watchdog only when the clock actually moved; refreshing it for an
+      // unchanged zero is how the dead player stayed permanently "healthy".
+      if (Number.isFinite(position) && Math.abs(position - this._clockPosition) >= 0.05) {
+        this._clockPosition = position;
+        this._clockAt = Date.now();
+      }
       this._positionEvent();
       this.savePlayback();          // at most every SAVE_PLAYBACK_MS, and only on a change
     });
@@ -2668,8 +2682,17 @@ class Player {
     // currentTime and the position bar never advance.
     const audio = this.audio;
     const readyState = Number(audio?.readyState);
-    const waitingForData = Boolean(this._buffering || (audio?.src && Number.isFinite(readyState) && readyState < 3));
+    const clockStalled = Boolean(
+      audio?.src && this._clockAt > 0 && Date.now() - this._clockAt > 3000
+      && Math.abs(Number(audio.currentTime) - this._clockPosition) < 0.05
+    );
+    const waitingForData = Boolean(this._buffering || clockStalled || (audio?.src && Number.isFinite(readyState) && readyState < 3));
     if (!this._resumeWanted || (this.isPlaying() && !waitingForData) || this.hasEnded()) return;
+    if (clockStalled && !this._clockRecovering && audio) {
+      this._clockRecovering = true;
+      audio.pause();
+      try { audio.load(); } catch { /* retry play below */ }
+    }
     const playing = audio?.play();
     if (playing?.catch) playing.catch(() => { /* still not allowed: it waits */ });
   }
