@@ -62,6 +62,58 @@ test("setVolume hands the element the perceptual gain", () => {
     player._remember = saved.remember;
   }
 });
+test("a play press during a load waits for that copy instead of restarting it", () => {
+  const saved = {
+    queue: player.queue, loading: player._loading, resumeWhenReady: player._resumeWhenReady,
+    jumpTo: player.jumpTo,
+  };
+  let jumped = 0;
+  try {
+    player.queue = [track("loading")];
+    player._loading = true;
+    player._resumeWhenReady = false;
+    player.jumpTo = () => { jumped += 1; };
+    player.resume();
+    assert.equal(jumped, 0, "the in-flight load is not replaced");
+    assert.equal(player._resumeWhenReady, true, "the press is kept for the hand-off");
+  } finally {
+    player.queue = saved.queue;
+    player._loading = saved.loading;
+    player._resumeWhenReady = saved.resumeWhenReady;
+    player.jumpTo = saved.jumpTo;
+  }
+});
+
+test("the copy spends a waiting play press and keeps the pending position", () => {
+  const saved = {
+    audio: player.audio, pendingSeek: player._pendingSeek, resumeWhenReady: player._resumeWhenReady,
+    stateEvent: player._stateEvent, renderBar: player.renderBar, wantResume: player._wantResume,
+    startAudio: player._startAudio, setBuffering: player._setBuffering,
+  };
+  const starts = [];
+  try {
+    player.audio = { src: "", readyState: 0 };
+    player._pendingSeek = 12_000;
+    player._resumeWhenReady = true;
+    player._stateEvent = () => {};
+    player.renderBar = () => {};
+    player._wantResume = (wanted) => starts.push(["want", wanted]);
+    player._startAudio = (at) => starts.push(["start", at]);
+    player._setBuffering = () => {};
+    player._handCopyToElement({ url: "blob:restored" }, { autoplay: false });
+    assert.deepEqual(starts, [["want", true], ["start", 12_000]]);
+    assert.equal(player._resumeWhenReady, false, "the press is spent once");
+  } finally {
+    player.audio = saved.audio;
+    player._pendingSeek = saved.pendingSeek;
+    player._resumeWhenReady = saved.resumeWhenReady;
+    player._stateEvent = saved.stateEvent;
+    player.renderBar = saved.renderBar;
+    player._wantResume = saved.wantResume;
+    player._startAudio = saved.startAudio;
+    player._setBuffering = saved.setBuffering;
+  }
+});
 
 test("mediaStateLabel says what a file is doing", () => {
   assert.equal(mediaStateLabel("ready"), "ready");

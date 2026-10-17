@@ -343,3 +343,16 @@
   change the highlight. Pasting a link changes the mode but doesn't move the
   paste over."
 - Reversible: yes.
+
+## 2026-10-16 A play press during a download waits for the existing copy
+- Decision: when the current track is still loading, `resume()` records the play
+  intent instead of calling `jumpTo()` and starting a second load. The copy's
+  hand-over spends that intent and starts at the load's pending position. A
+  loaded paused copy also goes through `_startAudio`, so a pending restored seek
+  is applied before play rather than starting at zero and jumping.
+- Why: Kyle reported that a restored song sometimes finished downloading but did
+  not start after Play. The old path restarted the load when the button was
+  pressed during the wait, discarded the restored start position, and moved the
+  eventual play outside the press that requested it. The e2e restore path passed
+  six runs, so the race needed a state-level guard rather than a timing-only test.
+- Reversible: yes.

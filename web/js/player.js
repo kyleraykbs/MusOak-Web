@@ -452,6 +452,10 @@ class Player {
     // moment so the old position is not read as the new song's, and the lock
     // screen must not be told the listener paused there.
     this._playingWanted = false;
+    // A play press that arrived while the song was still being fetched: the
+    // copy's own hand-over spends it, so the press survives the wait instead of
+    // starting a second load (see `resume`).
+    this._resumeWhenReady = false;
     // Which song has already had its one retry, and which rendition failed, so
     // a failure cannot loop on the same source for ever.
     this._retriedFor = "";
@@ -687,20 +691,30 @@ class Player {
 
   pause() {
     this._playingWanted = false;
+    this._resumeWhenReady = false;
     this._wantResume(false);
     this.audio?.pause();
   }
 
   resume() {
     if (!this.queue.length) return;
+    // The song is still being fetched: this press is the intent to play it when
+    // its file lands, not a reason to start the load over. Reloading here
+    // restarts the fetch, throws away the position this load was given, and
+    // leaves the play to land long after the gesture that asked for it.
+    if (this._loading) {
+      this._resumeWhenReady = true;
+      return;
+    }
     if (!this.audio || !this.audio.src) {
       this.jumpTo(Math.max(this._index, 0));
       return;
     }
     this._playingWanted = true;
     this._wantResume(true);
-    const playing = this.audio.play();
-    if (playing?.catch) playing.catch(() => { /* the browser refused; the button stays honest */ });
+    // A position still waiting on the file's metadata is applied first: a bare
+    // play() would start the song at the top and jump to where it belongs.
+    this._startAudio(this._pendingSeek);
   }
 
   toggle() {
@@ -1344,9 +1358,11 @@ class Player {
     // Nothing asks the element to play while the file is on its way, and the bar
     // says paused until it is there. A play that arrives in this window used to
     // start whatever the element still held (see below); a retry that wanted one
-    // is stopped here for the same reason, and the wait hands autoplay to the
-    // play itself, so the click survives without being held as a live request.
+    // is stopped here for the same reason. A press during the wait is kept as
+    // `_resumeWhenReady`, which the copy's own hand-over spends - a new load is
+    // a new song, so whatever the last one was waiting for is not this one's.
     this._playingWanted = false;
+    this._resumeWhenReady = false;
     this._wantResume(false);
     this.renderBar();
     if (audio.src) {
@@ -1408,6 +1424,7 @@ class Player {
     } catch (error) {
       if (token !== this._token) return;
       this._loading = false;
+      this._resumeWhenReady = false;
       this._error = error?.message || "could not fetch that track";
       this._stateEvent();
       // Offline, a song that cannot be resolved is a song this page does not
@@ -1726,6 +1743,7 @@ class Player {
     // for the song somebody is listening for.
     this._prefetch();
     if (!settled || settled.state !== "ready" || !settled.url) {
+      this._resumeWhenReady = false;
       this._error = settled?.error || "that file did not arrive";
       this._stateEvent();
       if (!this.online()) {
@@ -1745,6 +1763,10 @@ class Player {
   _handCopyToElement(entry, attempt) {
     const audio = this.audio;
     if (!audio) return;
+    // A play pressed while this copy was on its way is the same intent as the
+    // load's own autoplay, and it is spent here either way.
+    const autoplay = Boolean(attempt.autoplay || this._resumeWhenReady);
+    this._resumeWhenReady = false;
     // The element may already hold this very copy: a restore that ran twice, a
     // load asking for the song that is already on. Assigning the same source
     // again starts the element over from zero and takes the position this load
@@ -1759,7 +1781,7 @@ class Player {
       this._pendingSeek = null;
       this.seek(at);
     }
-    if (!attempt.autoplay) {
+    if (!autoplay) {
       // The bar shows a stopped player for a song nobody has started yet; the
       // position stays pending and lands with the metadata.
       this._stateEvent();
@@ -2450,6 +2472,7 @@ class Player {
 
   _stopAudio() {
     this._playingWanted = false;
+    this._resumeWhenReady = false;
     if (!this.audio) return;
     this.audio.pause();
     this.audio.removeAttribute("src");
