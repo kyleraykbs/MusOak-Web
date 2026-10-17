@@ -1319,8 +1319,8 @@ class Player {
       this._blockedError = "";
       // Keep the watchdog alive while the player intends to play. A later
       // waiting/stalled state can leave `paused === false` while the clock is
-      // dead; clearing it on the first `playing` event made that state last
-      // until a reload.
+      // dead; clearing it on the first `playing` event would make that state
+      // last until a reload.
     });
     if (typeof document !== "undefined") {
       document.addEventListener("visibilitychange", () => {
