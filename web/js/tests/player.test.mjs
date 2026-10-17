@@ -992,26 +992,33 @@ test("a refused play is asked for again, but an ended file is not", () => {
     player._resumeWanted = saved.resume;
   }
 });
-test("a playing element with a frozen media clock is retried", () => {
+test("a frozen media element is replaced before retrying", () => {
   const played = [];
-  const audio = {
-    src: "/media/v-a", paused: false, ended: false, readyState: 4, currentTime: 0,
-    loads: 0, pause() { this.paused = true; }, load() { this.loads += 1; },
-    play() { played.push(this.src); return { catch() {} }; },
+  const removed = [];
+  const old = {
+    src: "blob:stalled", currentSrc: "blob:stalled", currentTime: 0, paused: false, ended: false, readyState: 4,
+    pause() { this.paused = true; }, load() {}, removeAttribute() {}, remove() { removed.push(true); },
   };
   const saved = {
     audio: player.audio, resume: player._resumeWanted, buffering: player._buffering,
     clockPosition: player._clockPosition, clockAt: player._clockAt, recovering: player._clockRecovering,
+    startAudio: player._startAudio, wireAudio: player._wireAudio,
   };
   try {
-    player.audio = audio;
+    player.audio = old;
     player._resumeWanted = true;
     player._buffering = false;
     player._clockPosition = 0;
     player._clockAt = Date.now() - 4_000;
+    player._clockRecovering = false;
+    player._startAudio = (at) => played.push(at);
+    player._wireAudio = () => {};
+    globalThis.Audio = function Audio() { return { dataset: {}, style: {}, src: "", preload: "" }; };
+    globalThis.document = { body: { appendChild() {} } };
     player._retryWanted();
-    assert.deepEqual(played, ["/media/v-a"], "a frozen clock is asked to resume");
-    assert.equal(audio.loads, 1, "the dead media source is reset once");
+    assert.equal(player.audio === old, false, "Firefox gets a fresh media element");
+    assert.deepEqual(played, [0], "the replacement retries from the pending position");
+    assert.deepEqual(removed, [true], "the dead element is removed");
   } finally {
     player.audio = saved.audio;
     player._resumeWanted = saved.resume;
@@ -1019,11 +1026,10 @@ test("a playing element with a frozen media clock is retried", () => {
     player._clockPosition = saved.clockPosition;
     player._clockAt = saved.clockAt;
     player._clockRecovering = saved.recovering;
+    player._startAudio = saved.startAudio;
+    player._wireAudio = saved.wireAudio;
   }
 });
-
-
-// --- songs this page already holds -----------------------------------------
 //
 // A kept playlist hands the player tracks that carry the URL their own bytes
 // are at. With the server gone there is nothing to resolve, nothing to poll and

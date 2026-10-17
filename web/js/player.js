@@ -2690,11 +2690,34 @@ class Player {
     if (!this._resumeWanted || (this.isPlaying() && !waitingForData) || this.hasEnded()) return;
     if (clockStalled && !this._clockRecovering && audio) {
       this._clockRecovering = true;
-      audio.pause();
-      try { audio.load(); } catch { /* retry play below */ }
+      this._resetStalledAudio();
+      return;
     }
     const playing = audio?.play();
     if (playing?.catch) playing.catch(() => { /* still not allowed: it waits */ });
+  }
+
+  /** Replace a Firefox media element whose decoder reports playing but whose
+   *  clock is frozen. A same-element `load()` can leave Gecko's decoder in the
+   *  same dead state; a fresh element keeps the blob and the pending position. */
+  _resetStalledAudio() {
+    const old = this.audio;
+    const source = old?.currentSrc || old?.src || "";
+    if (!old || !source || typeof Audio !== "function") {
+      try { old?.load?.(); } catch { /* the retry below still has a chance */ }
+      return false;
+    }
+    const replacement = new Audio();
+    replacement.preload = "auto";
+    replacement.dataset.e2e = "audio";
+    replacement.style.display = "none";
+    this.audio = replacement;
+    if (typeof document !== "undefined") document.body?.appendChild(replacement);
+    this._wireAudio(replacement);
+    replacement.src = source;
+    try { old.pause(); old.removeAttribute("src"); old.load(); old.remove?.(); } catch { /* old element is no longer in hand */ }
+    this._startAudio(this._pendingSeek);
+    return true;
   }
 
   _wantResume(wanted) {
