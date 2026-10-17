@@ -486,6 +486,7 @@ function importDialog() {
   if (!client) return;
 
   let platform = PLATFORMS[0].id;
+  let mode = "search";
   let searchGeneration = 0;
   let picked = null;
   let busy = false;
