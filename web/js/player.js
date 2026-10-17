@@ -2125,10 +2125,11 @@ class Player {
     // is a row that looks asleep while its transfer is under way.
     this._emit("download-progress", id);
     held.promise = this._fetchOffline(id, controller.signal).finally(() => {
-      // Only what is still this song's is forgotten: a fetch that was replaced
-      // must not take the entry that replaced it out of the maps.
       if (this._offlineInFlight.get(id) === held) this._offlineInFlight.delete(id);
       this._offlineActive -= 1;
+      // A room's warm window is fed outside the local queue: make the next
+      // pending copy start as soon as this one lands, even when no playback
+      // transition or new room event occurs.
       this._pumpOffline();
     });
     return held.promise;

@@ -890,6 +890,46 @@ test("a room priority song stays ahead of look-ahead downloads", async () => {
     globalThis.URL.revokeObjectURL = saved.revoke;
   }
 });
+test("the room download pump advances after the current copy lands", async () => {
+  const saved = { offline: player._offline, order: player._offlineOrder, wanted: player._offlineWanted, inFlight: player._offlineInFlight, active: player._offlineActive, bytes: player._offlineBytes, client: player._client, variantFor: player._variantFor, warm: player._warm, fetch: globalThis.fetch, create: globalThis.URL.createObjectURL, revoke: globalThis.URL.revoke };
+  const pending = [];
+  try {
+    player._offline = new Map();
+    player._offlineOrder = [];
+    player._offlineWanted = [];
+    player._offlineInFlight = new Map();
+    player._offlineActive = 0;
+    player._offlineBytes = 0;
+    player._variantFor = async (entry) => ({ variantId: `v-${entry.id}` });
+    player._warm = async () => true;
+    player._client = () => ({ mediaUrl: (variantId) => `/media/${variantId}`, startDownload: async () => ({}) });
+    globalThis.URL.createObjectURL = () => "blob:room";
+    globalThis.URL.revokeObjectURL = () => {};
+    globalThis.fetch = (url, options) => new Promise((resolve, reject) => {
+      pending.push([String(url), resolve]);
+      options?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+    });
+    player.keepOffline([track("current"), track("next")], { priorityId: "current" });
+    await settle();
+    assert.deepEqual(pending.map(([url]) => url), ["/media/v-current"]);
+    pending[0][1]({ ok: true, headers: { get: () => "1" }, body: null, blob: async () => new Blob(["current"]) });
+    await settle();
+    assert.deepEqual(pending.map(([url]) => url), ["/media/v-current", "/media/v-next"]);
+  } finally {
+    player._offline = saved.offline;
+    player._offlineOrder = saved.order;
+    player._offlineWanted = saved.wanted;
+    player._offlineInFlight = saved.inFlight;
+    player._offlineActive = saved.active;
+    player._offlineBytes = saved.bytes;
+    player._client = saved.client;
+    player._variantFor = saved.variantFor;
+    player._warm = saved.warm;
+    globalThis.fetch = saved.fetch;
+    globalThis.URL.createObjectURL = saved.create;
+    globalThis.URL.revokeObjectURL = saved.revoke;
+  }
+});
 
 test("a song kept in memory plays with nothing reachable", async () => {
   const saved = {
