@@ -126,6 +126,17 @@ const FETCH_RETRY_PAUSE_MS = 700;
 // element cannot leave the start behind to fire on whatever loads next.
 const METADATA_TIMEOUT_MS = 10000;
 const clamp01 = (value) => Math.min(1, Math.max(0, value));
+function rangeFillPercent(input, fraction) {
+  const share = clamp01(fraction);
+  if (!input?.clientWidth || typeof getComputedStyle !== "function") return `${Math.round(share * 100)}%`;
+  const style = getComputedStyle(input);
+  const left = Number.parseFloat(style.paddingLeft) || 0;
+  const right = Number.parseFloat(style.paddingRight) || left;
+  const thumb = Number.parseFloat(style.getPropertyValue("--range-thumb-width")) || 0;
+  const travel = Math.max(0, input.clientWidth - left - right - thumb);
+  const center = left + thumb / 2 + travel * share;
+  return `${Math.round((center / input.clientWidth) * 10000) / 100}%`;
+}
 
 /**
  * Fader position (0..1) to the element's amplitude.
@@ -1266,14 +1277,14 @@ class Player {
       // Chromium has no ::-moz-range-progress, so the played part is painted by
       // a gradient on the element itself, exactly as the volume's fill is. The
       // Firefox pseudo-element still wins there, where it exists.
-      bar.position.style.setProperty("--fill", `${Math.round(clamp01(position / duration) * 100)}%`);
+      bar.position.style.setProperty("--fill", rangeFillPercent(bar.position, position / duration));
     }
 
     // --- volume ----------------------------------------------------------
     if (Math.abs(Number(bar.volume.value) - this._volume) > 0.001) bar.volume.value = String(this._volume);
     // How far the filled part of the track reaches, for the theme to paint:
     // the colour is the theme's, this is only where it stops.
-    bar.volume.style.setProperty("--fill", `${Math.round(clamp01(this._volume) * 100)}%`);
+    bar.volume.style.setProperty("--fill", rangeFillPercent(bar.volume, this._volume));
     setIcon(bar.mute, this._muted ? "mute" : "speaker");
     setLabel(bar.mute, this._muted ? "Unmute" : "Mute");
     bar.mute.setAttribute("aria-pressed", this._muted ? "true" : "false");
