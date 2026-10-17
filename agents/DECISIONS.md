@@ -138,6 +138,23 @@
   supports All, while the shared download queue enforces the selected limit".
 - Reversible: yes.
 
+## 2026-10-16 The playbar mirrors the song's download as a bar, not as words
+- Decision: the third line under the artist is the same thing the queue's mark on
+  that song's row draws - `offlineProgress` of the playing track, as a 4 px bar in
+  the mark's yellow, filled by the current stage's fraction and sweeping when
+  nobody has one. It is shown while the song's copy is `pending` and gone once it
+  is here. The `downloading…` / `loading…` text is gone from the bar entirely; the
+  only words there are an error ("could not play that file"), in the same place.
+  The line hears `download-progress`, so it moves with the transfer.
+- Why: Kyle, seeing the queue's mark fill: "just mirror that bar to below the
+  artist, fuck the downloading text. mirror that to a bar". One wait, drawn where
+  the song is named and where the queue already draws it - and no second
+  vocabulary for it.
+- Known shape: the fill restarts when the backend's stage changes (download →
+  convert), because each stage counts its own work; that is the same rule the
+  queue's mark follows.
+- Reversible: yes.
+
 ## 2026-10-16 The queue's mark fills only on the transfer that is happening
 - Decision: `heldBadge` draws the yellow ink on one row: the song nearest the
   playhead whose copy is being fetched (`player.downloading` - in flight, and the

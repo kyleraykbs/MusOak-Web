@@ -2409,25 +2409,47 @@ function entryShowing(status, { variantId = "v-a", trackId = "t1" } = {}) {
   return player._offline.get(trackId);
 }
 
-test("the bar says the wait in one word, and has no download of its own", () => {
+test("the bar mirrors the song's own download as a bar, and says nothing", () => {
+  const saved = player._offline;
   withDom(() => {
     const bar = barShowing({ state: "downloading", stage: "download", progress: 0.42, bytes: 3_250_000, totalBytes: 8_800_000 });
-    // The bar no longer draws a loader: the queue's own mark on this song's row
-    // is where a download is drawn, and there is exactly one of them.
-    assert.equal(bar.progress, undefined, "the bar has no download bar of its own");
+    // The song being played is fetched like any other, and the bar shows that
+    // same transfer - a bar, not a second loader or a number.
+    assert.equal(bar.progress, undefined, "no loader element of the old kind");
     assert.equal(bar.progressFill, undefined);
 
+    player._offline = new Map([["t1", { state: "pending", variantId: "v-a", url: "", bytes: 0, at: 0 }]]);
     player._loading = true;
     player.renderBar();
-    assert.match(bar.subtitle.textContent, /downloading…$/, "the wait is still said in words");
-    assert.doesNotMatch(bar.subtitle.textContent, /MB|converting/, "and never in the download's numbers");
+    // The wait is a bar under the artist, not a word on the artist's line.
+    assert.equal(bar.subtitle.textContent, "Someone", "the artist keeps its line");
+    assert.equal(bar.status.style.display, "none", "and there is no waiting text");
+    assert.equal(bar.load.style.display, "", "the song's own download is drawn below it");
+    assert.equal(bar.load.classList.contains("sweep"), true, "nothing countable yet: it sweeps");
+    assert.equal(bar.loadFill.style.width, "", "and claims no number");
 
-    // The file is here and the sound is not yet: its own word for its own state.
-    player._loading = false;
-    player._buffering = true;
+    // The backend's count arrives: the bar fills, exactly as the queue's mark
+    // on this song's row does.
+    player._offline = new Map([["t1", { state: "pending", variantId: "v-a", url: "", bytes: 0, at: 0, stageProgress: 0.4 }]]);
     player.renderBar();
-    assert.match(bar.subtitle.textContent, /loading…$/);
+    assert.equal(bar.loadFill.style.width, "40%");
+    assert.equal(bar.load.classList.contains("sweep"), false, "a counted wait does not sweep");
+
+    // The copy is here: the line has nothing left to say.
+    player._offline = new Map([["t1", { state: "ready", variantId: "v-a", url: "blob:x", bytes: 1, at: 0 }]]);
+    player.renderBar();
+    assert.equal(bar.load.style.display, "none", "a song this device holds draws no bar");
+
+    // And a song that will not play is said in words, in the same place.
+    player._error = "could not play that file";
+    player.renderBar();
+    assert.equal(bar.load.style.display, "none");
+    assert.equal(bar.status.style.display, "");
+    assert.equal(bar.status.textContent, "could not play that file");
+    assert.equal(bar.status.style.color, "var(--red)");
   });
+  player._offline = saved;
+  player._error = "";
 });
 
 test("a download's count is its own stage's, and never goes backwards", () => {

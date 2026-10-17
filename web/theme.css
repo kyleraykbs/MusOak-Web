@@ -49,6 +49,15 @@
 
   --radius: 8px;
   --radius-small: 5px;
+  /* The bars: a rounded rectangle, not a pill - the track's corner is well
+     short of half its height - and a vertical bar for the position, which grows
+     a little under the pointer. */
+  --range-track-height: 8px;
+  --range-track-radius: 3px;
+  --range-thumb-width: 5px;
+  --range-thumb-height: 18px;
+  --range-thumb-width-hover: 7px;
+  --range-thumb-height-hover: 22px;
   --sidebar-width: 232px;
   --player-height: 92px;
 
@@ -987,6 +996,46 @@ img.art[data-loaded="true"] { opacity: 1; }
 }
 .player .track-text .title { color: var(--fg0); }
 .player .track-text .subtitle { color: var(--fg4); font-size: 12.5px; }
+/* A third line under the artist: this song's own download, mirrored from the
+   queue's mark on its row - the same yellow, the same fraction. A bar rather than
+   a word, because the queue already draws the wait and the bar is that drawing
+   where the song is named. A count nobody has sweeps; a copy that is here leaves
+   nothing to say and the line goes away. */
+.player .track-text .track-wait {
+  width: 132px;
+  height: 4px;
+  margin-top: 4px;
+  border-radius: 2px;
+  background: var(--bg2);
+  overflow: hidden;
+}
+.player .track-text .track-wait .bar {
+  height: 100%;
+  width: 0;
+  background: var(--yellow);
+  transition: width 120ms linear;
+}
+.player .track-text .track-wait.sweep .bar {
+  width: 35%;
+  transition: none;
+  animation: track-wait-sweep 1.1s ease-in-out infinite;
+}
+@keyframes track-wait-sweep {
+  from { margin-left: -35%; }
+  to { margin-left: 100%; }
+}
+/* When the song will not play at all: that is said in words, in the same place
+   the bar would have been. */
+.player .track-text .track-error {
+  color: var(--red);
+  font-size: 11px;
+  line-height: 1.3;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+}
 
 .player .controls { display: flex; align-items: center; gap: 8px; }
 /* The sound group dissolves into the bar itself, so the seek and the volume can

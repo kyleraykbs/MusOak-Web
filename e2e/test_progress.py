@@ -39,9 +39,9 @@ def row_xpath(title):
 
 
 #: What the page says about this song's download, all of it in one read: the
-#: bar's own line and whether it still draws a loader, the queue row's mark and
-#: how full it is, and where the audio element is. One call, because two reads
-#: of a download in flight are two different moments.
+#: playbar's mirror bar and how full it is, the queue row's mark and how full it
+#: is, and where the audio element is. One call, because two reads of a download
+#: in flight are two different moments.
 STATE_JS = """
 const bar = document.querySelector('.player-bar');
 const rows = [...document.querySelectorAll('.list .row')].filter((r) => !r.closest('[hidden]'));
@@ -63,7 +63,16 @@ return {
   pending: helds.length,
   ink: inked.length,
   subtitle: bar && bar.querySelector('.subtitle') ? bar.querySelector('.subtitle').textContent.trim() : '',
-  loader: !!(bar && bar.querySelector('.track-text .progress')),
+  wait: (() => {
+    const wrap = bar && bar.querySelector('.track-text .track-wait');
+    if (!wrap || wrap.style.display === 'none') return { shown: false, fill: '', sweep: false };
+    const fill = wrap.querySelector('.bar');
+    return {
+      shown: true,
+      fill: fill ? (fill.style.width || '') : '',
+      sweep: wrap.classList.contains('sweep'),
+    };
+  })(),
   src: audio ? (audio.currentSrc || audio.src || '') : '',
 };
 """ % json.dumps(TITLE)
@@ -155,13 +164,23 @@ def test_the_queue_row_shows_the_song_s_download_and_the_sound_waits_for_it(ui, 
     assert converts, f"conversion was never reported: {samples!r}"
     assert {sample["api"]["totalBytes"] for sample in converts} == {CONVERT_TOTAL_MS}
 
-    # The playbar holds no download of its own: no loader element, no byte
-    # numbers, just the word, for as long as the song is not sounding.
-    assert not any(sample["loader"] for sample in samples), "the playbar drew a download bar again"
     waiting = [sample for sample in samples if not sample["src"]]
     assert waiting, f"the element was handed a source before the wait was seen: {samples!r}"
-    assert all("downloading…" in sample["subtitle"] for sample in waiting), (
-        f"the bar did not say the wait in words: {[s['subtitle'] for s in waiting]!r}"
+
+    # The playbar mirrors the queue's mark on this song's row as a bar under the
+    # artist: shown while the file is on its way, filled by the same count (or
+    # sweeping while nobody has one), and gone once the copy is here.
+    waits = [sample["wait"] for sample in waiting]
+    assert any(w["shown"] for w in waits), f"the playbar drew no wait bar: {waits!r}"
+    assert any(w.get("fill") or w.get("sweep") for w in waits), (
+        f"the wait bar neither filled nor swept: {waits!r}"
+    )
+    assert not any(sample["wait"]["shown"] for sample in samples if sample["src"]), (
+        "the wait bar is still drawn over a song that is sounding"
+    )
+    # And it says nothing in words: no "downloading…", no byte counts.
+    assert not any("downloading" in sample["subtitle"] for sample in samples), (
+        f"the playbar is saying the wait in words: {[s['subtitle'] for s in samples]!r}"
     )
     assert not any(DOWNLOAD_TEXT.search(sample["subtitle"]) or CONVERT_TEXT.search(sample["subtitle"]) for sample in samples), (
         "the playbar is saying the download's numbers again"

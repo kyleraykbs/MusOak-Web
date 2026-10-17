@@ -1094,22 +1094,27 @@ class Player {
     const client = this._clientIfAny();
 
     // --- the track -------------------------------------------------------
+    // Three lines, and each says one thing: the title, then who it is by (with
+    // the source beside the name), then - only when there is something to say -
+    // what is happening to it. The wait used to be appended to the artist's own
+    // line, which read as part of the artist.
     if (track) {
       setText(bar.title, track.title || "unknown track");
-      let subtitle = artistLine(track) || String(track.album || "");
-      if (this._loading) {
-        // The download itself is shown where it belongs: the queue's own row
-        // for this song, filling as the bytes arrive. The bar says the one thing
-        // the bar is for - that this song is not sounding yet.
-        subtitle = subtitle ? `${subtitle} · downloading…` : "downloading…";
-      } else if (this._buffering) {
-        // Here, and not making a sound yet: the bar says so rather than showing
-        // a pause button over silence.
-        subtitle = subtitle ? `${subtitle} · loading…` : "loading…";
-      }
-      if (this._error) subtitle = this._error;
-      setText(bar.subtitle, subtitle);
-      bar.subtitle.style.color = this._error ? "var(--red)" : "";
+      setText(bar.subtitle, artistLine(track) || String(track.album || ""));
+      // The bar mirrors the queue's mark on this song's row: the same fraction
+      // of the same one download, drawn where the song being waited on is named.
+      // Nothing countable sweeps rather than pretending; a copy that is here has
+      // nothing left to say.
+      const trackId = String(track.id || "");
+      const pending = trackId ? this.offlineState(trackId) === "pending" : false;
+      const share = pending ? this.offlineProgress(trackId) : null;
+      bar.load.style.display = pending ? "" : "none";
+      bar.load.classList.toggle("sweep", pending && share === null);
+      bar.loadFill.style.width = pending && share !== null ? `${Math.round(Math.min(1, Math.max(0, share)) * 100)}%` : "";
+      // The error is the one thing here said in words.
+      setText(bar.status, this._error);
+      bar.status.style.display = this._error ? "" : "none";
+      bar.status.style.color = this._error ? "var(--red)" : "";
 
       const art = track.artworkUrl && client ? client.artworkUrl(track.artworkUrl) : "";
       const currentArt = bar.cover.getAttribute("src") || "";
@@ -1120,8 +1125,11 @@ class Player {
       this._syncMediaMetadata(track);
     } else {
       setText(bar.title, "Nothing playing");
-      setText(bar.subtitle, this._error);
-      bar.subtitle.style.color = this._error ? "var(--red)" : "";
+      setText(bar.subtitle, "");
+      bar.load.style.display = "none";
+      setText(bar.status, this._error);
+      bar.status.style.display = this._error ? "" : "none";
+      bar.status.style.color = this._error ? "var(--red)" : "";
       if (bar.cover.getAttribute("src")) bar.cover.removeAttribute("src");
       this._syncMediaMetadata(null);
     }
@@ -2834,7 +2842,7 @@ class Player {
     // The artist line hugs its text, so the pill lands directly after the
     // artist name - which, the name being short, usually puts it under the song
     // title rather than out beside the transport.
-    const subtitle = h("div", { class: "subtitle", role: "status", "aria-live": "polite" });
+    const subtitle = h("div", { class: "subtitle" });
     const pill = h("button", {
       class: "source-pill player-source-pill",
       disabled: true,
@@ -2842,7 +2850,14 @@ class Player {
     });
     // The pill sits directly beside the artist, at the end of that name.
     const line = h("div", { class: "player-track-line" }, subtitle, pill);
-    const text = h("div", { class: "track-text" }, title, line);
+    // The song's own download, on a line under the artist: the same filled
+    // fraction the queue's mark on its row draws, as a bar. It is the wait for
+    // the file, mirrored - not a second download, and not a number.
+    const loadFill = h("div", { class: "bar" });
+    const load = h("div", { class: "track-wait", style: { display: "none" } }, loadFill);
+    // What will not play, in words, on that same line its bar would have used.
+    const status = h("span", { class: "track-error", role: "status", "aria-live": "polite", style: { display: "none" } });
+    const text = h("div", { class: "track-text" }, title, line, load, status);
 
     const star = h("button", {
       class: "btn flat round", title: "Favourite",
@@ -2916,9 +2931,16 @@ class Player {
     const root = h("div", { class: "player-bar" },
       cover, text, shuffle, controls, timeline, sound, room, listen, star, queue);
 
+    // The bar's own download line follows the page's transfers, so it hears the
+    // same reports the queue's marks do. Once: a bar can be rebuilt (a page that
+    // had none, a test), and a second listener is two renders per report.
+    if (!this._barTold) {
+      this._barTold = true;
+      this.on("download-progress", () => this.renderBar());
+    }
     this._bar = {
       words,
-      root, cover, title, subtitle, pill, star, shuffle,
+      root, cover, title, subtitle, load, loadFill, status, pill, star, shuffle,
       previous, play, next, position, volume, mute, room, listen, queue,
     };
   }
