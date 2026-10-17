@@ -423,32 +423,13 @@ async function loadPlaylist() {
   const tracks = detail.tracks || [];
   activeName = playlist.name || "Playlist";
 
-  mount(
-    target,
-    header(client, playlist, tracks),
-    tracks.length
-      ? h(
-          "div",
-          { class: "list" },
-          tracks.map((track, position) =>
-            trackRow({
-              track,
-              position,
-              client,
-              // Clicking a song queues the list up to it, not the whole list:
-              // what is below the click is not what was asked for, and a queue
-              // of everything makes every later choice a place in a long list
-              // rather than the song that was picked. "Play all" is the button
-              // for all of it.
-              onActivate: () => playOne(tracks, position, { playlistId: activeId }),
-              menu: trackMenu(track, [{ label: "Remove from playlist", onClick: () => removeEntry(position) }], {
-                playlistId: activeId,
-              }),
-            })
-          )
-        )
-      : emptyState("note", "Empty playlist", "Add tracks from search.")
-  );
+  if (!tracks.length) {
+    mount(target, header(client, playlist, tracks), emptyState("note", "Empty playlist", "Add tracks from search."));
+    return;
+  }
+  const list = h("div", { class: "list" });
+  mount(target, header(client, playlist, tracks), list);
+  void appendPlaylistRows(list, tracks, client, mine);
 }
 
 /**
@@ -462,13 +443,45 @@ async function loadPlaylist() {
  * anybody. The header's own actions are the ones the server would have to
  * perform, so a kept copy shows none of them.
  */
+function waitForArtwork(row) {
+  const image = row.querySelector?.("img.art");
+  if (!image || image.dataset.loaded === "true") return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      image.removeEventListener("load", done);
+      image.removeEventListener("error", done);
+      resolve();
+    };
+    const timer = setTimeout(done, 6000);
+    image.addEventListener("load", done, { once: true });
+    image.addEventListener("error", done, { once: true });
+  });
+}
+
+async function appendPlaylistRows(list, tracks, client, mine) {
+  for (const [position, track] of tracks.entries()) {
+    if (mine !== loadGeneration || !sheet?.isConnected) return;
+    const row = trackRow({
+      track,
+      position,
+      client,
+      onActivate: () => playOne(tracks, position, { playlistId: activeId }),
+      menu: trackMenu(track, [{ label: "Remove from playlist", onClick: () => removeEntry(position) }], {
+        playlistId: activeId,
+      }),
+    });
+    list.appendChild(row);
+    await waitForArtwork(row);
+  }
+}
+
 async function drawKept(target) {
   await offline.ensureLoaded();
   if (!offline.isKept(activeId)) return false;
   const kept = await offline.playlistEntries(activeId);
   if (!kept) return false;
   if (!target.isConnected) return true;
-
   const tracks = offline.keptTracks(kept.entries);
   activeName = kept.name || "Playlist";
   if (!tracks.length) {
@@ -486,6 +499,7 @@ async function drawKept(target) {
     banner(offline.keptGoneMessage(kept.name, kept.missing, tracks.length + kept.missing.length));
   }
 
+  const list = h("div", { class: "list" });
   mount(
     target,
     header(currentClient(), { id: activeId, name: kept.name, mine: false }, tracks),
@@ -493,12 +507,14 @@ async function drawKept(target) {
       class: "subtitle",
       text: "Kept on this machine \u2014 this page plays without the server.",
     }),
-    h(
-      "div",
-      { class: "list" },
-      tracks.map((track, position) => keptTrackRow(tracks, track, position))
-    )
+    list
   );
+  for (const [position, track] of tracks.entries()) {
+    if (!target.isConnected) return true;
+    const row = keptTrackRow(tracks, track, position);
+    list.appendChild(row);
+    await waitForArtwork(row);
+  }
   return true;
 }
 
