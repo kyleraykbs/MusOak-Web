@@ -26,7 +26,7 @@ import { isSignedIn, state } from "../state.js";
 import { currentRoom } from "../rooms-state.js";
 import * as offline from "../offline.js";
 import { player } from "../player.js";
-import { artistLine, artistLineNode, goToArtistItem, playOne, playTracks, providerErrorLines, queueButton, queueNextTracks, queueLastTracks, reportError, shuffleItems } from "./queue.js";
+import { artistLine, artistLineNode, dragHandle, goToArtistItem, listDrag, playOne, playTracks, providerErrorLines, queueButton, queueNextTracks, queueLastTracks, reportError, shuffleItems } from "./queue.js";
 import { shareTrack } from "./share.js";
 
 registerView({
@@ -446,19 +446,44 @@ async function loadPlaylist() {
  * anybody. The header's own actions are the ones the server would have to
  * perform, so a kept copy shows none of them.
  */
-async function appendPlaylistRows(list, tracks, client, mine) {
-  const rows = tracks.map((track, position) => trackRow({
-    track,
-    position,
-    client,
-    onActivate: () => playOne(tracks, position, { playlistId: activeId }),
-    menu: trackMenu(track, [{ label: "Remove from playlist", onClick: () => removeEntry(position) }], {
-      playlistId: activeId,
-    }),
-  }));
-  await appendProgressively(list, rows, { isCurrent: () => mine === loadGeneration && Boolean(sheet?.isConnected) });
+async function reorderPlaylistTracks(tracks, from, to, list) {
+  const fromIndex = tracks.indexOf(from);
+  const toIndex = tracks.indexOf(to);
+  if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return;
+  const original = [...tracks];
+  tracks.splice(fromIndex, 1);
+  tracks.splice(toIndex, 0, from);
+  const rows = [...list.children];
+  const moved = rows[fromIndex];
+  list.removeChild(moved);
+  list.insertBefore(moved, list.children[toIndex] || null);
+  try {
+    await currentClient().reorderPlaylist(activeId, tracks.map((track, index) => original.indexOf(track)));
+  } catch (error) {
+    tracks.splice(0, tracks.length, ...original);
+    refreshCurrent();
+    reportError(error);
+  }
 }
 
+async function appendPlaylistRows(list, tracks, client, mine) {
+  const rows = tracks.map((track, position) => {
+    const row = trackRow({
+      track,
+      position,
+      client,
+      onActivate: () => playOne(tracks, position, { playlistId: activeId }),
+      menu: trackMenu(track, [{ label: "Remove from playlist", onClick: () => removeEntry(position) }], {
+        playlistId: activeId,
+      }),
+    });
+    const handle = dragHandle("Drag track to reorder");
+    row.insertBefore(handle, row.firstChild);
+    listDrag({ row, handle, entry: track, entries: tracks, onDrop: (from, to) => void reorderPlaylistTracks(tracks, from, to, list) });
+    return row;
+  });
+  await appendProgressively(list, rows, { isCurrent: () => mine === loadGeneration && Boolean(sheet?.isConnected) });
+}
 async function drawKept(target) {
   await offline.ensureLoaded();
   if (!offline.isKept(activeId)) return false;
