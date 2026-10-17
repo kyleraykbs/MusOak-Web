@@ -114,6 +114,27 @@ test("the copy spends a waiting play press and keeps the pending position", () =
     player._setBuffering = saved.setBuffering;
   }
 });
+test("a user seek clears a stale restore position once metadata exists", () => {
+  const saved = {
+    audio: player.audio, pendingSeek: player._pendingSeek,
+    positionEvent: player._positionEvent, saveSoon: player._saveSoon,
+  };
+  try {
+    const audio = { src: "blob:restored", duration: 180, currentTime: 0 };
+    player.audio = audio;
+    player._pendingSeek = 12_000;
+    player._positionEvent = () => {};
+    player._saveSoon = () => {};
+    player.seek(30_000);
+    assert.equal(audio.currentTime, 30, "the handle moves to the user's position");
+    assert.equal(player._pendingSeek, null, "the restore cannot snap it back later");
+  } finally {
+    player.audio = saved.audio;
+    player._pendingSeek = saved.pendingSeek;
+    player._positionEvent = saved.positionEvent;
+    player._saveSoon = saved.saveSoon;
+  }
+});
 test("playing a selected song keeps pending queue items", () => {
   const saved = {
     queue: player.queue,

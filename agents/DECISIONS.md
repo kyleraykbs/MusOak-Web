@@ -380,3 +380,13 @@
   should bring over the nice looking stars for that and affix them centered at
   the top of the screen to filter."
 - Reversible: yes.
+
+## 2026-10-16 A user seek overrides a late restore seek
+- Decision: once the audio element has a duration, `seek()` clears `_pendingSeek`
+  before applying the user's position. A restore position may still be waiting
+  for metadata; if it remains queued after the user drags, the later metadata
+  event can overwrite the visible seek and snap it back.
+- Why: Kyle's player could show a seek move, then shortly return to the old
+  restored position. The visible sequence was a position bar that moved and
+  then jumped back; the stale pending restore was the state that won late.
+- Reversible: yes.

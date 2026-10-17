@@ -780,6 +780,10 @@ class Player {
       this._pendingSeek = target;
       return;
     }
+    // Metadata can arrive after a restore has queued its position. Once the
+    // element has a duration, a user seek is authoritative; leaving the old
+    // pending value would let a late metadata event snap the bar back.
+    this._pendingSeek = null;
     try {
       audio.currentTime = Math.min(target / 1000, audio.duration);
     } catch {
