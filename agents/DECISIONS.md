@@ -155,6 +155,11 @@
   queue's mark follows.
 - Reversible: yes.
 
+## 2026-10-16 Playlist selection preserves the pending queue and default queueing is next
+- Decision: clicking a song in a playlist replaces the current/top queue item with that song, skips the current item, and keeps every item that was pending behind it. The standard Queue action inserts immediately after the playing song; Queue last is the explicit append action. Song menus use `Queue` and `Queue last`.
+- Why: selecting a song should not silently discard songs already queued, while the common queue action should affect what plays next rather than hiding the song at the end of a long queue.
+- Reversible: yes.
+
 ## 2026-10-16 The queue's mark fills only on the transfer that is happening
 - Decision: `heldBadge` draws the yellow ink on one row: the song nearest the
   playhead whose copy is being fetched (`player.downloading` - in flight, and the

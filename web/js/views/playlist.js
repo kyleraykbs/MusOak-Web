@@ -25,7 +25,7 @@ import { isSignedIn, state } from "../state.js";
 import { currentRoom } from "../rooms-state.js";
 import * as offline from "../offline.js";
 import { player } from "../player.js";
-import { artistLine, artistLineNode, enqueueTracks, goToArtistItem, playOne, playTracks, providerErrorLines, queueButton, queueNextTracks, reportError, shuffleItems } from "./queue.js";
+import { artistLine, artistLineNode, goToArtistItem, playOne, playTracks, providerErrorLines, queueButton, queueNextTracks, queueLastTracks, reportError, shuffleItems } from "./queue.js";
 import { shareTrack } from "./share.js";
 
 registerView({
@@ -142,7 +142,7 @@ export function playButtons(tracks, { withShuffleQueue = true, playlistId = "" }
       text: "Queue",
       disabled: empty,
       title: "Add these tracks to the play queue",
-      onclick: () => enqueueTracks(list),
+      onclick: () => queueNextTracks(list),
     })
   );
   if (withShuffleQueue) {
@@ -152,7 +152,7 @@ export function playButtons(tracks, { withShuffleQueue = true, playlistId = "" }
         text: "Shuffle Queue",
         disabled: empty,
         title: "Add these tracks to the play queue in a random order",
-        onclick: () => enqueueTracks(shuffleItems(list)),
+        onclick: () => queueNextTracks(shuffleItems(list)),
       })
     );
   }
@@ -206,8 +206,8 @@ export function trackMenu(track, extra = [], { playlistId = "" } = {}) {
     items.push({ label: "Queue in the room", onClick: () => playTracks([track], 0) });
   } else {
     items.push({ label: "Play", onClick: () => playTracks([track], 0, { playlistId }) });
-    items.push({ label: "Queue next", onClick: () => queueNextTracks([track]) });
-    items.push({ label: "Queue", onClick: () => enqueueTracks([track]) });
+    items.push({ label: "Queue", onClick: () => queueNextTracks([track]) });
+    items.push({ label: "Queue last", onClick: () => queueLastTracks([track]) });
     items.push({ label: "Radio", onClick: () => startRadio(track) });
   }
   items.push({ label: "Add to playlist…", onClick: () => addToPlaylistDialog([track]) });
@@ -512,8 +512,8 @@ function keptTrackRow(tracks, track, position) {
     onActivate: () => playOne(tracks, position, { playlistId: activeId }),
     menu: [
       { label: "Play", onClick: () => playOne(tracks, position, { playlistId: activeId }) },
-      { label: "Queue next", onClick: () => queueNextTracks([track]) },
-      { label: "Queue", onClick: () => enqueueTracks([track]) },
+      { label: "Queue", onClick: () => queueNextTracks([track]) },
+      { label: "Queue last", onClick: () => queueLastTracks([track]) },
     ],
   });
 }

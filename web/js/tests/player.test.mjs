@@ -114,6 +114,35 @@ test("the copy spends a waiting play press and keeps the pending position", () =
     player._setBuffering = saved.setBuffering;
   }
 });
+test("playing a selected song keeps pending queue items", () => {
+  const saved = {
+    queue: player.queue,
+    index: player._index,
+    emit: player._emit,
+    jumpTo: player.jumpTo,
+    room: player._room,
+  };
+  const jumps = [];
+  try {
+    player._room = null;
+    player.queue = [track("current"), track("pending")];
+    player._index = 0;
+    player._emit = () => {};
+    player.jumpTo = (index) => jumps.push(index);
+
+    player.playNow(track("selected"));
+
+    assert.deepEqual(ids(player.queue), ["selected", "pending"]);
+    assert.equal(player._index, 0);
+    assert.deepEqual(jumps, [0]);
+  } finally {
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._emit = saved.emit;
+    player.jumpTo = saved.jumpTo;
+    player._room = saved.room;
+  }
+});
 
 test("mediaStateLabel says what a file is doing", () => {
   assert.equal(mediaStateLabel("ready"), "ready");

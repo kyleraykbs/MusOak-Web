@@ -234,37 +234,25 @@ export function playTracks(tracks, index = 0, { playlistId = "" } = {}) {
   player.play(Array.from(tracks || []), index);
 }
 
-/** What clicking a song in a list does: that song, and nothing else.
- *
- * A list of songs is a menu of them, not a set to adopt: wanting the rest is
- * what the queue and shuffle buttons are for, and a click that quietly takes
- * the whole playlist makes every later choice a position in a list nobody asked
- * to be in. */
+/** What clicking a song in a list does: that song becomes the top item while the pending queue stays behind it. */
 export function playOne(tracks, position = 0, { playlistId = "" } = {}) {
   const list = Array.from(tracks || []);
   const track = list[Math.max(0, Math.min(position, list.length - 1))];
   if (!track) return;
-  playTracks([track], 0, { playlistId });
+  player.setContext({ playlistId: playlistId || "" });
+  player.playNow(track);
 }
 
-/** Add a list to the end of what is already queued. */
-export function enqueueTracks(tracks) {
-  player.enqueue(Array.from(tracks || []));
-}
-
-/** Put a list at the front of the queue, right after what is playing now. */
+/** Add a list immediately after the song currently playing. */
 export function queueNextTracks(tracks) {
   player.playNext(Array.from(tracks || []));
 }
+/** Add a list after all currently pending songs. */
+export function queueLastTracks(tracks) {
+  player.enqueue(Array.from(tracks || []));
+}
 
-/**
- * Put one song on the end of the queue that will play it: the room's own queue
- * while a room session is live, and this device's queue otherwise.
- *
- * In a room the room decides what plays, so a song that only reached the local
- * queue would never be heard; `enqueue` is the same path the room's own queue
- * is added through, and the player's own queue is not the one running there.
- */
+/** Queue a song next in the room or on this device. */
 export function queueTrack(track) {
   if (!track?.id) return;
   const name = `\u201c${track.title || "the song"}\u201d`;
@@ -273,9 +261,11 @@ export function queueTrack(track) {
     toast(`Queued ${name} in the room`);
     return;
   }
-  enqueueTracks([track]);
+  queueNextTracks([track]);
   toast(`Queued ${name}`);
 }
+
+
 
 /**
  * The "+" a song's row carries, wherever a song is listed: search results, a

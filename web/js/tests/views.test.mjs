@@ -197,6 +197,11 @@ test("the module a row's menu comes from loads where the menu is opened", async 
   const { trackMenu } = await import("../views/playlist.js");
   assert.equal(typeof trackMenu, "function");
 });
+test("song menus call the immediate and last queue actions by name", async () => {
+  const { trackMenu } = await import("../views/playlist.js");
+  const labels = trackMenu({ id: "t1", title: "Song", artists: [] }).map((item) => item.label);
+  assert.deepEqual(labels.slice(0, 3), ["Play", "Queue", "Queue last"]);
+});
 
 test("the Rooms tab goes where it was left", async () => {
   const { state } = await import("../state.js");
@@ -233,15 +238,15 @@ test("the plus queues a song and does not let the row's own click through", asyn
   const { queueButton } = await import("../views/queue.js");
   const { player } = await import("../player.js");
 
-  const saved = { queue: player.queue, index: player._index, prefetch: player._prefetch, play: player.play };
+  const saved = { queue: player.queue, index: player._index, prefetch: player._prefetch, play: player.play, playNext: player.playNext };
   const plays = [];
   try {
-    // A queue already playing, so the add is a plain append: the assertion is
-    // about the press, not about the queue starting on its first song.
-    player.queue = [{ id: "seed", title: "Seed" }];
+    // Queue adds go immediately after the current song, not at the end.
+    player.queue = [{ id: "seed", title: "Seed" }, { id: "later", title: "Later" }];
     player._index = 0;
     player._prefetch = () => {};
     player.play = (...args) => plays.push(args);
+    player.playNext = (tracks) => player.queue.splice(player._index + 1, 0, ...tracks);
 
     const button = queueButton({ id: "t1", title: "Song", artists: ["Someone"] });
     assert.equal(button.attributes.title, "Queue");
@@ -254,10 +259,8 @@ test("the plus queues a song and does not let the row's own click through", asyn
       preventDefault: () => { prevented += 1; },
     });
 
-    assert.deepEqual(player.queue.map((track) => track.id), ["seed", "t1"], "the song is queued");
+    assert.deepEqual(player.queue.map((track) => track.id), ["seed", "t1", "later"], "the song is queued next");
     assert.deepEqual(plays, [], "and it is not played");
-    // The press is swallowed before it reaches the row, which is what keeps a
-    // queue from also being a play or a menu.
     assert.equal(stopped, 1);
     assert.equal(prevented, 1);
   } finally {
@@ -265,6 +268,7 @@ test("the plus queues a song and does not let the row's own click through", asyn
     player._index = saved.index;
     player._prefetch = saved.prefetch;
     player.play = saved.play;
+    player.playNext = saved.playNext;
   }
 });
 

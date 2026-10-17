@@ -496,7 +496,29 @@ class Player {
     this._emit("queue-changed", this.queue);
     this.jumpTo(start);
   }
-
+  /** Start one selected track without discarding the queue behind the current item. */
+  playNow(track) {
+    if (!track) return;
+    if (this._room) {
+      this._room.onAdd?.([track]);
+      return;
+    }
+    if (!this.queue.length) {
+      this.play(track);
+      return;
+    }
+    // The current item and anything before it are no longer pending. Keep the
+    // existing items after it, put the selection at the head, and load it so
+    // clicking a playlist song skips the current item without clearing what is
+    // already queued.
+    const afterCurrent = this._index >= 0 && this._index < this.queue.length
+      ? this.queue.slice(this._index + 1)
+      : this.queue.slice();
+    this.queue = [track, ...afterCurrent];
+    this._index = 0;
+    this._emit("queue-changed", this.queue);
+    this.jumpTo(0);
+  }
   /** Add tracks to the end of the queue, or right after the current one. */
   enqueue(tracks, { next = false } = {}) {
     const list = (Array.isArray(tracks) ? tracks : [tracks]).filter(Boolean);
