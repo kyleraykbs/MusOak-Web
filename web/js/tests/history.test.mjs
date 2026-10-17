@@ -24,3 +24,8 @@ test("a play count is singular only for one", () => {
   assert.equal(playCountLabel(7), "7 plays");
   assert.equal(playCountLabel(undefined), "0 plays");
 });
+test("history view module loads after shaping entries in paint", async () => {
+  const history = await import("../views/history.js");
+  assert.equal(typeof history.playCountLabel, "function");
+  assert.equal(typeof history.playedLengthLabel, "function");
+});

@@ -128,10 +128,10 @@ function paint() {
   );
 }
 
-/** One section: its heading and its rows, or a line saying there are none. */
-function section(title, entries, shape) {
+/** One section: its heading and its already-shaped rows, or a line saying none. */
+function section(title, entries) {
   const client = currentClient();
-  const items = (entries || []).map(shape).filter((item) => item.track);
+  const items = (entries || []).filter((item) => item.track);
   const tracks = items.map((item) => item.track);
   return h(
     "div",
