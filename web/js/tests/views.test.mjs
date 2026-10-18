@@ -284,6 +284,19 @@ test("a song's row carries the plus beside its menu, wherever the row is drawn",
   const labels = row.children.map((child) => child.attributes?.["aria-label"]).filter(Boolean);
   assert.deepEqual(labels, ["Queue", "Edit rating", "More actions"], "the rating editor sits between queue and menu");
 });
+test("playlist and favourite track rows carry song artwork", async () => {
+  const { trackRow } = await import("../views/playlist.js");
+  const row = trackRow({
+    track: { id: "t1", title: "Song", artists: ["Someone"], artworkUrl: "/api/v1/artwork/track/t1" },
+    position: 0,
+    client: null,
+    onActivate: () => {},
+    menu: [],
+  });
+  const artwork = row.children.find((child) => child.className?.includes?.("art"));
+  assert.ok(artwork, "the shared row has an artwork tile");
+  assert.equal(artwork.attributes.src, "/api/v1/artwork/track/t1");
+});
 test("playlist track rows expose their reorder handle", async () => {
   const { trackRow } = await import("../views/playlist.js");
   const { dragHandle } = await import("../views/queue.js");

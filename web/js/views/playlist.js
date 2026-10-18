@@ -300,6 +300,7 @@ export function trackRow({ track, position, client, onActivate, menu = [], trail
     },
     h("span", { class: "time playlist-track-number", text: String(position + 1) }),
     drag,
+    artworkTile(client, track.artworkUrl, "small"),
     h("div", { class: "grow" }, h("div", { class: "title", text: track.title || "" }), artistLineNode(artistLine(track), (track.artistIds || [])[0])),
     rating != null ? h("span", { class: "time track-rating-value", text: `${Number(rating).toFixed(1)}/5.0` }) : null,
     h("span", { class: "time", text: track.durationMs ? fmtDuration(track.durationMs) : "" }),
