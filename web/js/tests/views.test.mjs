@@ -297,6 +297,16 @@ test("playlist and favourite track rows carry song artwork", async () => {
   assert.ok(artwork, "the shared row has an artwork tile");
   assert.equal(artwork.attributes.src, "/api/v1/artwork/track/t1");
 });
+test("song search rows carry artwork", async () => {
+  const { trackRow } = await import("../views/search.js");
+  const source = trackRow({
+    track: { id: "t-search", title: "Search song", artists: ["Someone"], artworkUrl: "/api/v1/artwork/track/t-search" },
+  });
+  assert.ok(source, "search exposes its track row for the focused test");
+  const artwork = source.children.find((child) => child.className?.includes?.("art"));
+  assert.ok(artwork, "the search row has an artwork tile");
+  assert.equal(artwork.attributes.src, "/api/v1/artwork/track/t-search");
+});
 test("playlist track rows expose their reorder handle", async () => {
   const { trackRow } = await import("../views/playlist.js");
   const { dragHandle } = await import("../views/queue.js");

@@ -244,7 +244,7 @@ async function createPlaylistThenAdd(client, tracks) {
 
 // --- rows ------------------------------------------------------------------
 
-function trackRow(group) {
+export function trackRow(group) {
   const track = group?.track || {};
   const providers = groupProviders(group);
   const artist = artistLine(track);
