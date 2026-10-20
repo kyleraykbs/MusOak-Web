@@ -761,6 +761,8 @@ class Player {
     // leaves the play to land long after the gesture that asked for it.
     if (this._loading) {
       this._resumeWhenReady = true;
+      this._playingWanted = true;
+      this._stateEvent();
       return;
     }
     if (!this.audio || !this.audio.src) {
@@ -776,10 +778,21 @@ class Player {
 
   toggle() {
     // In a room the room owns the transport - unless it cannot be reached, when
-    // this device is all there is and the button has to keep working.
-    if (this._room && this.online()) return this._roomCommand(this.isPaused() ? "resume" : "pause", "pause");
-    if (this.isPaused()) this.resume();
-    else this.pause();
+    // this device is all there is and the button has to keep working. What the
+    // press means is the intent there too: the room's own driver calls this
+    // player's pause and resume, so the intent is the room's state, and during a
+    // changeover the element is stopped while the room is not.
+    if (this._room && this.online()) return this._roomCommand(this._playingWanted ? "pause" : "resume", "pause");
+    // What a press means is the intent, not the element: while the next file is
+    // on its way the element is stopped and the player is not paused, and
+    // reading the element there turned a pause press into a play. A file that
+    // has run out is the one place the element's own state still decides - play
+    // there starts the song again from the top, which is what it has always
+    // done - and even that does not apply while a load is under way: the element
+    // is then holding the *previous* song, and that song having ended says
+    // nothing about this one.
+    if (this._playingWanted && (this._loading || !this.hasEnded())) this.pause();
+    else this.resume();
   }
 
   /** A transport button while a room owns playback.
@@ -807,7 +820,11 @@ class Player {
   seek(ms) {
     const target = Math.max(0, Math.round(Number(ms) || 0));
     const audio = this.audio;
-    if (!audio || !audio.src) {
+    // A load is fetching the next file: the element still holds the song before
+    // it, so a position applied now would move a file nobody is listening to and
+    // take this song's own position with it. It is held, and lands with the copy
+    // (`_handCopyToElement` places it there through `_placePosition`).
+    if (this._loading || !audio || !audio.src) {
       this._pendingSeek = target;
       return;
     }
@@ -819,6 +836,21 @@ class Player {
     // element has a duration, a user seek is authoritative; leaving the old
     // pending value would let a late metadata event snap the bar back.
     this._pendingSeek = null;
+    this._placePosition(target);
+  }
+
+  /** Put the element at a position of the file it is holding.
+   *
+   *  Separate from `seek`, which decides whether the element is holding the
+   *  right file at all: this one is the act, and it is what the copy's own
+   *  hand-over uses - the moment a pending position belongs to. */
+  _placePosition(atMs) {
+    const audio = this.audio;
+    const target = Math.max(0, Math.round(Number(atMs) || 0));
+    if (!audio || !audio.duration) {
+      this._pendingSeek = target;
+      return;
+    }
     try {
       audio.currentTime = Math.min(target / 1000, audio.duration);
     } catch {
@@ -830,6 +862,11 @@ class Player {
 
   positionMs() {
     const audio = this.audio;
+    // A load in flight means the element is still holding the song before this
+    // one, so its clock is not this song's position: what this song starts at is
+    // the position the load was given, and that is what the bar and the lock
+    // screen should be reading until its own file lands.
+    if (this._loading) return Math.max(0, Math.round(Number(this._pendingSeek) || 0));
     if (!audio || !Number.isFinite(audio.currentTime)) return 0;
     return Math.round(audio.currentTime * 1000);
   }
@@ -838,6 +875,9 @@ class Player {
    *  It can differ from the host's room duration. */
   measuredDurationMs() {
     const audio = this.audio;
+    // The element is still holding the previous song through a load, so its
+    // length is that song's and not this one's.
+    if (this._loading) return 0;
     if (audio && Number.isFinite(audio.duration) && audio.duration > 0) return Math.round(audio.duration * 1000);
     return 0;
   }
@@ -1424,30 +1464,33 @@ class Player {
       return;
     }
 
-    // Nothing asks the element to play while the file is on its way, and the bar
-    // says paused until it is there. A play that arrives in this window used to
-    // start whatever the element still held (see below); a retry that wanted one
-    // is stopped here for the same reason. A press during the wait is kept as
-    // `_resumeWhenReady`, which the copy's own hand-over spends - a new load is
-    // a new song, so whatever the last one was waiting for is not this one's.
-    this._playingWanted = false;
+    // The intent, which is not the element's state. A load that is going to
+    // play keeps saying "playing" while the file is on its way: the element is
+    // stopped for that moment, and a lock screen told "paused" there is a lock
+    // screen that takes the card away - and with it the page's standing as
+    // something that is playing, which is what a backgrounded phone needs to be
+    // allowed to start the next file at all. A load that is not going to play (a
+    // restored session) is a pause, and says so.
+    //
+    // A press during the wait is kept as `_resumeWhenReady`, which the copy's
+    // own hand-over spends - a new load is a new song, so whatever the last one
+    // was waiting for is not this one's.
+    this._playingWanted = Boolean(autoplay);
     this._resumeWhenReady = false;
-    this._wantResume(false);
+    this._wantResume(Boolean(autoplay));
     this.renderBar();
-    if (audio.src) {
-      // The old track is unloaded, not merely paused and rewound: while the next
-      // file is fetched, a play that comes from anywhere else - the retry of a
-      // refused play, a wake-up after a phone woke up - would start the song
-      // that was playing before, under a bar naming another one. An element
-      // with no source has nothing to start.
-      audio.pause();
-      audio.removeAttribute("src");
-      try {
-        audio.load();
-      } catch {
-        /* nothing to unload yet */
-      }
-    }
+    // What was playing stops - a skip must not leave the last song sounding
+    // under the fetch of this one - but its source stays on the element. An
+    // emptied element is what killed the media session at every transition:
+    // Chrome tears a page's session down when its source changes and playback
+    // does not start at once, which is why the lock screen's card dropped
+    // between songs, and why the page stopped being counted as a tab that is
+    // playing (the exemption from background timer throttling and freezing that
+    // the recovery retry itself depends on). Nothing else may start the old
+    // song meanwhile: every other path that could call `play()` defers or is
+    // gated while `_loading` is set. The element is emptied only when there is
+    // nothing to play at all (`_stopAudio`).
+    if (audio.src) audio.pause();
     this._emit("track-changed", track);
     // The bar says "downloading" from the moment the track is chosen.
     this._stateEvent();
@@ -1840,8 +1883,10 @@ class Player {
     const audio = this.audio;
     if (!audio) return;
     // A play pressed while this copy was on its way is the same intent as the
-    // load's own autoplay, and it is spent here either way.
-    const autoplay = Boolean(attempt.autoplay || this._resumeWhenReady);
+    // load's own autoplay, and it is spent here either way. The intent, not the
+    // load's argument: a pause pressed during the wait has cleared it, and the
+    // press must win over the load that came first.
+    const autoplay = Boolean(this._playingWanted || this._resumeWhenReady);
     this._resumeWhenReady = false;
     // The element may already hold this very copy: a restore that ran twice, a
     // load asking for the song that is already on. Assigning the same source
@@ -1853,9 +1898,12 @@ class Player {
       this.renderBar();
       audio.src = entry.url;
     } else if (this._pendingSeek !== null) {
+      // The position lands whether or not this load is still flagged as in
+      // flight: this is the moment it belongs to, and `seek` holds a position
+      // while the element is still holding some other song.
       const at = this._pendingSeek;
       this._pendingSeek = null;
-      this.seek(at);
+      this._placePosition(at);
     }
     if (!autoplay) {
       // The bar shows a stopped player for a song nobody has started yet; the
@@ -2276,6 +2324,9 @@ class Player {
     audio.addEventListener("playing", () => {
       if (audio !== this.audio) return;
       this._setBuffering(false);
+      // A stall that was recovered from is over once sound is moving again: the
+      // next one in this song is a new one, and has its own replacement to make.
+      this._clockRecovering = false;
       clearInterval(this._positionTimer);
       this._positionTimer = setInterval(() => {
         if (audio !== this.audio || audio.paused || audio.ended) return;
@@ -2354,7 +2405,7 @@ class Player {
     // that has been and gone is a start that only the retry ever makes.
     if (Number.isFinite(audio.duration) && audio.duration > 0) {
       this._pendingSeek = null;
-      this.seek(atMs);
+      this._placePosition(atMs);
       this._play();
       return;
     }
@@ -2557,6 +2608,9 @@ class Player {
   _stopAudio() {
     this._playingWanted = false;
     this._resumeWhenReady = false;
+    // Nothing to play is not something to retry: the wait a load just armed is
+    // for a track that turned out not to exist.
+    this._wantResume(false);
     clearInterval(this._positionTimer);
     this._positionTimer = 0;
     if (!this.audio) return;
@@ -2725,13 +2779,18 @@ class Player {
     // currentTime and the position bar never advance.
     const audio = this.audio;
     const readyState = Number(audio?.readyState);
+    // A frozen clock is only the dead-decoder state when the element *claims* to
+    // be playing. One the browser refused is paused, and its clock standing
+    // still is that refusal - not a decoder to throw away. Replacing the element
+    // there restarted the song from the top and killed the media session a
+    // second time, four seconds at a time, all the way to the listener's unlock.
     const clockStalled = Boolean(
-      audio?.src && this._clockAt > 0 && Date.now() - this._clockAt > 3000
+      audio?.src && !audio.paused && this._clockAt > 0 && Date.now() - this._clockAt > 3000
       && Math.abs(Number(audio.currentTime) - this._clockPosition) < 0.05
     );
     const waitingForData = Boolean(this._buffering || clockStalled || (audio?.src && Number.isFinite(readyState) && readyState < 3));
-    if (!this._resumeWanted || (this.isPlaying() && !waitingForData) || this.hasEnded()) return;
-    if (clockStalled && !this._clockRecovering && audio) {
+    if (this._loading || !this._resumeWanted || (this.isPlaying() && !waitingForData) || this.hasEnded()) return;
+    if (clockStalled && !this._clockRecovering && !this._blocked && audio) {
       this._clockRecovering = true;
       this._resetStalledAudio();
       return;
@@ -2791,6 +2850,10 @@ class Player {
   }
 
   _stateEvent() {
+    // The lock screen is part of the state, not only of the position: an intent
+    // that changed here (a pause, a play) has to reach it even when no timeline
+    // event follows.
+    this._syncMediaSession();
     this._emit("state-changed", this.state());
     this.renderBar();
   }

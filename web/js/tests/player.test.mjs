@@ -1094,11 +1094,14 @@ test("a frozen media element is replaced before retrying", () => {
     audio: player.audio, resume: player._resumeWanted, buffering: player._buffering,
     clockPosition: player._clockPosition, clockAt: player._clockAt, recovering: player._clockRecovering,
     startAudio: player._startAudio, wireAudio: player._wireAudio,
+    blocked: player._blocked, loading: player._loading,
   };
   try {
     player.audio = old;
     player._resumeWanted = true;
     player._buffering = false;
+    player._blocked = false;
+    player._loading = false;
     player._clockPosition = 0;
     player._clockAt = Date.now() - 4_000;
     player._clockRecovering = false;
@@ -1119,10 +1122,248 @@ test("a frozen media element is replaced before retrying", () => {
     player._clockRecovering = saved.recovering;
     player._startAudio = saved.startAudio;
     player._wireAudio = saved.wireAudio;
+    player._blocked = saved.blocked;
+    player._loading = saved.loading;
   }
 });
 test("a stale reload player can replace its Firefox-style frozen element", () => {
   assert.equal(typeof player._resetStalledAudio, "function");
+});
+//
+// The phone's two symptoms were one contract. A transition stopped the *element*
+// as well as the song - it emptied it and reported "paused" for the whole fetch
+// of the next file - and Chrome tears a page's media session down when the
+// element's source changes and playback does not start at once. The card went
+// away, and with it the page's standing as a tab that is playing, which is the
+// exemption from background timer throttling and freezing that the recovery
+// retry itself needs. What is pinned here is that a transition stops the song
+// and nothing else, and that the retry is a retry.
+test("a track change keeps the element loaded and the lock screen playing", async () => {
+  const events = [];
+  const session = {
+    playbackState: "",
+    metadata: null,
+    setPositionState() {},
+    setActionHandler() {},
+  };
+  const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { mediaSession: session, onLine: true } });
+  const saved = {
+    audio: player.audio,
+    ensureAudio: player.ensureAudio,
+    queue: player.queue,
+    index: player._index,
+    variant: player._variant,
+    token: player._token,
+    loading: player._loading,
+    pendingSeek: player._pendingSeek,
+    playingWanted: player._playingWanted,
+    resumeWanted: player._resumeWanted,
+    resumeTimer: player._resumeTimer,
+    offline: player._offline,
+    offlineWanted: player._offlineWanted,
+    offlineInFlight: player._offlineInFlight,
+    offlineActive: player._offlineActive,
+    offlineBytes: player._offlineBytes,
+    variantFor: player._variantFor,
+    startDownload: player._startDownload,
+    prefetch: player._prefetch,
+    clientIfAny: player._clientIfAny,
+    online: player.online,
+    room: player._room,
+  };
+  const audio = {
+    src: "blob:one", currentSrc: "blob:one", currentTime: 179, duration: 180,
+    paused: true, ended: true, readyState: 4, volume: 1, muted: false,
+    listeners: {},
+    dataset: {}, style: {},
+    addEventListener(name, run) { (this.listeners[name] = this.listeners[name] || []).push(run); },
+    removeEventListener() {},
+    fire(name) { for (const run of [...(this.listeners[name] || [])]) run({ type: name }); },
+    pause() { events.push("pause"); this.paused = true; },
+    play() { events.push("play"); this.paused = false; return { catch() {} }; },
+    removeAttribute(name) { events.push(`removeAttribute:${name}`); this.src = ""; },
+    load() { events.push("load"); },
+  };
+  try {
+    player.setRoom(null);
+    player._clientIfAny = () => null;
+    player.online = () => true;
+    player.audio = audio;
+    player.ensureAudio = () => audio;
+    player._wireAudio(audio);
+    player.queue = [track("one"), track("two")];
+    player._index = 0;
+    player._variant = "v-one";
+    player._loading = false;
+    player._playingWanted = true;
+    player._pendingSeek = null;
+    player._offline = new Map([["two", { state: "pending", variantId: "v-two", url: "", bytes: 0, at: 0 }]]);
+    player._offlineWanted = [];
+    player._offlineInFlight = new Map();
+    player._offlineActive = 0;
+    player._offlineBytes = 0;
+    player._variantFor = async () => ({ sources: [], preferredVariantId: "", variantId: "v-two", source: null });
+    player._startDownload = () => {};
+    player._prefetch = () => {};
+    player._wantResume(false);
+
+    // The next file is on its way: this is the whole of the window that used to
+    // take the card away.
+    const load = player._load(1, { autoplay: true });
+
+    assert.deepEqual(events, ["pause"], "the song stops and the element is left alone");
+    assert.equal(audio.src, "blob:one", "its source is not taken off the element");
+    assert.equal(player._loading, true, "the load is under way");
+    assert.equal(session.playbackState, "playing", "and the lock screen is still told this page is playing");
+    assert.equal(player._playingWanted, true, "because that is what the player intends");
+    assert.equal(player._resumeWanted, true, "and the retry stays armed through the wait");
+    assert.equal(player._pendingSeek, 0, "the position this song starts at is held");
+    assert.equal(audio.currentTime, 179, "and is not applied to the file the element still holds");
+    assert.equal(player.positionMs(), 0, "the bar reads this song's position, not the last one's");
+    assert.equal(player.measuredDurationMs(), 0, "and not the last song's length either");
+
+    // Let the load settle without it running into the next scenario.
+    player._token += 1;
+    player._loading = false;
+    await load;
+  } finally {
+    player._wantResume(false);
+    player._playingWanted = saved.playingWanted;
+    clearInterval(player._resumeTimer);
+    player.audio = saved.audio;
+    player.ensureAudio = saved.ensureAudio;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._variant = saved.variant;
+    player._token = saved.token;
+    player._loading = saved.loading;
+    player._pendingSeek = saved.pendingSeek;
+    player._resumeWanted = saved.resumeWanted;
+    player._resumeTimer = saved.resumeTimer;
+    player._offline = saved.offline;
+    player._offlineWanted = saved.offlineWanted;
+    player._offlineInFlight = saved.offlineInFlight;
+    player._offlineActive = saved.offlineActive;
+    player._offlineBytes = saved.offlineBytes;
+    player._variantFor = saved.variantFor;
+    player._startDownload = saved.startDownload;
+    player._prefetch = saved.prefetch;
+    player._clientIfAny = saved.clientIfAny;
+    player.online = saved.online;
+    player.setRoom(saved.room);
+    if (navigatorDescriptor) Object.defineProperty(globalThis, "navigator", navigatorDescriptor);
+  }
+});
+
+// A play the browser refused is a play to ask for again. It was being mistaken
+// for a decoder that had died: the element sat at zero with a source and a
+// stale clock, so the watchdog threw the element away and started the song from
+// the top - four seconds at a time, killing the media session again each time,
+// which is the sound of a song "trying to play" until the phone is unlocked.
+test("a refused play is retried, and the element it was refused on is kept", () => {
+  const played = [];
+  const audio = {
+    src: "blob:copy", currentSrc: "blob:copy", currentTime: 0, duration: 200,
+    paused: true, ended: false, readyState: 4,
+    play() { played.push(this.src); return { catch() {} }; },
+  };
+  const saved = {
+    audio: player.audio, resume: player._resumeWanted, loading: player._loading, blocked: player._blocked,
+    clockPosition: player._clockPosition, clockAt: player._clockAt, recovering: player._clockRecovering,
+    reset: player._resetStalledAudio, buffering: player._buffering,
+  };
+  try {
+    let replaced = 0;
+    player.audio = audio;
+    player._resumeWanted = true;
+    player._loading = false;
+    player._buffering = false;
+    player._blocked = true;
+    player._clockPosition = 0;
+    player._clockAt = Date.now() - 5_000;
+    player._clockRecovering = false;
+    player._resetStalledAudio = () => { replaced += 1; return true; };
+
+    player._retryWanted();
+
+    assert.deepEqual(played, ["blob:copy"], "the refused play is asked for again");
+    assert.equal(replaced, 0, "and the element is not thrown away for it");
+  } finally {
+    player.audio = saved.audio;
+    player._resumeWanted = saved.resume;
+    player._loading = saved.loading;
+    player._blocked = saved.blocked;
+    player._buffering = saved.buffering;
+    player._clockPosition = saved.clockPosition;
+    player._clockAt = saved.clockAt;
+    player._clockRecovering = saved.recovering;
+    player._resetStalledAudio = saved.reset;
+  }
+});
+
+// Nothing may ask the element to play while a load is fetching the next file -
+// it still holds the song before it - and what the copy does when it lands is
+// the listener's intent, not the load's own argument.
+test("a press while the next file is on its way decides what the copy does", () => {
+  const started = [];
+  const audio = {
+    // The shape of a natural advance: the previous song has run out, which the
+    // element reports as an ended, paused file that is still loaded.
+    src: "blob:one", currentSrc: "blob:one", currentTime: 180, duration: 180,
+    paused: true, ended: true, readyState: 4,
+    play() { started.push(this.src); this.paused = false; return { catch() {} }; },
+    pause() { this.paused = true; },
+  };
+  const copy = { state: "ready", variantId: "v-one", url: "blob:one", bytes: 1, at: 0 };
+  const saved = {
+    audio: player.audio, loading: player._loading, playingWanted: player._playingWanted,
+    resumeWhenReady: player._resumeWhenReady, resumeWanted: player._resumeWanted, resumeTimer: player._resumeTimer,
+    offline: player._offline, pendingSeek: player._pendingSeek, room: player._room, queue: player.queue,
+  };
+  try {
+    player.setRoom(null);
+    player.audio = audio;
+    player.queue = [track("one")];
+    player._offline = new Map([["one", copy]]);
+    player._pendingSeek = null;
+
+    // The element still holds the song before this load: a retry here would
+    // start that one under a bar naming this one.
+    player._loading = true;
+    player._playingWanted = true;
+    player._resumeWanted = true;
+    player._retryWanted();
+    assert.deepEqual(started, [], "nothing starts the song the element still holds");
+
+    // A pause pressed during the wait is the listener's, and outlives the load.
+    player.toggle();
+    assert.equal(player._playingWanted, false, "the press is read as the intent, not the element");
+    player._handCopyToElement(copy, { variantId: "v-one", token: player._token, autoplay: true });
+    assert.deepEqual(started, [], "so the copy that lands does not play");
+
+    // A play pressed during the wait is spent by the copy as well.
+    player._playingWanted = false;
+    player._loading = true;
+    player.resume();
+    assert.equal(player._resumeWhenReady, true, "the press waits for the file");
+    assert.equal(player._playingWanted, true, "and the intent is what the lock screen is told");
+    player._handCopyToElement(copy, { variantId: "v-one", token: player._token, autoplay: false });
+    assert.deepEqual(started, ["blob:one"], "and the press is what starts it");
+  } finally {
+    player._wantResume(false);
+    clearInterval(player._resumeTimer);
+    player._resumeTimer = saved.resumeTimer;
+    player._resumeWanted = saved.resumeWanted;
+    player._resumeWhenReady = saved.resumeWhenReady;
+    player._playingWanted = saved.playingWanted;
+    player._loading = saved.loading;
+    player._pendingSeek = saved.pendingSeek;
+    player._offline = saved.offline;
+    player.queue = saved.queue;
+    player.audio = saved.audio;
+    player.setRoom(saved.room);
+  }
 });
 //
 // A kept playlist hands the player tracks that carry the URL their own bytes
@@ -2323,8 +2564,15 @@ test("a room that asks for one item again does not restart its load", async () =
 
     assert.deepEqual(starts, ["v-a"], "the backend was asked for the file once");
     assert.deepEqual(fetches, ["a"], "and the song's own download was started once");
-    assert.equal(clears, 1, "the element was not stopped and cleared again");
+    // Nothing empties the element any more, here or anywhere: the song that was
+    // playing is only stopped, and its source stays on the element until this
+    // load's copy replaces it. That is what keeps the page's media session (and
+    // so the lock screen's card) alive across a transition.
+    assert.equal(clears, 0, "the element was not stopped and cleared");
+    assert.equal(audio.src, "/media/v-old", "the song that was playing keeps its source while the file arrives");
+    assert.equal(audio.paused, true, "and it is stopped, not left sounding under the fetch");
     assert.equal(player._pendingSeek, 4000, "the position taken is the room's, the later one");
+    assert.equal(audio.currentTime, 0, "and it is held, not applied to the file the element still holds");
 
     // The one load carries on: it still reaches a playable element.
     finish();

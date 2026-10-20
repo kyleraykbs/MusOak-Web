@@ -53,3 +53,17 @@ DECISIONS.md, same date). Left open by it:
 - [ ] `web/sw.js`: the shell cache is keyed by full URL and never pruned.
 - [ ] `internal/web/server.go`: one strong ETag is sent for the gzip and the
       identity representation of the same asset.
+## Open on the phone, 2026-10-19
+
+The lock screen kept its card through a changeover in the unit tests, but the
+card itself can only be watched on a device (Firefox has no media session, and
+headless has no notification). Kyle to check on Android Chrome:
+
+- [ ] A queue of songs with the screen off: the card stays through the change,
+      and the next song starts by itself.
+- [ ] If it still drops across a *long* wait (a room changeover, where the next
+      file is fetched at the advance rather than ahead of it), the fix is the
+      documented workaround: a second, silent element played and paused
+      synchronously at the changeover to hold the session open. Its cost: the
+      notification then describes the silent player, so metadata and position
+      have to be set on the session explicitly.

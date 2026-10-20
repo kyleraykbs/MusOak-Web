@@ -407,3 +407,37 @@
   element's dead/stalled state, not a user pause; `isPlaying()` alone made the
   existing retry watchdog declare it healthy forever.
 - Reversible: yes.
+
+## 2026-10-19 The element is never emptied at a track boundary
+- Decision: a load stops the song (`audio.pause()`) but never takes its source
+  off the element and never calls `load()`. `_stopAudio` remains the only place
+  that empties it, and only when there is nothing to play at all. A load that
+  will autoplay keeps `_playingWanted` true and keeps the resume retry armed, so
+  the media session is never told "paused" during a changeover. Every other path
+  that could start the element while a load is in flight is gated (`_retryWanted`
+  returns while `_loading`, `resume()` defers to `_resumeWhenReady`, `seek()`
+  holds its position, `_handCopyToElement` applies it through `_placePosition`).
+  `positionMs`/`measuredDurationMs` read the load's pending position and the
+  known length while the element still holds the previous song.
+- Why: Chrome tears a page's media session down when the element's source
+  changes and playback does not start at once, and while no audio is playing a
+  hidden tab is throttled and frozen - which is what killed the lock-screen card
+  between songs on Kyle's phone and then left the recovery retry (a 4s
+  `setInterval`) unable to run until he unlocked it. Reproduced against the real
+  module before the change: `pause, removeAttribute:src, load`,
+  `session.playbackState = "paused"` through the whole fetch window.
+- Reversible: yes.
+
+## 2026-10-19 The stall watchdog is for a lying clock, not a refused play
+- Decision: `_resetStalledAudio` now requires an element that claims to be
+  playing (`!audio.paused`), no known block, and no load in flight.
+  `_clockRecovering` is cleared by the `playing` event so a later genuine stall is
+  still recoverable. `toggle()` reads the press as the intent (`_playingWanted`),
+  falling back to the element only for a file that has run out and only when
+  nothing is loading.
+- Why: a play the browser refused is a paused element with a source at zero and a
+  stale clock - exactly the shape the watchdog read as a dead decoder. It threw
+  the element away and restarted the track from the top every few seconds, killing
+  the media session again each time; that is the "song trying to play" that only
+  became real on unlock.
+- Reversible: yes.

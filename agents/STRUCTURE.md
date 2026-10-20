@@ -13,7 +13,7 @@ repo (`../musoak`), reached through the proxy below.
 
 - `server.go` - the frontend server: asset stamping (a content digest in the
   URL query), gzip, ETag/`Last-Modified` answers, and the reverse proxy.
-  Live mode (`--frontend DIR`) serves a checkout instead of the embedded copy.
+  Live mode (`--web-dir DIR`) serves a checkout instead of the embedded copy.
 - `proxy.go` - the API proxy: everything under the API prefix goes to the
   backend, so the page and the API share one origin.
 
@@ -22,7 +22,10 @@ repo (`../musoak`), reached through the proxy below.
 - `app.js` - boot, layout, view routing, the notification poll.
 - `player.js` - the audio engine: the queue, the one element, the page's own
   copies (which are what plays - a song is downloaded once and handed to the
-  element), the queue's download marks, save/restore of playback.
+  element), the queue's download marks, save/restore of playback. A track change
+  stops the song and never takes its source off the element: the page's media
+  session (the phone's lock screen, and its exemption from background throttling)
+  lives on that element, and an emptied one loses it.
 - `client.js` - the REST + event-stream client, session, in-flight dedupe.
 - `state.js` - the localStorage session and navigation state.
 - `offline.js` - IndexedDB store of kept songs, their download queue and sync.
