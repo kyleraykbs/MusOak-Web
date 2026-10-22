@@ -3066,3 +3066,25 @@ test("a status for a song nothing is downloading is not a count at all", () => {
     player._offline = saved;
   }
 });
+
+test("queueing a station next leaves what is playing on, and in place", () => {
+  const saved = { queue: player.queue, index: player._index, prefetch: player._prefetch, emit: player._emit };
+  const events = [];
+  try {
+    player.queue = queue("a", "b", "c");
+    player._index = 1;
+    player._emit = (name) => events.push(name);
+    player._prefetch = () => {};
+    player.playNext(queue("x", "y"));
+
+    assert.deepEqual(ids(player.queue), ["a", "b", "x", "y", "c"]);
+    assert.equal(player._index, 1, "the playhead did not move");
+    assert.equal(player.current().id, "b", "and the song in the ears is still on");
+    assert.deepEqual(events, ["queue-changed"], "the queue is redrawn, playback is not touched");
+  } finally {
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._prefetch = saved.prefetch;
+    player._emit = saved.emit;
+  }
+});

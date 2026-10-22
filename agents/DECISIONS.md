@@ -441,3 +441,13 @@
   the media session again each time; that is the "song trying to play" that only
   became real on unlock.
 - Reversible: yes.
+
+## 2026-10-22 Starting a station queues it next, it does not replace the queue
+- Decision: the row menu's Radio plays the station after the song that is on
+  (`player.playNext`) and only starts playback when nothing is playing. The
+  playing song is left out of the station so it is never repeated.
+- Why: `playTracks(list, 0)` replaced the queue and restarted the seed track
+  from zero, cutting the song the listener was hearing. Queued next keeps the
+  pending queue behind the station, which is the same place a person puts a
+  station they asked for "now".
+- Reversible: yes.

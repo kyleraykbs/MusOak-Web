@@ -159,15 +159,24 @@ export function playButtons(tracks, { withShuffleQueue = true, playlistId = "", 
   return buttons;
 }
 
-/** The ⋮ menu every track carries, with whatever the view adds to it.
- *
- * `playlistId` is the playlist a row belongs to, so the menu's own Play records
- * it the same way the row click and the page's Play do; a view that is not a
- * playlist passes nothing, which clears it.
- */
+/** What a station plays, in order: its seed, then what the providers suggested.
+ *  The song already on is left out, so queueing a station never repeats the one
+ *  the listener is hearing. */
+export function stationQueue(station, seed, playingId = "") {
+  const playing = String(playingId || "");
+  return [seed, ...(station?.tracks || [])].filter(
+    (entry) => entry?.id && String(entry.id) !== playing
+  );
+}
+
 /**
- * Build a station out of a song and play it: the song first, then what the
+ * Build a station out of a song and start it: the song first, then what the
  * providers think belongs beside it.
+ *
+ * Starting a station does not interrupt playback. When something is on, the
+ * station is queued after it and the song in the listener's ears keeps playing;
+ * when nothing is, it starts. The seed is not repeated when it is the song that
+ * is already playing.
  *
  * Nothing is saved: the menu's Radio is a station to listen to now, and a saved
  * list would turn up among somebody's playlists unasked.
@@ -178,9 +187,17 @@ async function startRadio(track) {
   toast(`Building a radio from \u201c${track.title || "this song"}\u201d\u2026`);
   try {
     const station = await client.radio(track.id, { save: false });
-    const list = [track, ...(station?.tracks || [])];
-    if (list.length < 2) {
+    if (!(station?.tracks || []).length) {
       toast(radioEmptyReason(station));
+      return;
+    }
+    const playing = player.current();
+    const list = stationQueue(station, track, playing?.id);
+    if (playing) {
+      // Next up, and the queue behind the current song is left alone: a play
+      // that jumps the queue is still a jump, so the station waits its turn.
+      player.playNext(list);
+      toast(`Radio queued after \u201c${playing.title || "the current song"}\u201d`);
       return;
     }
     playTracks(list, 0);
@@ -199,6 +216,12 @@ export function radioEmptyReason(station) {
     : "Nothing came back to build a radio from.";
 }
 
+/** The ⋮ menu every track carries, with whatever the view adds to it.
+ *
+ * `playlistId` is the playlist a row belongs to, so the menu's own Play records
+ * it the same way the row click and the page's Play do; a view that is not a
+ * playlist passes nothing, which clears it.
+ */
 export function trackMenu(track, extra = [], { playlistId = "" } = {}) {
   const items = [];
   if (inRoom()) {

@@ -9,7 +9,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { trackCountLine, totalDurationMs, radioEmptyReason } from "../views/playlist.js";
+import { trackCountLine, totalDurationMs, radioEmptyReason, stationQueue } from "../views/playlist.js";
 import { artistLine, moveItem, queueProjection, roomRowSubtitle, shuffleItems } from "../views/queue.js";
 import { createRoomState } from "../rooms-state.js";
 
@@ -199,6 +199,24 @@ test("an empty station names the provider that had trouble", () => {
   // simply had nothing worth offering is not dressed up as a failure.
   assert.equal(radioEmptyReason({ tracks: [] }), "Nothing came back to build a radio from.");
   assert.equal(radioEmptyReason(undefined), "Nothing came back to build a radio from.");
+});
+
+test("a station queues its seed and suggestions, and never repeats what is playing", () => {
+  const seed = { id: "seed", title: "Seed" };
+  const station = { tracks: [{ id: "a" }, { id: "b" }] };
+  const ids = (list) => list.map((entry) => entry.id);
+
+  // Idle: the seed leads its own station.
+  assert.deepEqual(ids(stationQueue(station, seed, "")), ["seed", "a", "b"]);
+  // Something else on: the station follows it whole.
+  assert.deepEqual(ids(stationQueue(station, seed, "other")), ["seed", "a", "b"]);
+  // The seed is what is playing: it is the one entry that must not come round again.
+  assert.deepEqual(ids(stationQueue(station, seed, "seed")), ["a", "b"]);
+  // Nothing came back: only the seed, which is what the caller treats as empty.
+  assert.deepEqual(ids(stationQueue({ tracks: [] }, seed, "")), ["seed"]);
+  assert.deepEqual(stationQueue(undefined, seed, "seed"), []);
+  // Rows without an id cannot be queued.
+  assert.deepEqual(ids(stationQueue({ tracks: [{ id: "a" }, {}] }, undefined, "")), ["a"]);
 });
 
 test("a room row says the artist before who queued it", () => {
