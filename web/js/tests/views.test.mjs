@@ -146,6 +146,27 @@ test("the queue's grip builds, and a drag can be wired to it", async () => {
   assert.equal(row.listeners.filter(([name]) => name === "pointerdown").length, 0);
 });
 
+test("a drop finds its entry whether the list carries keys or ids", async () => {
+  const queue = await import("../views/queue.js");
+
+  // Queue rows and room items name themselves with a key.
+  const keyed = [{ key: "a" }, { key: "b" }];
+  assert.equal(queue.entryForKey(keyed, "b"), keyed[1]);
+
+  // Playlists and a playlist's tracks are their own entries: the row's
+  // data-key is the entry's id, and a drag used to find nothing at all.
+  const playlists = [{ id: "one" }, { id: "two" }];
+  assert.equal(queue.entryForKey(playlists, "two"), playlists[1]);
+  const numeric = [{ id: 7 }];
+  assert.equal(queue.entryForKey(numeric, "7"), numeric[0], "a numeric id matches its string form");
+  assert.equal(queue.entryForKey(numeric, 7), numeric[0]);
+
+  // Nothing to drop on is not an error.
+  assert.equal(queue.entryForKey(playlists, "missing"), null);
+  assert.equal(queue.entryForKey(playlists, ""), null);
+  assert.equal(queue.entryForKey(undefined, "one"), null);
+});
+
 test("a list without a grip still drags by its row", async () => {
   const queue = await import("../views/queue.js");
   const row = document.createElement("div");

@@ -793,6 +793,15 @@ export function dragHandle(title = "Drag to reorder") {
   return iconButton("grip", { title, class: "btn flat small drag-handle" });
 }
 
+/** The entry a drop landed on, from the `data-key` of the row under the
+ *  pointer: queue rows and room items carry a `key`, while playlists and
+ *  playlist tracks are their own entries and carry only an `id`. */
+export function entryForKey(entries, key) {
+  const wanted = String(key ?? "");
+  if (!wanted) return null;
+  return (entries || []).find((entry) => String(entry?.key ?? entry?.id ?? "") === wanted) || null;
+}
+
 /**
  * Drag a row onto another with the pointer, which is the one gesture a phone
  * has: HTML5 drag-and-drop never fires from a touch without a long press. The
@@ -853,7 +862,7 @@ export function listDrag({ row, handle = null, entry, entries, onDrop }) {
       },
       { capture: true, once: true }
     );
-    const to = entries.find((candidate) => candidate.key === target.dataset.key);
+    const to = entryForKey(entries, target.dataset.key);
     if (to) onDrop(entry, to);
   };
 
