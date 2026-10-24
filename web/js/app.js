@@ -770,8 +770,14 @@ async function mountPlayer() {
 
 /**
  * Pick up where the last session left off, the way the GTK client does: the
- * queue, the track and the position come back from the account, and if that
- * queue came from a playlist, so does the page showing it.
+ * queue, the track and the position come back from the account.
+ *
+ * It hands playback back and says so; it does not move the page. A restore can
+ * land after somebody has already opened a tab - the boot restore is not
+ * awaited by the router - and taking them to the playlist the queue came from
+ * (or refreshing the view they chose) is a page changing under their hands for
+ * a session they have already left behind. The queue views redraw from the
+ * player's own events, so nothing needs re-rendering here.
  */
 export async function restorePlayback() {
   if (!client || !isSignedIn()) return null;
@@ -781,8 +787,6 @@ export async function restorePlayback() {
     const restored = await restore.call(playerModule.player, client);
     if (!restored?.restored) return null;
     banner("Picked up where you left off.");
-    if (restored.playlistId && views.has("playlist")) navigate("playlist", { id: restored.playlistId });
-    refreshCurrent();
     return restored;
   } catch (error) {
     console.warn("could not pick up the last session", error);
