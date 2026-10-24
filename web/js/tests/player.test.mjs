@@ -3088,3 +3088,151 @@ test("queueing a station next leaves what is playing on, and in place", () => {
     player._emit = saved.emit;
   }
 });
+
+test("between songs the lock screen keeps the app's own card", () => {
+  const session = { metadata: null, playbackState: "" };
+  const navDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  const locDescriptor = Object.getOwnPropertyDescriptor(globalThis, "location");
+  const hadMetadata = Object.prototype.hasOwnProperty.call(globalThis, "MediaMetadata");
+  const wasMetadata = globalThis.MediaMetadata;
+  const saved = { key: player._mediaMetadataFor, loading: player._loading, wanted: player._playingWanted };
+  class FakeMetadata { constructor(init) { Object.assign(this, init); } }
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { mediaSession: session, onLine: true } });
+  Object.defineProperty(globalThis, "location", { configurable: true, value: { href: "http://musoak.test/" } });
+  globalThis.MediaMetadata = FakeMetadata;
+  try {
+    const song = { id: "t1", title: "Song", artists: ["X"], album: "", artworkUrl: "" };
+
+    // A fetch in flight, with the listener waiting for it: the card is the app.
+    player._mediaMetadataFor = "";
+    player._loading = true;
+    player._playingWanted = true;
+    player._syncMediaMetadata(song);
+    assert.equal(session.metadata.title, "Musoak");
+    assert.equal(session.metadata.artist, "");
+    assert.equal(session.metadata.artwork[0].src, "http://musoak.test/icon.png");
+
+    // The copy landed: the song's own name takes over.
+    player._loading = false;
+    player._syncMediaMetadata(song);
+    assert.equal(session.metadata.title, "Song");
+    assert.equal(session.metadata.artist, "X");
+
+    // A load nobody is waiting to hear (a restore) is not a gap to fill.
+    player._mediaMetadataFor = "";
+    player._loading = true;
+    player._playingWanted = false;
+    player._syncMediaMetadata(song);
+    assert.equal(session.metadata.title, "Song");
+  } finally {
+    if (navDescriptor) Object.defineProperty(globalThis, "navigator", navDescriptor);
+    else delete globalThis.navigator;
+    if (locDescriptor) Object.defineProperty(globalThis, "location", locDescriptor);
+    else delete globalThis.location;
+    if (hadMetadata) globalThis.MediaMetadata = wasMetadata;
+    else delete globalThis.MediaMetadata;
+    player._mediaMetadataFor = saved.key;
+    player._loading = saved.loading;
+    player._playingWanted = saved.wanted;
+  }
+});
+
+test("a song that leaves the queue stops its download at the backend", async () => {
+  const calls = [];
+  const saved = {
+    client: player._clientIfAny,
+    offline: player._offline,
+    order: player._offlineOrder,
+    inFlight: player._offlineInFlight,
+    active: player._offlineActive,
+    started: player._started,
+  };
+  try {
+    player._clientIfAny = () => ({ cancelDownload: async (id) => calls.push(id) });
+    player._started = new Set(["v-old", "v-new"]);
+    player._offline = new Map([["old", { state: "pending", variantId: "v-old", url: "", bytes: 0, at: 0 }]]);
+    player._offlineOrder = ["old"];
+    player._offlineInFlight = new Map();
+
+    // A copy still on its way, waiting its turn: letting it go stops the fetch.
+    player._releaseOffline("old");
+    await settle(2);
+    assert.deepEqual(calls, ["v-old"]);
+    assert.equal(player._started.has("v-old"), false, "the ask is forgotten, so a later play fetches it again");
+
+    // A transfer in flight is the same: the page's fetch is aborted and the
+    // backend's is stopped with it.
+    const controller = new AbortController();
+    const entry = { state: "pending", variantId: "v-new", url: "", bytes: 0, at: 0 };
+    player._offline.set("new", entry);
+    player._offlineInFlight.set("new", { entry, controller });
+    player._abortOffline("new");
+    assert.equal(controller.signal.aborted, true);
+    await settle(2);
+    assert.deepEqual(calls, ["v-old", "v-new"]);
+    assert.equal(player._started.has("v-new"), false);
+  } finally {
+    player._clientIfAny = saved.client;
+    player._offline = saved.offline;
+    player._offlineOrder = saved.order;
+    player._offlineInFlight = saved.inFlight;
+    player._offlineActive = saved.active;
+    player._started = saved.started;
+  }
+});
+
+test("replacing the queue stops the downloads the old one started", async () => {
+  const calls = [];
+  const saved = {
+    client: player._clientIfAny,
+    offline: player._offline,
+    order: player._offlineOrder,
+    inFlight: player._offlineInFlight,
+    active: player._offlineActive,
+    started: player._started,
+    pump: player._pumpOffline,
+    playhead: player._index,
+    queue: player.queue,
+  };
+  const playing = { state: "pending", variantId: "v-playing", url: "", bytes: 0, at: 0 };
+  const queued = { state: "pending", variantId: "v-queued", url: "", bytes: 0, at: 0 };
+  const kept = { state: "ready", variantId: "v-kept", url: "blob:kept", bytes: 10, at: 0 };
+  const controller = new AbortController();
+  try {
+    player._clientIfAny = () => ({ cancelDownload: async (id) => calls.push(id) });
+    player._started = new Set(["v-playing", "v-queued", "v-kept"]);
+    player.queue = [{ id: "next" }];
+    player._index = 0;
+    player._offline = new Map([
+      ["playing", playing],
+      ["queued", queued],
+      ["kept", kept],
+    ]);
+    // The pump's order is the pending copies; a copy that is here is not in it.
+    player._offlineOrder = ["playing", "queued"];
+    player._offlineInFlight = new Map([["playing", { entry: playing, controller }]]);
+    // The pump would start the new window's copies; this test is about the old
+    // ones being let go, and a real fetch has no place here.
+    player._pumpOffline = () => {};
+
+    player.keepOffline([{ id: "next" }]);
+    await settle(2);
+
+    assert.equal(controller.signal.aborted, true, "the in-flight transfer is let go");
+    assert.deepEqual(calls.sort(), ["v-playing", "v-queued"], "the backend is told to stop both");
+    assert.equal(calls.includes("v-kept"), false, "a copy that is here has nothing to stop");
+    assert.equal(player._offline.has("kept"), true, "and the window's copy stays");
+    assert.equal(player._offline.has("playing"), false);
+    assert.equal(player._offline.has("queued"), false);
+  } finally {
+    player._clientIfAny = saved.client;
+    player._offline = saved.offline;
+    player._offlineOrder = saved.order;
+    player._offlineInFlight = saved.inFlight;
+    player._offlineActive = saved.active;
+    player._started = saved.started;
+    player._pumpOffline = saved.pump;
+    player.queue = saved.queue;
+    player._index = saved.playhead;
+  }
+});

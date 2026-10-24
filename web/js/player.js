@@ -2194,6 +2194,26 @@ class Player {
     if (!inHand) return;
     this._offlineInFlight.delete(id);
     inHand.controller.abort();
+    // The page's transfer stopping is not the backend's: a download nobody is
+    // waiting on any more is stopped there too, so it does not keep a provider
+    // busy for a song that is no longer in the queue.
+    this._cancelDownload(inHand.entry?.variantId);
+  }
+
+  /** Tell the backend to stop fetching a rendition this page has let go.
+   *  Best effort: the song may be wanted again later, and then the fetch is
+   *  asked for afresh. */
+  _cancelDownload(variantId) {
+    const variant = String(variantId || "");
+    if (!variant) return;
+    this._started.delete(variant);
+    const client = this._clientIfAny?.();
+    if (!client) return;
+    Promise.resolve()
+      .then(() => client.cancelDownload(variant))
+      .catch(() => {
+        /* a cancel that did not arrive costs a fetch, not the queue */
+      });
   }
 
   /**
@@ -2441,6 +2461,12 @@ class Player {
     const id = String(trackId || "");
     const entry = this._offline.get(id);
     if (!entry) return;
+    // A copy still waiting its turn is a fetch the backend is running: letting
+    // it go here stops it there as well. A copy that has arrived has nothing
+    // left to stop, and one with a transfer in flight is stopped by
+    // `_abortOffline` when the queue lets go of it - cancelling here too would
+    // ask twice for one song.
+    if (entry.state !== "ready" && !this._offlineInFlight.has(id)) this._cancelDownload(entry.variantId);
     if (entry.url && typeof URL !== "undefined" && URL.revokeObjectURL) URL.revokeObjectURL(entry.url);
     this._offlineBytes -= Number(entry.bytes) || 0;
     this._offline.delete(id);
@@ -2720,13 +2746,33 @@ class Player {
     }
   }
 
-  /** The lock screen's name for what is playing. */
+  /** The lock screen's name for what is playing.
+   *
+   *  Between songs it is the app itself - name and icon - rather than nothing.
+   *  A fetch takes a moment, and a card that goes away and comes back at every
+   *  boundary is how the lock screen loses the session the page needs to be
+   *  allowed to start the next file; showing the next song early is the other
+   *  wrong answer, because it reads as playing while nothing is audible yet. */
   _syncMediaMetadata(track) {
     const session = typeof navigator === "undefined" ? null : navigator.mediaSession;
     if (!session || typeof MediaMetadata === "undefined") return;
-    const metadataKey = track ? [track.id, track.title, artistLine(track), track.album, track.artworkUrl].join("\u0000") : "";
+    const between = Boolean(track && this._loading && this._playingWanted);
+    const metadataKey = between
+      ? "\u0000musoak"
+      : track ? [track.id, track.title, artistLine(track), track.album, track.artworkUrl].join("\u0000") : "";
     if (this._mediaMetadataFor === metadataKey) return;
     this._mediaMetadataFor = metadataKey;
+    if (between) {
+      const page = typeof location === "undefined" ? "" : location.href;
+      const icon = page ? new URL("icon.png", page).href : "";
+      session.metadata = new MediaMetadata({
+        title: "Musoak",
+        artist: "",
+        album: "",
+        artwork: icon ? [{ src: icon, sizes: "1080x1080" }] : [],
+      });
+      return;
+    }
     if (!track) {
       session.metadata = null;
       return;

@@ -451,3 +451,24 @@
   pending queue behind the station, which is the same place a person puts a
   station they asked for "now".
 - Reversible: yes.
+
+## 2026-10-23 Between songs the lock screen shows the app, not the next song
+- Decision: while a track is loading with playback wanted, `mediaSession.metadata`
+  is a Musoak card (name plus the app icon) and `playbackState` stays "playing";
+  the song's own metadata is set once its copy is handed to the element. A load
+  nobody is waiting to hear (a restore) keeps the song's card.
+- Why: the card dropping at every boundary is the session being lost, and the
+  page loses the standing that lets a backgrounded phone start the next file,
+  which is what eventually stalls playback. Showing the next song early was the
+  other wrong reading - it says "playing" while nothing is audible.
+- Reversible: yes.
+
+## 2026-10-23 A song that leaves the queue stops its download
+- Decision: `keepOffline` releasing a pending copy, or aborting an in-flight
+  fetch, sends `DELETE /api/v1/media/{variantId}/download`. The server's Cancel
+  stops the background or play fetch for that variant; it is idempotent, and the
+  next play starts a fresh fetch.
+- Why: shuffling replaces the queue, and the prefetches for the old order kept
+  running on the server, taking provider bandwidth from the songs the listener
+  actually chose.
+- Reversible: yes.

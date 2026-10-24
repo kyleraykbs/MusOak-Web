@@ -670,6 +670,12 @@ export class Client {
     return this.post(`/api/v1/media/${variantId}/download${query ? `?${query}` : ""}`).then((value) => value || {});
   }
 
+  /** Stop a download this page no longer wants: the song left the queue, or the
+   *  queue was replaced. A fetch that has already finished is the same 204. */
+  cancelDownload(variantId) {
+    return this.del(`/api/v1/media/${variantId}/download`);
+  }
+
   mediaStatus(variantId) {
     return this.get(`/api/v1/media/${variantId}/status`).then((value) => value || {});
   }
