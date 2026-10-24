@@ -12,11 +12,14 @@ import {
   isSignedIn, setServer, rememberServer, knownServers, serverLabel, serverId, forgetServer, forgetRoom, renameServer as setServerName, iconVersion, userIdOf,
 } from "./state.js";
 import { Client, isTimeout, randomId } from "./client.js";
+import { linkedTrackId } from "./links.js";
 import { enterRoom, rejoinRoom, roomsTabTarget } from "./rooms-state.js";
 
 const views = new Map();
 let client = null;
 let playerModule = null;
+/** The player's module, once it has been imported; boot's restores wait on it. */
+let playerReady = null;
 let booted = false;
 let layout = null;
 let notifyTimer = 0;
@@ -227,6 +230,11 @@ export async function boot() {
     await restoreRoom();
     maybeLoginPopup();
   }
+
+  // A share link names one song. It is read after the session is picked up, so
+  // the song somebody sent is what the player ends up holding, not the queue
+  // this browser had last.
+  void openSharedTrack();
 
   // The server's state, from the client's own calls and a slow poll between
   // them: a light that only changes when something asked is a light that lies.
@@ -537,7 +545,7 @@ function buildLayout() {
   wireQueueDrawer();
   watchViewport();
   watchQueueFab();
-  mountPlayer();
+  playerReady = mountPlayer();
   renderBrand();
   renderCorner();
 }
@@ -791,6 +799,33 @@ export async function restorePlayback() {
   } catch (error) {
     console.warn("could not pick up the last session", error);
     return null;
+  }
+}
+
+/**
+ * Open the song a share link names, paused. The link is the address of the
+ * page, so this is the whole of what opening one means: the song in the bar,
+ * at the top, with the press to play left to the person.
+ */
+async function openSharedTrack() {
+  const id = linkedTrackId(location.href);
+  if (!id || !client) return false;
+  await playerReady;
+  const player = playerModule?.player;
+  if (!player) return false;
+  try {
+    const track = await client.track(id);
+    if (!track?.id) throw new Error("that song could not be read");
+    player.setContext({ playlistId: "" });
+    player.loadPaused([track], 0);
+    toast(`Shared song: ${track.title || "a song"}`);
+    return true;
+  } catch (error) {
+    banner(
+      error?.status === 404 ? "That shared song is not on this server." : error?.message || String(error),
+      "error"
+    );
+    return false;
   }
 }
 

@@ -472,3 +472,15 @@
   running on the server, taking provider bandwidth from the songs the listener
   actually chose.
 - Reversible: yes.
+
+## 2026-10-23 A shared song is `?track=<id>`, and opening it loads paused
+- Decision: the share dialog shows and copies the page's own address with
+  `?track=<uuid>`. Boot reads that parameter after the session restore and puts
+  the song in the player at zero, paused (`player.loadPaused`); it does not
+  start, and it does not navigate anywhere. A missing/unknown id says so in a
+  banner.
+- Why: the router keeps view state in `history.state`, not the URL, so there was
+  nothing to share. A query needs no route from the web server and survives a
+  deployment under a subpath; loading paused keeps the "press play" in the
+  recipient's hand, matching how a restore behaves.
+- Reversible: yes.

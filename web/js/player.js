@@ -535,6 +535,20 @@ class Player {
     this._emit("queue-changed", this.queue);
     this.jumpTo(0);
   }
+  /** Put a list in the player without starting it.
+   *
+   *  A shared link is a song somebody chose to show you, not a play pressed in
+   *  your hand: it loads paused at the top, and the bar's own play starts it. */
+  loadPaused(tracks, index = 0) {
+    if (this._room) return;
+    const list = (Array.isArray(tracks) ? tracks : [tracks]).filter(Boolean);
+    if (!list.length) return;
+    this.queue = list;
+    const start = Math.min(Math.max(0, Math.floor(Number(index) || 0)), list.length - 1);
+    this._emit("queue-changed", this.queue);
+    this.jumpTo(start, { autoplay: false });
+  }
+
   /** Add tracks to the end of the queue, or right after the current one. */
   enqueue(tracks, { next = false } = {}) {
     const list = (Array.isArray(tracks) ? tracks : [tracks]).filter(Boolean);

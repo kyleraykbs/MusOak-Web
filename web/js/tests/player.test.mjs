@@ -3236,3 +3236,32 @@ test("replacing the queue stops the downloads the old one started", async () => 
     player._index = saved.playhead;
   }
 });
+
+test("a shared song is loaded into the player paused", () => {
+  const saved = { queue: player.queue, index: player._index, jump: player.jumpTo, emit: player._emit, room: player._room };
+  const events = [];
+  let jumped = null;
+  try {
+    player._room = null;
+    player._emit = (name) => events.push(name);
+    player.jumpTo = (index, options) => { jumped = { index, options }; };
+
+    player.loadPaused([{ id: "t1" }, { id: "t2" }], 1);
+    assert.deepEqual(ids(player.queue), ["t1", "t2"]);
+    assert.equal(jumped.index, 1);
+    assert.equal(jumped.options.autoplay, false, "nothing starts by itself");
+    assert.ok(events.includes("queue-changed"));
+
+    // A room decides what plays; a link does not take it over.
+    player._room = { onAdd() {} };
+    player.queue = [];
+    player.loadPaused([{ id: "t3" }]);
+    assert.deepEqual(player.queue, []);
+  } finally {
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player.jumpTo = saved.jump;
+    player._emit = saved.emit;
+    player._room = saved.room;
+  }
+});

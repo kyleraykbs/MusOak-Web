@@ -9,6 +9,7 @@
 import { h, mount, dialog, toast, debounce, icon, artworkImage, loadingState } from "../dom.js";
 import { currentClient, banner, requireLogin } from "../app.js";
 import { iconVersion, userIdOf } from "../state.js";
+import { trackLink } from "../links.js";
 
 /** How far the follower may run from the friend before it seeks back. */
 export const DRIFT_TOLERANCE_MS = 1500;
@@ -300,10 +301,66 @@ async function loadFriends(client) {
   return Array.isArray(payload?.friends) ? payload.friends : [];
 }
 
-/** A song picked: who gets it, and the room option beside them. */
+/** Put text on the clipboard, with the selection path where the async API is
+ *  not there - it needs a secure context, and a LAN address is not one. */
+async function copyText(value) {
+  const text = String(value || "");
+  if (!text) return false;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    /* refused: fall through to the selection */
+  }
+  try {
+    const area = h("textarea", { readonly: true, value: text, style: { position: "fixed", opacity: "0" } });
+    document.body.appendChild(area);
+    area.select();
+    const copied = Boolean(document.execCommand?.("copy"));
+    area.remove();
+    return copied;
+  } catch {
+    return false;
+  }
+}
+
+/** A song picked: a link anybody can open, then who gets it, then the room. */
 async function chooseTarget(client, track) {
   const title = `Share “${track.title || "this song"}” with…`;
-  const body = h("div", { class: "share-dialog-fields", "aria-busy": "true" }, h("p", { text: title }), loadingState("Loading friends…"));
+  const link = trackLink(track.id, location.href);
+  const linkField = h("input", {
+    class: "input share-link-field",
+    readonly: true,
+    value: link,
+    "aria-label": "Link to this song",
+    onfocus: (event) => event.currentTarget.select(),
+  });
+  const friendsArea = h("div", { class: "share-friends" }, loadingState("Loading friends…"));
+  const body = h(
+    "div",
+    { class: "share-dialog-fields", "aria-busy": "true" },
+    h("p", { text: title }),
+    link
+      ? h(
+          "div",
+          { class: "share-link" },
+          h("div", { class: "section-title", text: "A link" }),
+          h("div", { class: "row" }, linkField, h("button", {
+            class: "btn",
+            text: "Copy",
+            title: "Copy this song's link",
+            onclick: async () => {
+              const copied = await copyText(link);
+              toast(copied ? "Link copied" : "That link could not be copied");
+            },
+          })),
+          h("p", { class: "subtitle", text: "Anyone who can reach this server can open it." })
+        )
+      : null,
+    friendsArea
+  );
   const ref = dialog({ title: "Share", body, actions: [{ label: "Close" }] });
   let friends = [];
   try {
@@ -315,7 +372,7 @@ async function chooseTarget(client, track) {
   }
   if (!ref.node.isConnected) return;
   body.removeAttribute("aria-busy");
-  mount(body, h("p", { text: title }), friends.length
+  mount(friendsArea, friends.length
     ? h("div", { class: "list" }, friends.map((friend) => personRow(client, friend, () => {
         ref.close();
         sendTrack(client, friend, track);
