@@ -14,6 +14,7 @@ import { player } from "../player.js";
 import { platformFilter, platformsFor, knownPlatforms } from "../platforms.js";
 import { artistLine, artistLink, providerErrorLines, queueButton } from "./queue.js";
 import { trackMenu } from "./playlist.js";
+import { shareAlbum, shareArtist } from "./share.js";
 import { state, saveLocal } from "../state.js";
 
 const SEARCH_LIMIT = 25;
@@ -152,8 +153,10 @@ function collectionMenu(kind, item) {
   if (kind === "playlist") {
     return [{ label: item.synced ? "Sync again" : "Sync into library", onClick: () => syncPlaylist(item) }];
   }
+  const share = kind === "artist" ? shareArtist : shareAlbum;
   return [
     { label: "Sync into library", onClick: () => syncIntoLibrary(kind, item) },
+    { label: "Share…", onClick: () => share(item) },
   ];
 }
 

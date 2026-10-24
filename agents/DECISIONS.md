@@ -484,3 +484,17 @@
   deployment under a subpath; loading paused keeps the "press play" in the
   recipient's hand, matching how a restore behaves.
 - Reversible: yes.
+
+## 2026-10-23 Share links exist for albums and artists, with a platform choice
+- Decision: the share dialog is shared by track/album/artist. Every kind offers
+  "Musoak" first, then each platform its renditions live on, as a dropdown above
+  the link field; `?track=`, `?album=`, `?artist=` open the song (paused) or the
+  collection's page. A link names exactly one item: other share parameters on
+  the current URL are dropped. Friends/room sharing stays on songs; the API has
+  no album or artist shares.
+- Why: platform URL shapes are stable and derivable from the variant ids the
+  API already exposes (`providerTrackId`/`providerAlbumId`/`providerArtistId`),
+  so the mapping lives in links.js with its tests rather than in three response
+  builders and the OpenAPI document. Dropping the other parameters keeps a song
+  shared from its album's page a song link.
+- Reversible: yes.

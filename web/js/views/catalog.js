@@ -10,6 +10,7 @@ import { h, mount, clear, iconButton, popover, toast, loadingState, artworkImage
 import { currentClient, navigate, registerView } from "../app.js";
 import { playOne, playTracks } from "./queue.js";
 import { emptyState, playButtons, trackCountLine, trackMenu, trackRow } from "./playlist.js";
+import { shareAlbum, shareArtist } from "./share.js";
 
 registerView({ id: "artist", title: "Artist", hidden: true, render: renderArtist });
 registerView({ id: "album", title: "Album", hidden: true, render: renderAlbum });
@@ -165,7 +166,9 @@ async function renderArtist(container, params = {}) {
     sheet.appendChild(header({ client, artworkUrl: artist.artworkUrl, title: artist.name || "Artist", lines: [
       albums.length ? `${albums.length} album${albums.length === 1 ? "" : "s"}` : "Nothing in the library yet",
       (artist.providers || []).join(", "),
-    ], actions: [syncControl({ label: "Sync into library", running: "Syncing…", title: "Bring every album this artist has into the library", hint: "Asking the provider about every album this artist has.", work: () => syncAndSay(client, { id: artist.id, name: artist.name }, load) })] }));
+    ], actions: [syncControl({ label: "Sync into library", running: "Syncing…", title: "Bring every album this artist has into the library", hint: "Asking the provider about every album this artist has.", work: () => syncAndSay(client, { id: artist.id, name: artist.name }, load) }),
+      h("button", { class: "btn", text: "Share…", title: "Share this artist's link", onclick: () => void shareArtist(artist) }),
+    ] }));
     sheet.appendChild(h("div", { class: "section-title", text: "Albums" }));
     sheet.appendChild(albums.length ? h("div", { class: "list" }, albums.map((album) => albumRow(client, album, params, load))) : emptyState("note", "No albums yet", "Sync the artist to find out what they released."));
   };
@@ -207,6 +210,7 @@ function albumRow(client, album, params, refresh) {
               }
             },
           },
+          { label: "Share…", onClick: () => shareAlbum(album) },
         ]);
       },
     })
@@ -294,6 +298,12 @@ async function renderAlbum(container, params = {}) {
             title: "Bring this album's tracks into the library",
             hint: "Asking the provider about this album.",
             work: () => syncAndSay(client, { id: album.id, name: album.title, album: true }, load),
+          }),
+          h("button", {
+            class: "btn",
+            text: "Share…",
+            title: "Share this album's link",
+            onclick: () => void shareAlbum(album),
           }),
         ],
       })

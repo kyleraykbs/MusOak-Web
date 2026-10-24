@@ -9,7 +9,7 @@
 import { h, mount, dialog, toast, debounce, icon, artworkImage, loadingState } from "../dom.js";
 import { currentClient, banner, requireLogin } from "../app.js";
 import { iconVersion, userIdOf } from "../state.js";
-import { trackLink } from "../links.js";
+import { itemLink, platformLinks } from "../links.js";
 
 /** How far the follower may run from the friend before it seeks back. */
 export const DRIFT_TOLERANCE_MS = 1500;
@@ -282,8 +282,45 @@ function report(error) {
 export async function shareTrack(track, { friend = null } = {}) {
   const client = currentClient();
   if (!client) return;
-  if (track?.id) await chooseTarget(client, track);
+  if (track?.id) await shareItem("track", track);
   else if (friend) chooseSong(client, friend);
+}
+
+/** Share an album: the app's own page and every platform it was matched with. */
+export async function shareAlbum(album) {
+  await shareItem("album", album);
+}
+
+/** Share an artist: the app's own page and every platform they were matched with. */
+export async function shareArtist(artist) {
+  await shareItem("artist", artist);
+}
+
+/** The link choices a share dialog offers: the app's own page first, then the
+ *  platforms the item has a rendition on. Exported for the unit tests. */
+export function shareOptions(kind, item, variants = [], base = "") {
+  const options = [];
+  const own = itemLink(
+    kind,
+    item?.id,
+    base || (typeof location !== "undefined" ? location.href : "")
+  );
+  if (own) options.push({ provider: "", label: "Musoak", url: own });
+  for (const link of platformLinks(kind, variants)) {
+    options.push({ provider: link.provider, label: link.label, url: link.url });
+  }
+  return options;
+}
+
+/** The renditions of a track, for its platform choices. A failure is not worth
+ *  a broken dialog: the app's own link still works. */
+async function loadVariants(client, trackId) {
+  try {
+    const payload = await client.variants(trackId);
+    return Array.isArray(payload?.variants) ? payload.variants : [];
+  } catch {
+    return [];
+  }
 }
 
 /** A friend picked: send the song, then say so. */
@@ -326,42 +363,83 @@ async function copyText(value) {
   }
 }
 
-/** A song picked: a link anybody can open, then who gets it, then the room. */
-async function chooseTarget(client, track) {
-  const title = `Share “${track.title || "this song"}” with…`;
-  const link = trackLink(track.id, location.href);
-  const linkField = h("input", {
+/**
+ * One share dialog for a song, an album or an artist: a link anybody can open
+ * (the app first, then each matched platform), and - for a song - who to send
+ * it to and the room beside them.
+ */
+async function shareItem(kind, item) {
+  const client = currentClient();
+  if (!client || !item?.id) return;
+  const title = `Share \u201c${nameOf(kind, item)}\u201d`;
+  const options = shareOptions(kind, item, [], typeof location === "undefined" ? "" : location.href);
+  if (!options.length) {
+    toast("That has no link to share yet.");
+    return;
+  }
+  const select = h(
+    "select",
+    { class: "input share-platform", "aria-label": "Platform" },
+    options.map((option) => h("option", { value: option.provider, text: option.label }))
+  );
+  const field = h("input", {
     class: "input share-link-field",
     readonly: true,
-    value: link,
-    "aria-label": "Link to this song",
+    value: options[0].url,
+    "aria-label": `Link to this ${kind}`,
     onfocus: (event) => event.currentTarget.select(),
   });
-  const friendsArea = h("div", { class: "share-friends" }, loadingState("Loading friends…"));
+  const hint = h("p", { class: "subtitle", text: linkHint(options[0]) });
+  const chosen = () => options.find((option) => option.provider === select.value) || options[0];
+  const show = () => {
+    const option = chosen();
+    field.value = option.url;
+    hint.textContent = linkHint(option);
+  };
+  select.addEventListener("change", show);
+
+  const copy = h("button", {
+    class: "btn",
+    text: "Copy",
+    title: "Copy this link",
+    onclick: async () => {
+      const copied = await copyText(chosen().url);
+      toast(copied ? "Link copied" : "That link could not be copied");
+    },
+  });
+
+  const friendsArea = kind === "track" ? h("div", { class: "share-friends" }, loadingState("Loading friends\u2026")) : null;
   const body = h(
     "div",
-    { class: "share-dialog-fields", "aria-busy": "true" },
+    { class: "share-dialog-fields", "aria-busy": kind === "track" ? "true" : null },
     h("p", { text: title }),
-    link
-      ? h(
-          "div",
-          { class: "share-link" },
-          h("div", { class: "section-title", text: "A link" }),
-          h("div", { class: "row" }, linkField, h("button", {
-            class: "btn",
-            text: "Copy",
-            title: "Copy this song's link",
-            onclick: async () => {
-              const copied = await copyText(link);
-              toast(copied ? "Link copied" : "That link could not be copied");
-            },
-          })),
-          h("p", { class: "subtitle", text: "Anyone who can reach this server can open it." })
-        )
-      : null,
+    h(
+      "div",
+      { class: "share-link" },
+      h("div", { class: "section-title", text: "A link" }),
+      select,
+      h("div", { class: "row" }, field, copy),
+      hint
+    ),
+    kind === "track" ? h("div", { class: "section-title", text: "A person" }) : null,
     friendsArea
   );
   const ref = dialog({ title: "Share", body, actions: [{ label: "Close" }] });
+
+  // The platforms are the item's renditions; the app's own link never waits for
+  // them, and an item that has none keeps the one option.
+  const addPlatforms = (variants) => {
+    for (const link of platformLinks(kind, variants || [])) {
+      if (options.some((option) => option.provider === link.provider)) continue;
+      options.push({ provider: link.provider, label: link.label, url: link.url });
+      select.appendChild(h("option", { value: link.provider, text: link.label }));
+    }
+  };
+  if (kind === "track") void loadVariants(client, item.id).then(addPlatforms);
+  else addPlatforms(item.variants || []);
+
+  if (kind !== "track") return;
+
   let friends = [];
   try {
     friends = await loadFriends(client);
@@ -372,15 +450,47 @@ async function chooseTarget(client, track) {
   }
   if (!ref.node.isConnected) return;
   body.removeAttribute("aria-busy");
-  mount(friendsArea, friends.length
-    ? h("div", { class: "list" }, friends.map((friend) => personRow(client, friend, () => {
-        ref.close();
-        sendTrack(client, friend, track);
-      })))
-    : h("p", { class: "subtitle", text: "You have no friends yet." }));
+  mount(
+    friendsArea,
+    friends.length
+      ? h(
+          "div",
+          { class: "list" },
+          friends.map((friend) =>
+            personRow(client, friend, () => {
+              ref.close();
+              sendTrack(client, friend, item);
+            })
+          )
+        )
+      : h("p", { class: "subtitle", text: "You have no friends yet." })
+  );
   body.appendChild(h("div", { class: "section-title", text: "A room" }));
   body.appendChild(h("p", { class: "subtitle", text: "A room is shared by inviting a friend into it." }));
-  body.appendChild(h("button", { class: "btn", text: "Invite a friend to a room…", onclick: () => { ref.close(); inviteSomeoneToRoom(); } }));
+  body.appendChild(
+    h("button", {
+      class: "btn",
+      text: "Invite a friend to a room\u2026",
+      onclick: () => {
+        ref.close();
+        inviteSomeoneToRoom();
+      },
+    })
+  );
+}
+
+/** What an item is called in the dialog's sentence. */
+function nameOf(kind, item) {
+  if (kind === "artist") return item?.name || "this artist";
+  if (kind === "album") return item?.title || "this album";
+  return item?.title || "this song";
+}
+
+/** What a chosen link opens. */
+function linkHint(option) {
+  return option?.provider
+    ? `Opens on ${option.label}.`
+    : "Anyone who can reach this server can open it.";
 }
 
 /** A friend already chosen: search the library and send them something. */

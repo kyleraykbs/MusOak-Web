@@ -12,7 +12,7 @@ import {
   isSignedIn, setServer, rememberServer, knownServers, serverLabel, serverId, forgetServer, forgetRoom, renameServer as setServerName, iconVersion, userIdOf,
 } from "./state.js";
 import { Client, isTimeout, randomId } from "./client.js";
-import { linkedTrackId } from "./links.js";
+import { linkedItem } from "./links.js";
 import { enterRoom, rejoinRoom, roomsTabTarget } from "./rooms-state.js";
 
 const views = new Map();
@@ -231,10 +231,10 @@ export async function boot() {
     maybeLoginPopup();
   }
 
-  // A share link names one song. It is read after the session is picked up, so
-  // the song somebody sent is what the player ends up holding, not the queue
-  // this browser had last.
-  void openSharedTrack();
+  // A share link names one song, album or artist. It is read after the session
+  // is picked up, so the song somebody sent is what the player ends up holding,
+  // not the queue this browser had last.
+  void openSharedLink();
 
   // The server's state, from the client's own calls and a slow poll between
   // them: a light that only changes when something asked is a light that lies.
@@ -803,18 +803,25 @@ export async function restorePlayback() {
 }
 
 /**
- * Open the song a share link names, paused. The link is the address of the
- * page, so this is the whole of what opening one means: the song in the bar,
- * at the top, with the press to play left to the person.
+ * Open the item a share link names. A song is loaded into the player paused, at
+ * the top: a link is a song somebody sent, not a play pressed in your hand. An
+ * album or an artist opens its own page, which is what their links are.
  */
-async function openSharedTrack() {
-  const id = linkedTrackId(location.href);
-  if (!id || !client) return false;
+async function openSharedLink() {
+  const shared = linkedItem(location.href);
+  if (!shared || !client) return false;
+  if (shared.kind !== "track") {
+    // The other tabs load behind the first paint, so the page an album or
+    // artist link names may not be registered yet.
+    await importView("./views/catalog.js");
+    navigate(shared.kind, { id: shared.id });
+    return true;
+  }
   await playerReady;
   const player = playerModule?.player;
   if (!player) return false;
   try {
-    const track = await client.track(id);
+    const track = await client.track(shared.id);
     if (!track?.id) throw new Error("that song could not be read");
     player.setContext({ playlistId: "" });
     player.loadPaused([track], 0);
