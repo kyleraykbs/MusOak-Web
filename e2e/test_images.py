@@ -344,6 +344,17 @@ def test_a_page_of_many_images_stays_responsive(ui, backend, media_factory):
     elapsed = time.monotonic() - started
     _assert_images_loaded(imgs)
 
+    # A song's cover is drawn at 32, 48 or 52 pixels, so every request for one
+    # names a width and the server answers with its own smaller copy: in this
+    # library the original is 8 KB at best and a megabyte of phone photo at
+    # worst. Nothing asked for a track's original at all.
+    asked = [entry for entry in _image_requests(ui) if "/api/v1/artwork/track/" in entry["name"]]
+    assert asked, "the page asked for no song covers at all"
+    unshrunk = [entry["name"] for entry in asked if "w=" not in entry["name"]]
+    assert not unshrunk, (
+        f"{len(unshrunk)} song cover(s) asked for the original instead of a thumbnail: {unshrunk[:4]}"
+    )
+
     print(
         f"\n{len(imgs)} song images were all decoded {elapsed * 1000:.0f} ms after the queue was set; "
         f"a tab click through the middle of it took {click_ms:.0f} ms"

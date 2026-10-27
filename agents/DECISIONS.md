@@ -530,3 +530,28 @@
   and frozen while it waits). Kyle, after the card still dropped on the phone:
   "can we add that dummy audiostream".
 - Reversible: yes.
+
+## 2026-10-27 Covers are asked for at the size they are drawn
+- Decision: every cover the app draws names a width in the URL (`?w=`): 64 for
+  a 32px song row, 112 for the 48px row and the 52px playbar art, 336 for a
+  168px header, 512 for the lock screen's own artwork. The server answers its
+  own cached copy. A cover that did not answer is asked for again three times
+  over a few seconds before the slot gives up and draws the fallback.
+- Why: Kyle: "make the images sent for song cards specifically be a bit smaller",
+  and "art shouldn't be downloaded sequentially, if one is stalled allow others
+  to download". The library holds 544px provider art next to 4-megapixel phone
+  photos and a 2.7 MB GIF; a 32px tile asked for all of it. The retry matters
+  because the server answers `not yet` (404, no-store) while it fetches, so a row
+  drawn a moment early used to keep the fallback icon forever.
+- Reversible: yes.
+
+## 2026-10-27 The singles container wears the app's mark, everywhere
+- Decision: the album page draws `icon.png` for a collection whose `kind` is
+  `singles`, the same rule its row on the artist page already used; and the
+  server stops emitting `artworkUrl` for the container at all.
+- Why: Kyle's screenshot of the singles page showed one single's sleeve ("Pink
+  Floyd At Pompeii") as the container's cover while the row on the artist page
+  showed the app icon. The container has no cover of its own - the one it held
+  was inherited when a single's track linked its album - so no client should be
+  told it has one.
+- Reversible: yes.

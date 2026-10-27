@@ -115,6 +115,18 @@ export function panelHeading(title, subtitle = "", ...actions) {
 
 const artworkLoads = new Map();
 
+/** How many times a cover that did not answer is asked for again, and how long
+ *  the first wait is.
+ *
+ *  The server answers "not yet" (404, never kept) while it is fetching a cover
+ *  from the provider, so a row drawn a moment too early used to show the
+ *  fallback icon for the rest of the visit: the miss was remembered as a
+ *  failure and nothing asked again. Three attempts over a few seconds is enough
+ *  for a fetch that was already running, and a cover that truly has none ends on
+ *  the fallback as before. */
+const ART_ATTEMPTS = 3;
+const ART_RETRY_MS = 1200;
+
 /**
  * One consistent artwork element. Stable dimensions prevent layout jumps;
  * shared load state avoids repeating failure work when the same cover appears
@@ -138,9 +150,22 @@ export function artworkImage(src, { className = "art", alt = "", eager = false }
       event.currentTarget.dataset.loaded = "true";
     },
     onerror: (event) => {
-      if (!event.currentTarget.isConnected) return;
+      const image = event.currentTarget;
+      if (!image.isConnected) return;
+      const attempt = Number(image.dataset.attempt || 0) + 1;
+      if (attempt < ART_ATTEMPTS) {
+        image.dataset.attempt = String(attempt);
+        // The URL that failed is not kept by the browser (the server says
+        // no-store), but assigning the same value again is a no-op, so the ask
+        // after a wait carries one parameter that makes it a new request.
+        setTimeout(() => {
+          if (!image.isConnected) return;
+          image.src = attemptedUrl(src, attempt);
+        }, ART_RETRY_MS * attempt);
+        return;
+      }
       artworkLoads.set(src, "failed");
-      event.currentTarget.replaceWith(artworkFallback(className, alt));
+      image.replaceWith(artworkFallback(className, alt));
     },
   });
   if (loaded === "loaded") image.dataset.loaded = "true";
@@ -149,6 +174,11 @@ export function artworkImage(src, { className = "art", alt = "", eager = false }
   // image timeout.
   else image.dataset.loading = "true";
   return image;
+}
+
+/** The same cover URL, asked for again: one parameter that makes it new. */
+function attemptedUrl(src, attempt) {
+  return `${src}${src.includes("?") ? "&" : "?"}r=${attempt}`;
 }
 
 function artworkFallback(className, alt) {

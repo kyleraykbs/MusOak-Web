@@ -904,7 +904,9 @@ function rowButton(name, size, title, disabled, onclick) {
 
 function artworkTile(path) {
   const client = currentClient();
-  if (path) return artworkImage(client ? client.artworkUrl(path) : path, { className: "art", eager: true });
+  // 112 for a 48px tile: the server keeps that copy, and the row asking for the
+  // original is one megabyte of phone photo for the same handful of pixels.
+  if (path) return artworkImage(client ? client.artworkUrl(path, "", 112) : path, { className: "art", eager: true });
   return h("div", { class: "art", "aria-hidden": "true" }, icon("note", 18));
 }
 

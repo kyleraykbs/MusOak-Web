@@ -63,6 +63,18 @@ test("a backend URL keeps its routing when it is handed to an element", () => {
   // Somewhere else entirely: leave it alone.
   assert.equal(client.artworkUrl("https://cdn.example.com/a.jpg"), "https://cdn.example.com/a.jpg");
   assert.equal(client.artworkUrl(""), "");
+
+  // A width asks for a copy at that size and keeps the backend named; no width
+  // is the original, untouched.
+  const small = new URLSearchParams(client.artworkUrl("/api/v1/artwork/abc", "", 64).split("?")[1]);
+  assert.equal(small.get("w"), "64");
+  assert.equal(small.get("ms"), BACKEND);
+  assert.equal(client.artworkUrl("/api/v1/artwork/abc").includes("w="), false, "no width, no parameter");
+  const versioned = new URLSearchParams(client.artworkUrl("/api/v1/artwork/abc", "v9", 112).split("?")[1]);
+  assert.equal(versioned.get("v"), "v9");
+  assert.equal(versioned.get("w"), "112");
+  // A provider's own URL is not the server's to resize.
+  assert.equal(client.artworkUrl("https://cdn.example.com/a.jpg", "", 64), "https://cdn.example.com/a.jpg");
 });
 
 test("a failing call becomes a ServerError with the server's words", async () => {

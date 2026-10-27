@@ -84,11 +84,23 @@ export function emptyState(name, title, body, ...extra) {
   );
 }
 
+/** The width a tile asks the server for: its own CSS size at twice the density
+ *  of a phone screen, which is the most it is ever drawn at.
+ *
+ *  A row draws 32px or 48px of a cover that may be a megabyte of phone photo, so
+ *  it asks for a copy rather than the original; a header draws 168px, which is
+ *  336 at the same density. */
+const TILE_WIDTHS = { small: 64, "": 112, member: 112, "account-icon": 112, big: 336 };
+
+function tileWidth(size) {
+  return TILE_WIDTHS[size] || 0;
+}
+
 /** A cover tile: stable dimensions plus lazy, asynchronous image decode. */
 export function artworkTile(client, path, size = "") {
   const className = `art ${size}`.trim();
   if (!path) return h("div", { class: className, "aria-hidden": "true" }, icon("note", size === "big" ? 44 : 18));
-  return artworkImage(client ? client.artworkUrl(path) : path, { className, eager: size === "big" });
+  return artworkImage(client ? client.artworkUrl(path, "", tileWidth(size)) : path, { className, eager: size === "big" });
 }
 
 /**

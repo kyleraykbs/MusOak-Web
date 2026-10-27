@@ -31,7 +31,10 @@ function panelSearch(placeholder, onInput) {
 
 function artTile(client, artworkUrl, className = "art") {
   if (!artworkUrl) return h("div", { class: className, "aria-hidden": "true" });
-  return artworkImage(client?.artworkUrl ? client.artworkUrl(artworkUrl) : artworkUrl, { className, eager: className.includes("big") });
+  // 168px of header is 336 at twice the density; a 48px tile is 112. The
+  // original can be a megabyte of phone photo, and neither is drawn that big.
+  const width = className.includes("big") ? 336 : 112;
+  return artworkImage(client?.artworkUrl ? client.artworkUrl(artworkUrl, "", width) : artworkUrl, { className, eager: className.includes("big") });
 }
 
 function artistLine(item) {
@@ -52,14 +55,20 @@ function backRow(from) {
     }));
 }
 
-function header({ client, artworkUrl, title, lines = [], actions = [] }) {
+function header({ client, artworkUrl, appIcon = false, title, lines = [], actions = [] }) {
   return h(
     "div",
     { class: "card collection-header" },
     h(
       "div",
       { class: "collection-header-row" },
-      artTile(client, artworkUrl, "art big"),
+      // The singles container is the artist's singles rather than one release,
+      // and it has no cover of its own; it wears the app's mark, exactly as its
+      // row on the artist page does. The 1080px brand is the copy that is not
+      // blurry at this size, and the page has already loaded.
+      appIcon
+        ? artworkImage("icon.png", { className: "art big", eager: true })
+        : artTile(client, artworkUrl, "art big"),
       h(
         "div",
         { class: "grow collection-header-copy" },
@@ -345,6 +354,7 @@ async function renderAlbum(container, params = {}) {
       header({
         client,
         artworkUrl: album.artworkUrl,
+        appIcon: album.kind === "singles",
         title: album.title || "Album",
         lines: [
           [artistLine(album), album.year].filter(Boolean).join(" \u00b7 "),

@@ -35,6 +35,10 @@ function fakeNode(tag) {
     remove() {
       this.isConnected = false;
     },
+    replaceWith(node) {
+      this.replacedWith = node;
+      this.isConnected = false;
+    },
     get firstChild() {
       return this.children[0] || null;
     },
@@ -47,10 +51,22 @@ function fakeNode(tag) {
     querySelectorAll: () => [],
     focus() {},
     select() {},
-    addEventListener() {},
-    removeEventListener() {},
-    setAttribute() {},
-    removeAttribute() {},
+    listeners: {},
+    addEventListener(name, run) {
+      (this.listeners[name] = this.listeners[name] || []).push(run);
+    },
+    removeEventListener(name, run) {
+      this.listeners[name] = (this.listeners[name] || []).filter((entry) => entry !== run);
+    },
+    attributes: {},
+    setAttribute(name, value) {
+      this.attributes[name] = value;
+      this[name] = value;
+    },
+    removeAttribute(name) {
+      delete this.attributes[name];
+      delete this[name];
+    },
   };
   created.push(node);
   return node;
@@ -64,6 +80,8 @@ const matches = (selector) => created.filter((node) => node.isConnected && node.
 
 globalThis.document = {
   createElement: fakeNode,
+  // Icons are SVG, and the fallback tile draws one.
+  createElementNS: (_namespace, tag) => fakeNode(tag),
   createTextNode(value) {
     return { text: value };
   },
@@ -201,4 +219,33 @@ test("a list is appended without waiting for its images", async () => {
   assert.equal(done, true);
   assert.equal(parent.children.length, 3, "every row is on the page");
   assert.ok(Date.now() - started < 500, "the list did not wait for the pictures");
+});
+
+
+/** Fires the handlers h() registered for an event, as the browser would. */
+function fire(node, name, extra = {}) {
+  for (const run of [...(node.listeners[name] || [])]) run({ type: name, currentTarget: node, target: node, ...extra });
+}
+
+test("a cover that did not answer is asked for again before the fallback", async (t) => {
+  const { artworkImage } = await import("../dom.js");
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const src = "/api/v1/artwork/track/retry?w=64";
+  const image = artworkImage(src, { className: "art small" });
+  assert.equal(image.dataset.loading, "true", "the slot says the picture is coming");
+
+  // The server answers "not yet" while it fetches: this is a miss, not the end.
+  fire(image, "error");
+  assert.equal(image.dataset.attempt, "1");
+  assert.equal(image.src, src, "the URL is not changed until the wait is over");
+  t.mock.timers.tick(1200);
+  assert.ok(image.src.endsWith("r=1"), `the cover was asked for again, got ${image.src}`);
+  assert.equal(image.dataset.loading, "true", "and the slot still says it is coming");
+
+  // Three misses is a cover there is none of: the slot says so, once.
+  fire(image, "error");
+  t.mock.timers.tick(2400);
+  fire(image, "error");
+  assert.ok(image.replacedWith, "the third miss draws the fallback");
+  assert.equal(image.isConnected, false, "and takes the empty slot with it");
 });

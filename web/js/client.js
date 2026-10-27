@@ -710,12 +710,21 @@ export class Client {
    * user's icon is served from a stable path with a long cache, so a new
    * upload needs a different URL before any browser will fetch it again.
    */
-  artworkUrl(path, version = "") {
+  artworkUrl(path, version = "", width = 0) {
     if (!path) return "";
+    // A provider's own URL is not ours to resize: it is only reached when a
+    // picture was recorded before this server started serving covers.
     if (/^https?:/i.test(path)) return path;
     const url = routed(this.server, path);
-    if (!version) return url;
-    return `${url}${url.includes("?") ? "&" : "?"}v=${encodeURIComponent(version)}`;
+    const query = [];
+    if (version) query.push(`v=${encodeURIComponent(version)}`);
+    // A cover is stored at whatever the provider or the uploader had - this
+    // library holds megabyte phone photos - and a song row draws it in 32px.
+    // The width asks the server for its own cached copy at that size; the
+    // heights of these tiles are the same, so it is a square ask.
+    if (Number(width) > 0) query.push(`w=${Math.round(Number(width))}`);
+    if (!query.length) return url;
+    return `${url}${url.includes("?") ? "&" : "?"}${query.join("&")}`;
   }
 
   searchPlaylists(query, limit = 25, providers = null) {

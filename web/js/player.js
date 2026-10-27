@@ -1299,7 +1299,9 @@ class Player {
       bar.status.style.display = this._error ? "" : "none";
       bar.status.style.color = this._error ? "var(--red)" : "";
 
-      const art = track.artworkUrl && client ? client.artworkUrl(track.artworkUrl) : "";
+      // The bar draws 52px of cover: ask for its own copy rather than the
+      // original, which can be a megabyte of phone photo.
+      const art = track.artworkUrl && client ? client.artworkUrl(track.artworkUrl, "", 112) : "";
       const currentArt = bar.cover.getAttribute("src") || "";
       if (currentArt !== art) {
         if (art) bar.cover.src = art;
@@ -2899,7 +2901,9 @@ class Player {
       return;
     }
     const client = this._clientIfAny();
-    const art = track.artworkUrl && client ? client.artworkUrl(track.artworkUrl) : "";
+    // The lock screen draws this itself, at its own size: 512 is the copy a
+    // notification and a car head unit both use, and the server caps there.
+    const art = track.artworkUrl && client ? client.artworkUrl(track.artworkUrl, "", 512) : "";
     session.metadata = new MediaMetadata({
       title: track.title || "unknown track",
       artist: artistLine(track) || String(track.album || ""),
