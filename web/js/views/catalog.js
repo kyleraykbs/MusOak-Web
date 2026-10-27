@@ -125,6 +125,11 @@ async function renderArtist(container, params = {}) {
   let catalogue = null;
   let albumsQuery = "";
   let songsQuery = "";
+  // "server" asks the backend for every song of this artist the library holds;
+  // "loaded" filters the songs already on this page, and keeps streaming the
+  // rest in so the filter's reach grows to all of them.
+  let songsMode = "server";
+  let songsSearchTimer = 0;
   let songs = [];
   let songsTotal = 0;
   let songsGeneration = 0;
@@ -140,9 +145,27 @@ async function renderArtist(container, params = {}) {
     h("div", { class: "panel-head" }, h("span", { class: "panel-title", text: "Albums" }), albumsCount),
     panelSearch("Search albums", (value) => { albumsQuery = value; renderAlbums(); }),
     albumsList);
+  const songsModeToggle = h("span", { class: "panel-mode" },
+    h("button", { class: "btn flat small", "data-mode": "server", "aria-pressed": "true",
+      title: "Search every song this artist has in the library, on the server",
+      onclick: () => setSongsMode("server") }, "All songs"),
+    h("button", { class: "btn flat small", "data-mode": "loaded", "aria-pressed": "false",
+      title: "Filter the songs loaded on this page, and keep loading the rest",
+      onclick: () => setSongsMode("loaded") }, "Loaded"));
+  const songsSearch = panelSearch("Search songs", (value) => {
+    songsQuery = value;
+    // Filtering what is here costs nothing and happens now; asking the server
+    // on every keystroke is a request per letter, so it waits for a pause.
+    if (songsMode === "loaded") {
+      renderSongs();
+      return;
+    }
+    clearTimeout(songsSearchTimer);
+    songsSearchTimer = setTimeout(() => void loadSongs({ pages: 1 }), 250);
+  });
   const songsPanel = h("section", { class: "artist-panel" },
-    h("div", { class: "panel-head" }, h("span", { class: "panel-title", text: "Songs" }), songsCount),
-    panelSearch("Search songs", (value) => { songsQuery = value; void loadSongs({ pages: 1 }); }),
+    h("div", { class: "panel-head" }, h("span", { class: "panel-title", text: "Songs" }), songsModeToggle, songsCount),
+    songsSearch,
     songsList);
 
   const buildShell = () => {
@@ -190,15 +213,34 @@ async function renderArtist(container, params = {}) {
   };
 
   const renderSongs = () => {
-    songsCount.textContent = songsLoading ? "…" : songsTotal > songs.length ? `${songs.length} of ${songsTotal}` : String(songsTotal || songs.length);
+    const needle = songsQuery.trim().toLowerCase();
+    // In "loaded" mode the list is a filter over what is here, and the count
+    // says how much of the artist that filter can see: it grows as the rest of
+    // the songs stream in.
+    const shown = songsMode === "loaded" && needle
+      ? songs.filter((track) => String(track.title || "").toLowerCase().includes(needle))
+      : songs;
+    const loadedAll = songs.length >= songsTotal;
+    songsCount.textContent = songsLoading
+      ? "…"
+      : songsMode === "loaded"
+        ? loadedAll ? String(shown.length) : `${shown.length} of ${songs.length} loaded`
+        : songsTotal > songs.length ? `${songs.length} of ${songsTotal}` : String(songsTotal || songs.length);
     clear(songsList);
-    if (!songs.length) {
+    if (!shown.length) {
+      if (songs.length) {
+        songsList.appendChild(emptyState("note", "No song matches",
+          songsMode === "loaded" && !loadedAll
+            ? "This page is filtered as it loads; more songs are still arriving."
+            : "Try another search."));
+        return;
+      }
       songsList.appendChild(emptyState("note", songsLoading ? "Reading the artist…" : songsQuery ? "No song matches" : "No songs yet",
         songsLoading ? "The provider's songs appear here as they are found." : songsQuery ? "Try another search." : "The catalogue has not found a song yet."));
       return;
     }
-    songsList.append(...songs.map((track, position) => trackRow({
-      track, position, client, onActivate: () => playOne(songs, position), menu: trackMenu(track),
+    songsList.append(...shown.map((track, position) => trackRow({
+      track, position, client, onActivate: () => playOne(shown, position), menu: trackMenu(track),
     })));
     watchSongsEnd();
   };
@@ -226,6 +268,42 @@ async function renderArtist(container, params = {}) {
     follower.observe(songsMore);
   };
 
+  // What a load asks the server: the query in "server" mode, and nothing in
+  // "loaded" mode - there the pages are fetched whole and filtered here, so the
+  // filter can reach every song once they are all in.
+  const askedQuery = () => (songsMode === "loaded" ? "" : songsQuery);
+
+  /**
+   * Fetch the rest of the artist's songs, one page at a time.
+   *
+   * "Loaded" mode searches what is on the page, so the page has to be made to
+   * hold everything for that search to be worth anything: the remaining pages
+   * are drawn in the background while the filter narrows what is shown.
+   */
+  const drainSongs = async () => {
+    while (sheet.isConnected && songsMode === "loaded" && songs.length < songsTotal && !songsLoading) {
+      const before = songs.length;
+      await loadMoreSongs();
+      // A page that did not arrive (the server refused, the view moved on) must
+      // not spin here for ever.
+      if (songs.length <= before) return;
+    }
+  };
+  const setSongsMode = (mode) => {
+    if (mode === songsMode) return;
+    songsMode = mode;
+    for (const button of songsModeToggle.querySelectorAll("button")) {
+      button.setAttribute("aria-pressed", button.dataset.mode === mode ? "true" : "false");
+    }
+    clearTimeout(songsSearchTimer);
+    if (mode === "server") {
+      void loadSongs({ pages: 1 });
+      return;
+    }
+    renderSongs();
+    void drainSongs();
+  };
+
   const loadSongs = async ({ pages = 1 } = {}) => {
     const mine = ++songsGeneration;
     songsLoading = true;
@@ -234,7 +312,7 @@ async function renderArtist(container, params = {}) {
     let total = 0;
     try {
       for (let page = 0; page < Math.max(1, pages); page += 1) {
-        const payload = await client.artistTracks(params.id, { query: songsQuery, limit: SONGS_PAGE, offset: page * SONGS_PAGE });
+        const payload = await client.artistTracks(params.id, { query: askedQuery(), limit: SONGS_PAGE, offset: page * SONGS_PAGE });
         if (mine !== songsGeneration) return;
         collected.push(...(payload.tracks || []));
         total = payload.total;
@@ -256,7 +334,7 @@ async function renderArtist(container, params = {}) {
     const mine = songsGeneration;
     songsLoading = true;
     try {
-      const payload = await client.artistTracks(params.id, { query: songsQuery, limit: SONGS_PAGE, offset: songs.length });
+      const payload = await client.artistTracks(params.id, { query: askedQuery(), limit: SONGS_PAGE, offset: songs.length });
       if (mine !== songsGeneration) return;
       songs = songs.concat(payload.tracks || []);
       songsTotal = payload.total;

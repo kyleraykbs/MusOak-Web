@@ -579,3 +579,20 @@
   page was the whole list. Verified in a browser: 200 rows, one scroll to the
   end, 212 rows and the line gone.
 - Reversible: yes.
+
+## 2026-10-27 The songs search has two modes, and the server is one of them
+- Decision: the artists page's Songs panel has an "All songs" / "Loaded" toggle.
+  All songs (the default) asks the server, which matches the title against every
+  song of that artist in the library; the input is debounced 250ms so typing is
+  not a request per letter. Loaded filters the songs on the page in memory, and
+  the remaining pages are fetched one at a time until the artist's whole list is
+  here, so the filter's reach grows to all of it. The count says which it is
+  (`N of M` server results, `N of M loaded` while the rest is arriving).
+- Why: Kyle asked whether the search covers every song or only the loaded ones,
+  and for the choice: "if only the loaded ones then make it keep streaming songs
+  in until we hit all the songs. OR preferably give me an option between that or
+  just having the search hit the server directly". It already hit the server
+  (verified: "Moon" found 46 of 230 songs, 23 of them past the first page), so
+  the option is the useful half, and the debounce is the part that was actually
+  missing.
+- Reversible: yes.

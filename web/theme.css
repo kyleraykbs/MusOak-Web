@@ -10,6 +10,12 @@
 .panel-title { color: var(--fg0); font-weight: 600; }
 .panel-count { color: var(--fg4); font-variant-numeric: tabular-nums; }
 .panel-search { width: 100%; min-width: 0; }
+/* Which way a panel's search works: every song on the server, or the ones this
+   page has loaded. Two small buttons rather than a switch, because the choice
+   has a consequence worth reading. */
+.panel-mode { display: inline-flex; gap: 4px; margin-left: auto; }
+.panel-mode .btn { padding: 2px 8px; font-size: 11.5px; }
+.panel-mode .btn[aria-pressed="true"] { color: var(--fg0); background: var(--bg3); }
 /* The end of the songs list, while there are more: it is what the observer
    watches, so it is the thing that says the list grows past the first page. */
 .panel-more {
