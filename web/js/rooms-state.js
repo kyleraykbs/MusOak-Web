@@ -1314,6 +1314,9 @@ function ensureRoomMode(player, room) {
     // advance: a skip asks the room, and the local file running out is handled
     // by the following layer above.
     hostPlayback: false,
+    // What the room is doing, for the lock screen's session across a load: the
+    // page's own transport is the room's, not the element's.
+    playing: Boolean(room.current && room.current.started && !room.current.paused),
     onAdd: (tracks) => Promise.resolve().then(() => enqueueMany(tracks)).catch(() => {}),
     mayDrive: () => {
       const live = currentRoom();

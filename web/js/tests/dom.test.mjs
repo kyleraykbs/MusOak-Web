@@ -186,3 +186,19 @@ test("a click that was a scroll does not get through", async () => {
   handlers.onclick({ clientX: 44, clientY: 103 });
   assert.deepEqual(fired, [44], "a few pixels of tremor is a tap");
 });
+
+test("a list is appended without waiting for its images", async () => {
+  const { appendProgressively } = await import("../dom.js");
+  const parent = fakeNode("div");
+  // Rows whose artwork never loads: a slow connection is exactly this, and the
+  // old append waited six seconds for each of them before drawing the next.
+  const rows = [fakeNode("div"), fakeNode("div"), fakeNode("div")].map((row) => {
+    row.querySelectorAll = () => [fakeNode("img")];
+    return row;
+  });
+  const started = Date.now();
+  const done = await appendProgressively(parent, rows);
+  assert.equal(done, true);
+  assert.equal(parent.children.length, 3, "every row is on the page");
+  assert.ok(Date.now() - started < 500, "the list did not wait for the pictures");
+});

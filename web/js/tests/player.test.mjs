@@ -3265,3 +3265,68 @@ test("a shared song is loaded into the player paused", () => {
     player._room = saved.room;
   }
 });
+
+test("a room's ended song holds the lock screen's card until the next one", () => {
+  const session = { metadata: null, playbackState: "", setPositionState() {}, setActionHandler() {} };
+  const navDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  const locDescriptor = Object.getOwnPropertyDescriptor(globalThis, "location");
+  const hadMetadata = Object.prototype.hasOwnProperty.call(globalThis, "MediaMetadata");
+  const wasMetadata = globalThis.MediaMetadata;
+  class FakeMetadata { constructor(init) { Object.assign(this, init); } }
+  const saved = {
+    key: player._mediaMetadataFor,
+    loading: player._loading,
+    wanted: player._playingWanted,
+    between: player._betweenSongs,
+    room: player._room,
+  };
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { mediaSession: session, onLine: true } });
+  Object.defineProperty(globalThis, "location", { configurable: true, value: { href: "http://musoak.test/" } });
+  globalThis.MediaMetadata = FakeMetadata;
+  try {
+    const song = { id: "t1", title: "Song", artists: ["X"], album: "", artworkUrl: "" };
+
+    // The element ended and the room has not started the next item yet: the
+    // card is the app's, and the session still says playing.
+    player._room = { hostPlayback: false, playing: true };
+    player._playingWanted = true;
+    player._loading = false;
+    player._betweenSongs = true;
+    player._mediaMetadataFor = "";
+    player._syncMediaSession();
+    player._syncMediaMetadata(song);
+    assert.equal(session.playbackState, "playing");
+    assert.equal(session.metadata.title, "Musoak");
+
+    // A load the member is holding for the room is the same gap: the room is
+    // playing, even though this element is not.
+    player._betweenSongs = false;
+    player._loading = true;
+    player._playingWanted = false;
+    player._mediaMetadataFor = "";
+    player._syncMediaSession();
+    player._syncMediaMetadata(song);
+    assert.equal(session.playbackState, "playing");
+    assert.equal(session.metadata.title, "Musoak");
+
+    // A paused room is a paused card: the real song, not a "playing" claim.
+    player._room = { hostPlayback: false, playing: false };
+    player._mediaMetadataFor = "";
+    player._syncMediaSession();
+    player._syncMediaMetadata(song);
+    assert.equal(session.playbackState, "paused");
+    assert.equal(session.metadata.title, "Song");
+  } finally {
+    if (navDescriptor) Object.defineProperty(globalThis, "navigator", navDescriptor);
+    else delete globalThis.navigator;
+    if (locDescriptor) Object.defineProperty(globalThis, "location", locDescriptor);
+    else delete globalThis.location;
+    if (hadMetadata) globalThis.MediaMetadata = wasMetadata;
+    else delete globalThis.MediaMetadata;
+    player._mediaMetadataFor = saved.key;
+    player._loading = saved.loading;
+    player._playingWanted = saved.wanted;
+    player._betweenSongs = saved.between;
+    player._room = saved.room;
+  }
+});

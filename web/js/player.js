@@ -1033,6 +1033,10 @@ class Player {
           skip: room.skip,
           seek: room.seek,
           hostPlayback: Boolean(room.hostPlayback),
+          // The room's own transport, so a load between its songs can keep the
+          // lock screen's session alive even when this member is holding the
+          // file until the room starts it.
+          playing: Boolean(room.playing),
           mayShuffle: room.mayShuffle,
           offlineSkip: room.offlineSkip,
         }
@@ -1452,6 +1456,7 @@ class Player {
       return;
     }
     const token = ++this._token;
+    if (track) this._betweenSongs = false;
     // Whatever was playing has just stopped being played: that is the moment a
     // listen is over and worth reporting. A track skipped straight away is the
     // server's to ignore, not the client's to judge. Switching to another file
@@ -2648,6 +2653,7 @@ class Player {
   _stopAudio() {
     this._playingWanted = false;
     this._resumeWhenReady = false;
+    this._betweenSongs = false;
     // Nothing to play is not something to retry: the wait a load just armed is
     // for a track that turned out not to exist.
     this._wantResume(false);
@@ -2745,7 +2751,8 @@ class Player {
     // and reporting "paused" there takes the lock screen's card away - and with
     // it the page's standing as something that is playing, which is what a
     // backgrounded phone needs to be allowed to start the next file at all.
-    session.playbackState = this._playingWanted ? "playing" : "paused";
+    const inGap = this._betweenSongs || (this._loading && Boolean(this._room?.playing));
+    session.playbackState = this._playingWanted || inGap ? "playing" : "paused";
     if (typeof session.setPositionState !== "function") return;
     // The length the app knows, not only the one the element measured: before
     // the file is here there is no measured length, and a lock screen with no
@@ -2770,7 +2777,10 @@ class Player {
   _syncMediaMetadata(track) {
     const session = typeof navigator === "undefined" ? null : navigator.mediaSession;
     if (!session || typeof MediaMetadata === "undefined") return;
-    const between = Boolean(track && this._loading && this._playingWanted);
+    const between = Boolean(
+      track
+      && (this._betweenSongs || (this._loading && (this._playingWanted || Boolean(this._room?.playing))))
+    );
     const metadataKey = between
       ? "\u0000musoak"
       : track ? [track.id, track.title, artistLine(track), track.album, track.artworkUrl].join("\u0000") : "";

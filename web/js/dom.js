@@ -134,6 +134,7 @@ export function artworkImage(src, { className = "art", alt = "", eager = false }
     onload: (event) => {
       if (!event.currentTarget.isConnected) return;
       artworkLoads.set(src, "loaded");
+      delete event.currentTarget.dataset.loading;
       event.currentTarget.dataset.loaded = "true";
     },
     onerror: (event) => {
@@ -143,6 +144,10 @@ export function artworkImage(src, { className = "art", alt = "", eager = false }
     },
   });
   if (loaded === "loaded") image.dataset.loaded = "true";
+  // The picture is fetched after the row is drawn, so its slot says it is
+  // coming: a list on a slow connection shows every song, not one song per
+  // image timeout.
+  else image.dataset.loading = "true";
   return image;
 }
 
@@ -150,26 +155,25 @@ function artworkFallback(className, alt) {
   return h("span", { class: `${className} art-fallback`, role: alt ? "img" : null, "aria-label": alt || "Artwork unavailable" }, icon("note", 18));
 }
 
-/** Append children in order, waiting for each row's artwork before advancing. */
-export async function appendProgressively(parent, rows, { isCurrent = () => true, waitFor = waitForImages } = {}) {
-  for (const row of rows || []) {
+/**
+ * Append children in order, without waiting for their images.
+ *
+ * A row is what it says - title, artists, length - and its artwork arrives when
+ * the connection lets it. Waiting for each picture before appending the next
+ * row is what turned a slow network into a list that took six seconds a song:
+ * the details were in hand and the list was held back for the illustration.
+ *
+ * Rows are appended in chunks with a breath between them so a long list paints
+ * as it fills instead of blocking one frame for all of it.
+ */
+export async function appendProgressively(parent, rows, { isCurrent = () => true, chunk = 25 } = {}) {
+  const list = rows || [];
+  for (let at = 0; at < list.length; at += chunk) {
     if (!isCurrent()) return false;
-    parent.appendChild(row);
-    await waitFor(row);
+    for (const row of list.slice(at, at + chunk)) parent.appendChild(row);
+    await new Promise((resolve) => setTimeout(resolve, 0));
   }
   return true;
-}
-
-function waitForImages(root) {
-  const images = [...(root.querySelectorAll?.("img.art") || [])]
-    .filter((image) => image.dataset.loaded !== "true");
-  if (!images.length) return Promise.resolve();
-  return Promise.all(images.map((image) => new Promise((resolve) => {
-    const done = () => { image.removeEventListener("load", done); image.removeEventListener("error", done); resolve(); };
-    image.addEventListener("load", done, { once: true });
-    image.addEventListener("error", done, { once: true });
-    setTimeout(done, 6000);
-  })));
 }
 
 /**

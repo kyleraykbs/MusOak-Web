@@ -498,3 +498,15 @@
   builders and the OpenAPI document. Dropping the other parameters keeps a song
   shared from its album's page a song link.
 - Reversible: yes.
+
+## 2026-10-26 Lists do not wait for their pictures; rooms hold the card
+- Decision: `appendProgressively` appends rows in chunks without waiting for
+  artwork (it used to wait up to 6s per image), and an artwork slot shows a
+  spinner while its picture is on the way (`data-loading` + CSS). A room
+  follower's element ending marks a gap (`_betweenSongs`); the media session
+  keeps the Musoak card and "playing" until the room's next item loads, and a
+  load the member is holding for a playing room does the same.
+- Why: on a bad connection the list showed one song per image timeout; and a
+  follower's ended element is a session the lock screen reads as over while the
+  room takes up to a beat to start the next song.
+- Reversible: yes.

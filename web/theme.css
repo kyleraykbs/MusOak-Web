@@ -470,6 +470,29 @@ button, input, select, textarea {
 img.art { display: block; transition: opacity 140ms ease; }
 img.art:not([data-loaded="true"]) { opacity: 0.72; }
 img.art[data-loaded="true"] { opacity: 1; }
+
+/* The slot of a picture that has not arrived yet: a spinner where the cover
+   will be. The row's details are already on the page, so a slow connection
+   costs the illustration, not the list. */
+@property --art-spin {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+img.art[data-loading="true"] {
+  background-image: conic-gradient(from var(--art-spin), transparent 0 68%, var(--fg4) 68% 100%);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 22px 22px;
+  background-color: var(--bg2);
+  -webkit-mask: radial-gradient(circle 11px at center, transparent 0 6.5px, #000 7px);
+  mask: radial-gradient(circle 11px at center, transparent 0 6.5px, #000 7px);
+  animation: art-spin 900ms linear infinite;
+}
+@keyframes art-spin { to { --art-spin: 360deg; } }
+@media (prefers-reduced-motion: reduce) {
+  img.art[data-loading="true"] { animation: none; }
+}
 .card, .list { box-shadow: 0 1px 0 color-mix(in srgb, var(--fg0) 4%, transparent); }
 .card:focus-within, .list:focus-within { border-color: var(--bg3); }
 @media (prefers-reduced-motion: reduce) {
