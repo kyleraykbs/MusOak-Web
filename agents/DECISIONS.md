@@ -514,3 +514,19 @@
 - Decision: artist pages show two side-by-side scrollable panels, searchable Albums and Songs. The server starts the catalogue in the background; the page polls progress and refreshes rows as releases land. Singles are represented by one top-of-list `Singles` row using the Musoak icon, and visible sync controls are removed; album reads are server-complete before rendering.
 - Why: the provider has no bulk all-songs call, while each album release is one complete read. A background release-by-release catalogue avoids blocking the artist page, and album-level waiting prevents a partial album from looking complete.
 - Reversible: yes
+
+## 2026-10-27 A silent second player holds the media session between songs
+- Decision: `_holdSession()` plays and pauses a detached `<audio>` carrying a
+  generated tenth of a second of 8-bit PCM silence (`silenceWav`), inside one
+  task: at each changeover that will play, when a room follower's file ends,
+  when a play is refused, and on every retry tick. Silent by content rather than
+  by volume, and never appended to the document. The element is made once and
+  kept; a browser that cannot make one leaves `_silent = null` and the player
+  behaves as before.
+- Why: `playbackState = "playing"` is a word, not a player. Chrome destroys a
+  page's session when nothing in it is playing, and that session is the lock
+  screen's card, the Bluetooth transport, and the standing that lets a
+  backgrounded phone start the next file (and keeps the tab from being throttled
+  and frozen while it waits). Kyle, after the card still dropped on the phone:
+  "can we add that dummy audiostream".
+- Reversible: yes.

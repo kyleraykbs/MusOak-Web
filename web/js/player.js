@@ -126,6 +126,38 @@ const FETCH_RETRY_PAUSE_MS = 700;
 // element cannot leave the start behind to fire on whatever loads next.
 const METADATA_TIMEOUT_MS = 10000;
 const clamp01 = (value) => Math.min(1, Math.max(0, value));
+
+/**
+ * A WAV of silence: `seconds` of mono 8-bit PCM at 8 kHz, header and all.
+ *
+ * The sample value is the thing to get right. 8-bit PCM is unsigned, so silence
+ * is 0x80 - a buffer of zeroes in this format is the loudest sample it can
+ * hold, a full-scale negative one. A tenth of a second is 844 bytes, which is
+ * the whole reason this is generated rather than shipped.
+ */
+export function silenceWav(seconds = 0.1, rate = 8000) {
+  const samples = Math.max(1, Math.round(rate * Math.max(0, Number(seconds) || 0)));
+  const bytes = new Uint8Array(44 + samples);
+  const view = new DataView(bytes.buffer);
+  const text = (at, value) => {
+    for (let index = 0; index < value.length; index += 1) bytes[at + index] = value.charCodeAt(index);
+  };
+  text(0, "RIFF");
+  view.setUint32(4, 36 + samples, true);       // everything after this field
+  text(8, "WAVEfmt ");
+  view.setUint32(16, 16, true);                // the fmt chunk's own length
+  view.setUint16(20, 1, true);                 // PCM
+  view.setUint16(22, 1, true);                 // mono
+  view.setUint32(24, rate, true);              // samples a second
+  view.setUint32(28, rate, true);              // bytes a second: one channel, one byte
+  view.setUint16(32, 1, true);                 // block align
+  view.setUint16(34, 8, true);                 // bits a sample
+  text(36, "data");
+  view.setUint32(40, samples, true);
+  bytes.fill(0x80, 44);
+  return bytes;
+}
+
 function rangeFillPercent(input, fraction) {
   const share = clamp01(fraction);
   if (!input?.clientWidth || typeof getComputedStyle !== "function") return `${Math.round(share * 100)}%`;
@@ -410,6 +442,9 @@ class Player {
   constructor() {
     /** The one audio element, once the bar is on screen. */
     this.audio = null;
+    /** The silent player that keeps the media session alive across a gap. Made
+     *  the first time it is needed; null once it cannot be made at all. */
+    this._silent = undefined;
     /** Plain track objects, in play order. */
     this.queue = [];
 
@@ -1510,6 +1545,11 @@ class Player {
     // gated while `_loading` is set. The element is emptied only when there is
     // nothing to play at all (`_stopAudio`).
     if (audio.src) audio.pause();
+    // Stopping the element is the moment the session would go, so the silent
+    // player takes over for the gap - but only when this load is going to play.
+    // A load that will not (a restore) is a pause, and a paused page needs no
+    // session of its own.
+    if (autoplay) this._holdSession();
     this._emit("track-changed", track);
     // The bar says "downloading" from the moment the track is chosen.
     this._stateEvent();
@@ -2398,8 +2438,9 @@ class Player {
       this._setBuffering(false);
       // The room host is a normal queue player: its own queue advances on the
       // element's end. Followers never advance locally; the host's next sync
-      // tells them which song is on.
+      // tells them which song is on, which is a wait the session has to survive.
       if (!this._room || this._room.hostPlayback) this.next();
+      else this._holdSession();
     });
     audio.addEventListener("error", () => {
       if (audio !== this.audio) return;
@@ -2471,6 +2512,10 @@ class Player {
         this._blocked = true;
         this._stateEvent();
         this._blockedError = error?.message || "";
+        // A refused play is the one case where the page cannot do it alone: the
+        // card is what lets a press on the lock screen ask again, so the session
+        // is held while the retry waits for a moment it is allowed to play.
+        this._holdSession();
       });
     }
   }
@@ -2743,6 +2788,58 @@ class Player {
     this.renderBar();
   }
 
+  /**
+   * Keep the page's media session alive while nothing in it is playing.
+   *
+   * Chrome destroys a page's session when no player is playing: the card goes,
+   * and with it the page's standing as a tab that is playing, which is exactly
+   * the standing a phone uses to let a backgrounded page start the next file -
+   * and to keep it from being throttled and frozen while it waits. Setting the
+   * state to "playing" is not enough on its own; something has to actually be
+   * playing at the moment the real element is not.
+   *
+   * A second element carrying a tenth of a second of silence, played and paused
+   * inside one task, is that something: the documented way to hold a session
+   * open across a source change. Silent by content rather than by volume, since
+   * a muted element is not "playing audio" to the browser and a card the browser
+   * believes is silent buys nothing. Detached from the document, because it is
+   * not part of the page and a list of the page's audio elements should not grow
+   * one.
+   */
+  _holdSession() {
+    const silent = this._silentPlayer();
+    if (!silent) return;
+    try {
+      const playing = silent.play();
+      if (playing?.catch) playing.catch(() => {
+        /* refused while hidden: the retry asks again, and the gap says so */
+      });
+    } catch {
+      return;
+    }
+    silent.pause();
+  }
+
+  /** The silent element `_holdSession` plays, made once and then kept. */
+  _silentPlayer() {
+    if (this._silent !== undefined) return this._silent;
+    this._silent = null;
+    if (typeof Audio !== "function" || typeof Blob !== "function") return null;
+    if (typeof URL === "undefined" || typeof URL.createObjectURL !== "function") return null;
+    let url = "";
+    try {
+      url = URL.createObjectURL(new Blob([silenceWav()], { type: "audio/wav" }));
+    } catch {
+      return null;
+    }
+    if (!url) return null;
+    const silent = new Audio(url);
+    if (typeof silent.play !== "function" || typeof silent.pause !== "function") return null;
+    silent.preload = "auto";
+    this._silent = silent;
+    return silent;
+  }
+
   /** Tell the lock screen where we are, within what the API allows. */
   _syncMediaSession() {
     const session = typeof navigator === "undefined" ? null : navigator.mediaSession;
@@ -2865,6 +2962,10 @@ class Player {
       this._resetStalledAudio();
       return;
     }
+    // Nothing is playing and something is meant to be: the session is renewed
+    // here as well, so a wait that outlasts the first hold (a fetch, a refusal)
+    // still has a card - and, on a phone, a page that is not throttled for it.
+    this._holdSession();
     const playing = audio?.play();
     if (playing?.catch) playing.catch(() => { /* still not allowed: it waits */ });
   }

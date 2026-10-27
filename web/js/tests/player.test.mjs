@@ -11,7 +11,7 @@ import {
   albumLine, artistLine, documentKey, mediaProgressLabel, mediaStateLabel, nextIndex, OFFLINE_KEEP, OFFLINE_MAX_BYTES,
   playbackDocument,
   memorySource, playbackStateFrom, prefetchWindow, queueFromDocument, shouldSavePlayback, shuffleWhole, player,
-  volumeGain,
+  silenceWav, volumeGain,
 } from "../player.js";
 import {
   groupSources, netVotes, pickSource, sourceLabel,
@@ -3328,5 +3328,142 @@ test("a room's ended song holds the lock screen's card until the next one", () =
     player._playingWanted = saved.wanted;
     player._betweenSongs = saved.between;
     player._room = saved.room;
+  }
+});
+
+// A card is kept by a player that is playing, not by a word: Chrome destroys a
+// page's media session when nothing in it is playing, whatever the page set
+// `playbackState` to. The gap between songs is bridged by a second element
+// carrying silence - the documented way to hold a session across a source
+// change - so these pin the stream itself, and when it is played.
+test("the silent player is a tenth of a second of real silence", () => {
+  const bytes = silenceWav();
+  const view = new DataView(bytes.buffer);
+  const text = (at, length) => String.fromCharCode(...bytes.slice(at, at + length));
+  const samples = 800;
+  assert.equal(bytes.length, 44 + samples, "a tenth of a second at eight thousand samples");
+  assert.equal(text(0, 4), "RIFF");
+  assert.equal(text(8, 8), "WAVEfmt ");
+  assert.equal(text(36, 4), "data");
+  assert.equal(view.getUint32(4, true), 36 + samples, "the RIFF size counts everything after it");
+  assert.equal(view.getUint16(20, true), 1, "linear PCM");
+  assert.equal(view.getUint16(22, true), 1, "one channel");
+  assert.equal(view.getUint32(24, true), 8000, "eight thousand samples a second");
+  assert.equal(view.getUint32(28, true), 8000, "one byte a sample, so the same rate in bytes");
+  assert.equal(view.getUint16(34, true), 8, "eight bits a sample");
+  assert.equal(view.getUint32(40, true), samples, "the data chunk's own length");
+  // 8-bit PCM is unsigned, so silence is 0x80: a buffer of zeroes would be
+  // full-scale negative, which is the loudest sample the format can hold.
+  assert.ok(bytes.slice(44).every((byte) => byte === 0x80), "every sample is silence");
+});
+
+test("a changeover plays the silent player, and a restored pause does not", () => {
+  const held = [];
+  const saved = {
+    audio: player.audio,
+    ensureAudio: player.ensureAudio,
+    queue: player.queue,
+    index: player._index,
+    variant: player._variant,
+    token: player._token,
+    loading: player._loading,
+    playingWanted: player._playingWanted,
+    resumeWanted: player._resumeWanted,
+    resumeTimer: player._resumeTimer,
+    offline: player._offline,
+    room: player._room,
+    hold: player._holdSession,
+    renderBar: player.renderBar,
+    wireAudio: player._wireAudio,
+  };
+  const audio = {
+    src: "blob:one", currentSrc: "blob:one", currentTime: 30, duration: 180,
+    paused: false, ended: false, readyState: 4, volume: 1, muted: false,
+    dataset: {}, style: {},
+    addEventListener() {}, removeEventListener() {},
+    pause() { this.paused = true; }, play() { this.paused = false; return { catch() {} }; },
+    removeAttribute() {}, load() {},
+  };
+  try {
+    player.setRoom(null);
+    player.audio = audio;
+    player.ensureAudio = () => audio;
+    player.renderBar = () => {};
+    player._wireAudio = () => {};
+    player._holdSession = () => held.push(player._index);
+    player.queue = [track("one"), track("two")];
+    player._index = 0;
+    player._variant = "v-one";
+    player._loading = false;
+    player._playingWanted = true;
+    player._offline = new Map([["two", { state: "ready", variantId: "v-two", url: "blob:two", bytes: 1, at: 0 }]]);
+    player._prefetch = () => {};
+    player._variantFor = async () => ({ sources: [], preferredVariantId: "", variantId: "v-two", source: null });
+    player._wantResume(false);
+
+    // A load that will play: the element is stopped for the fetch, so the
+    // session is held through it.
+    const playing = player._load(1, { autoplay: true });
+    assert.deepEqual(held, [1], "the gap of a load that will play is held");
+    player._token += 1;
+    player._loading = false;
+    void playing;
+
+    // A restore is a pause: no card to keep, because nothing is meant to play.
+    held.length = 0;
+    player._index = 1;
+    player._variant = "v-two";
+    const paused = player._load(0, { autoplay: false });
+    assert.deepEqual(held, [], "a load that will not play holds nothing");
+    player._token += 1;
+    player._loading = false;
+    void paused;
+  } finally {
+    player._holdSession = saved.hold;
+    player.renderBar = saved.renderBar;
+    player._wireAudio = saved.wireAudio;
+    player._wantResume(false);
+    clearInterval(player._resumeTimer);
+    player.audio = saved.audio;
+    player.ensureAudio = saved.ensureAudio;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._variant = saved.variant;
+    player._token = saved.token;
+    player._loading = saved.loading;
+    player._playingWanted = saved.playingWanted;
+    player._resumeWanted = saved.resumeWanted;
+    player._resumeTimer = saved.resumeTimer;
+    player._offline = saved.offline;
+    player.setRoom(saved.room);
+  }
+});
+
+test("a refused play holds the card so the lock screen can ask again", async () => {
+  const held = [];
+  const saved = {
+    audio: player.audio,
+    playingWanted: player._playingWanted,
+    blocked: player._blocked,
+    stateEvent: player._stateEvent,
+    hold: player._holdSession,
+  };
+  try {
+    player.audio = {
+      paused: true,
+      play() { return Promise.reject(new Error("NotAllowedError: no gesture")); },
+    };
+    player._stateEvent = () => {};
+    player._holdSession = () => held.push("held");
+    player._play();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(player._blocked, true, "the refusal is recorded");
+    assert.deepEqual(held, ["held"], "and the session is held while the retry waits");
+  } finally {
+    player.audio = saved.audio;
+    player._playingWanted = saved.playingWanted;
+    player._blocked = saved.blocked;
+    player._stateEvent = saved.stateEvent;
+    player._holdSession = saved.hold;
   }
 });

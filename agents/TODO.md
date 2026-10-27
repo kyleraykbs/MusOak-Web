@@ -53,17 +53,19 @@ DECISIONS.md, same date). Left open by it:
 - [ ] `web/sw.js`: the shell cache is keyed by full URL and never pruned.
 - [ ] `internal/web/server.go`: one strong ETag is sent for the gzip and the
       identity representation of the same asset.
-## Open on the phone, 2026-10-19
 
-The lock screen kept its card through a changeover in the unit tests, but the
-card itself can only be watched on a device (Firefox has no media session, and
-headless has no notification). Kyle to check on Android Chrome:
+## Open on the phone, 2026-10-19, updated 2026-10-27
+
+The card can only be watched on a device: Firefox has no media session, and
+headless has no notification. The silent player (`_holdSession`) is in, so Kyle
+to check on Android Chrome:
 
 - [ ] A queue of songs with the screen off: the card stays through the change,
       and the next song starts by itself.
-- [ ] If it still drops across a *long* wait (a room changeover, where the next
-      file is fetched at the advance rather than ahead of it), the fix is the
-      documented workaround: a second, silent element played and paused
-      synchronously at the changeover to hold the session open. Its cost: the
-      notification then describes the silent player, so metadata and position
-      have to be set on the session explicitly.
+- [ ] A room changeover with the screen off, where the next file is fetched at
+      the advance rather than ahead of it: the card must survive that longer
+      wait, which is what the silent player exists for.
+- [ ] What the card says during a gap is the app's own name and icon (by
+      decision, not by accident); if the notification instead describes the
+      silent player - no title, no artwork - the fix is to set the session's
+      metadata after the hold as well as before it.
