@@ -8,7 +8,7 @@
 
 import { h, mount, clear, iconButton, popover, toast, artworkImage, skeletonRows } from "../dom.js";
 import { currentClient, navigate, registerView } from "../app.js";
-import { playOne } from "./queue.js";
+import { playOne, playTracks, queueNextTracks, shuffleItems } from "./queue.js";
 import { emptyState, playButtons, trackCountLine, trackMenu, trackRow } from "./playlist.js";
 import { shareAlbum, shareArtist } from "./share.js";
 
@@ -113,6 +113,8 @@ function collectionFailed(sheet, icon, what, error) {
 // --- the artist page --------------------------------------------------------
 
 async function renderArtist(container, params = {}) {
+  // The "loading more" line at the end of the songs list, while it is there.
+  let songsMore = null;
   const page = collectionPage(container, params, {
     icon: "people", what: "artist", plural: "artists", loading: "Loading the artist…",
   });
@@ -198,6 +200,30 @@ async function renderArtist(container, params = {}) {
     songsList.append(...songs.map((track, position) => trackRow({
       track, position, client, onActivate: () => playOne(songs, position), menu: trackMenu(track),
     })));
+    watchSongsEnd();
+  };
+
+  // The panel is its own scroll box on a desktop and a plain block on a phone,
+  // where the page scrolls instead - so watching the panel's `scroll` event
+  // left the list at its first two hundred songs. The end of the list is
+  // watched instead, against the viewport, which is whatever is scrolling.
+  const watchSongsEnd = () => {
+    // No observer (an old browser): the panel's own scroll below is the path.
+    if (!follower) return;
+    if (songs.length >= songsTotal) {
+      if (songsMore) {
+        follower.unobserve(songsMore);
+        songsMore = null;
+      }
+      return;
+    }
+    if (!songsMore) {
+      songsMore = h("div", { class: "panel-more", role: "status", "aria-live": "polite" },
+        h("span", { class: "loading-spinner", "aria-hidden": "true" }),
+        h("span", { text: "Loading more songs…" }));
+    }
+    songsList.appendChild(songsMore);
+    follower.observe(songsMore);
   };
 
   const loadSongs = async ({ pages = 1 } = {}) => {
@@ -227,18 +253,27 @@ async function renderArtist(container, params = {}) {
 
   const loadMoreSongs = async () => {
     if (songsLoading || songs.length >= songsTotal) return;
+    const mine = songsGeneration;
     songsLoading = true;
     try {
       const payload = await client.artistTracks(params.id, { query: songsQuery, limit: SONGS_PAGE, offset: songs.length });
+      if (mine !== songsGeneration) return;
       songs = songs.concat(payload.tracks || []);
       songsTotal = payload.total;
     } catch (error) {
-      toast(String(error?.message || error));
+      if (mine === songsGeneration) toast(String(error?.message || error));
     } finally {
+      if (mine !== songsGeneration) return;
       songsLoading = false;
       renderSongs();
     }
   };
+  const follower = typeof IntersectionObserver === "function"
+    ? new IntersectionObserver((entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) void loadMoreSongs();
+      }, { rootMargin: "600px" })
+    : null;
+  // A browser without IntersectionObserver still gets the panel's own scroll.
   songsList.addEventListener("scroll", () => {
     if (songsList.scrollTop + songsList.clientHeight >= songsList.scrollHeight - 240) void loadMoreSongs();
   });
@@ -284,11 +319,43 @@ async function renderArtist(container, params = {}) {
   }
 }
 
+/**
+ * Play, shuffle or queue an album from a row that does not carry its tracklist.
+ *
+ * The whole album is asked for, not the row's count: the album endpoint reads
+ * the release's tracklist whole, so a shuffle from an artist page shuffles the
+ * record rather than the three songs an unopened album happened to hold.
+ */
+async function playAlbum(id, { shuffle = false, queue = false } = {}) {
+  const client = currentClient();
+  if (!client) return;
+  let tracks;
+  try {
+    tracks = (await client.album(id)).tracks || [];
+  } catch (error) {
+    toast(String(error?.message || error));
+    return;
+  }
+  if (!tracks.length) {
+    toast("That album has no tracks to play yet");
+    return;
+  }
+  const list = shuffle ? shuffleItems(tracks) : tracks;
+  if (queue) queueNextTracks(list);
+  else playTracks(list, 0);
+}
+
 function albumRow(client, album, params) {
   const singles = album.kind === "singles";
+  // An album nobody has opened holds only the songs that were matched into it,
+  // and its own count is not the length of the record: it says so rather than
+  // stating a number that is wrong. Opening the album reads the rest.
+  const count = album.partial
+    ? `not synced yet · ${album.releaseTrackCount || "?"} tracks`
+    : album.trackCount ? `${album.trackCount} track(s)` : "";
   const subtitle = singles
     ? ["all single releases", album.trackCount ? `${album.trackCount} track(s)` : ""]
-    : [artistLine(album), album.year, album.trackCount ? `${album.trackCount} track(s)` : ""];
+    : [artistLine(album), album.year, count];
   const artwork = singles
     ? artworkImage("icon-64.png", { className: "art", eager: false })
     : artTile(client, album.artworkUrl);
@@ -307,7 +374,12 @@ function albumRow(client, album, params) {
       title: "More actions",
       onclick: (event) => {
         event.stopPropagation();
-        popover(event.currentTarget, [{ label: "Share…", onClick: () => shareAlbum(album) }]);
+        popover(event.currentTarget, [
+          { label: "Play album", onClick: () => void playAlbum(album.id, { shuffle: false }) },
+          { label: "Shuffle album", onClick: () => void playAlbum(album.id, { shuffle: true }) },
+          { label: "Queue album", onClick: () => void playAlbum(album.id, { queue: true }) },
+          { label: "Share…", onClick: () => shareAlbum(album) },
+        ]);
       },
     })
   );
@@ -360,7 +432,9 @@ async function renderAlbum(container, params = {}) {
           [artistLine(album), album.year].filter(Boolean).join(" \u00b7 "),
           album.catalogue?.running
             ? `reading the singles · ${album.catalogue.done || 0} of ${album.catalogue.total || 0} releases`
-            : tracks.length ? trackCountLine(tracks) : "No tracks found",
+            : album.partial && album.releaseTrackCount
+              ? `not synced yet · ${tracks.length} of ${album.releaseTrackCount} tracks`
+              : tracks.length ? trackCountLine(tracks) : "No tracks found",
           (album.providers || []).join(", "),
         ],
         actions: [h("button", {

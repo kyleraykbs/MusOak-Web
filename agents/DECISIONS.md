@@ -555,3 +555,27 @@
   was inherited when a single's track linked its album - so no client should be
   told it has one.
 - Reversible: yes.
+
+## 2026-10-27 An album row plays, shuffles and says when it is not whole
+- Decision: the ⋮ on an album row offers Play album, Shuffle album, Queue album
+  and Share. Each fetches the album endpoint first - which completes the release
+  server-side - so a shuffle from an artist page shuffles the record, not the
+  handful of songs an unopened album holds. A row whose album is short of its
+  release says `not synced yet · N tracks` (the release's own count), and the
+  album page says `not synced yet · N of M tracks`.
+- Why: Kyle: "Albums should have a shuffle also if an album hasn't had the whole
+  sync/has been opened thing it should say that instead of showing the wrong
+  number of tracks or whatever".
+- Reversible: yes.
+
+## 2026-10-27 The songs panel loads as it is scrolled, past the first page
+- Decision: the artists page watches the end of its songs list with an
+  IntersectionObserver rooted at the viewport (600px margin), appending a
+  "Loading more songs…" line while more remain; the panel's own `scroll` event
+  is kept as the fallback for a browser without observers.
+- Why: Kyle: "it only shows 200 songs on artists pages, it should show all of
+  them as the user scrolls". The panel's `scroll` listener never fired on a
+  phone, where the page scrolls and the panel does not, and a single 200-song
+  page was the whole list. Verified in a browser: 200 rows, one scroll to the
+  end, 212 rows and the line gone.
+- Reversible: yes.

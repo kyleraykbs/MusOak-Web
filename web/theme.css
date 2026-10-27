@@ -10,6 +10,17 @@
 .panel-title { color: var(--fg0); font-weight: 600; }
 .panel-count { color: var(--fg4); font-variant-numeric: tabular-nums; }
 .panel-search { width: 100%; min-width: 0; }
+/* The end of the songs list, while there are more: it is what the observer
+   watches, so it is the thing that says the list grows past the first page. */
+.panel-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  color: var(--fg4);
+  font-size: 12.5px;
+}
 .panel-list {
   max-height: min(62vh, 720px);
   overflow-y: auto;
