@@ -54,3 +54,37 @@ signals to gate on are the player's intent (`_playingWanted`), `_loading`, and
 Nothing in the Firefox e2e suite can see any of this: Firefox has no media
 session, so a green run says the queue still advances, never that the card
 stayed. The phone is the instrument.
+
+## A dead playbar in Firefox 152 is a Gecko regression, not a player bug
+
+Kyle's daily browser is LibreWolf 152.0.6-1 (mycelion's `nixos-26.05` pin), which
+sits inside the regression range of **bugzilla 2056444**. Regressed by bug
+2005247 in Firefox 152 and fixed in 153.0.3 / 153.1 esr / 154 / 155: a media
+element handed a Blob URL whose data its content process owns reads that data
+back over IPC as a forward-only pipe, so any read at an offset - a seek -
+degrades to reading and discarding everything before the target, and a far seek
+hangs the element at `networkState=1, readyState=0` **with no error event**. It
+wedges blob-backed media for the whole content process, so a reload does not
+clear it and a browser restart does. Chromium is unaffected.
+
+The player is squarely in the trigger, which is why this is worth knowing before
+touching the hand-over: `readMedia` rebuilds `new Blob(chunks)` from the response
+body (the bug's own repro hangs on `new Blob([arrayBuffer])` and plays with
+`Response.blob()`), and every load that starts part way in - `restorePlayback`, a
+room's position, a source switch, `retryCurrent` - seeks immediately after the
+source is assigned. A reload re-seeks to the saved position and walks back into
+it. What the bar shows follows from the hang: no error text (no `error` event
+ever fires), a seek that snaps back (`audio.duration` is NaN, so `_placePosition`
+parks the position and the next repaint draws 0 against the API's duration), and
+every song dead because the wedge is per-process.
+
+The e2e suite cannot see any of it: it builds its own Firefox from this flake's
+pin and that is 157.0, five releases past the fix.
+
+Nothing here needs a code change - LibreWolf >= 153.0.3 ends it, and
+`nixpkgs-unstable` has 154.0-2. What the player *is* missing is any way to tell
+"a source that never became loadable" from "still loading": such an element is
+paused with a source at zero and a fresh clock, which `_retryWanted` reads as a
+refused play (so it hammers `play()` every 4 s), and the one element replacement
+`_resetStalledAudio` allows latches `_clockRecovering` for good because no
+`playing` event ever clears it. That hole outlives this browser bug.
