@@ -1,3 +1,28 @@
+/* The artist page keeps the release list and the song list visible together. */
+.artist-panels {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.artist-panel { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.panel-title { color: var(--fg0); font-weight: 600; }
+.panel-count { color: var(--fg4); font-variant-numeric: tabular-nums; }
+.panel-search { width: 100%; min-width: 0; }
+.panel-list {
+  max-height: min(62vh, 720px);
+  overflow-y: auto;
+  background: var(--bg0-s);
+  border: 1px solid var(--bg1);
+  border-radius: var(--radius);
+}
+.catalogue-status { min-height: 1.2em; color: var(--fg4); font-size: 0.9rem; }
+.catalogue-status.busy::before { content: ""; display: inline-block; width: 0.8em; height: 0.8em; margin-right: 0.45em; border: 2px solid var(--bg3); border-top-color: var(--accent); border-radius: 50%; vertical-align: -0.08em; animation: musoak-spin 800ms linear infinite; }
+.album-singles .title { color: var(--accent); }
+@media (max-width: 860px) {
+  .artist-panels { grid-template-columns: minmax(0, 1fr); }
+}
 /* MusOak web UI — gruvbox-dark.
  *
  * One palette, one set of components. Everything else in the app is HTML and

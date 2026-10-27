@@ -271,9 +271,19 @@ export class Client {
   album(id) {
     return this.get(`/api/v1/albums/${id}`).then((value) => value || {});
   }
-
   artist(id) {
     return this.get(`/api/v1/artists/${id}`).then((value) => value || {});
+  }
+  artistTracks(id, { query = "", limit = 200, offset = 0 } = {}) {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (query) params.set("q", query);
+    return this.get(`/api/v1/artists/${id}/tracks?${params}`).then((value) => ({
+      tracks: value?.tracks || [],
+      total: Number(value?.total) || 0,
+    }));
+  }
+  artistCatalogue(id) {
+    return this.get(`/api/v1/artists/${id}/catalogue`).then((value) => value || {});
   }
 
   syncAlbum(id, providers = [], resolve = false) {

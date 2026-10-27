@@ -510,3 +510,7 @@
   follower's ended element is a session the lock screen reads as over while the
   room takes up to a beat to start the next song.
 - Reversible: yes.
+## 2026-10-27 Artist pages load albums and songs as a catalogue
+- Decision: artist pages show two side-by-side scrollable panels, searchable Albums and Songs. The server starts the catalogue in the background; the page polls progress and refreshes rows as releases land. Singles are represented by one top-of-list `Singles` row using the Musoak icon, and visible sync controls are removed; album reads are server-complete before rendering.
+- Why: the provider has no bulk all-songs call, while each album release is one complete read. A background release-by-release catalogue avoids blocking the artist page, and album-level waiting prevents a partial album from looking complete.
+- Reversible: yes

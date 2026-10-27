@@ -6,18 +6,26 @@
 //
 // Both are detail views reached from a result, so neither appears in the nav.
 
-import { h, mount, clear, iconButton, popover, toast, loadingState, artworkImage, skeletonRows } from "../dom.js";
+import { h, mount, clear, iconButton, popover, toast, artworkImage, skeletonRows } from "../dom.js";
 import { currentClient, navigate, registerView } from "../app.js";
-import { playOne, playTracks } from "./queue.js";
+import { playOne } from "./queue.js";
 import { emptyState, playButtons, trackCountLine, trackMenu, trackRow } from "./playlist.js";
 import { shareAlbum, shareArtist } from "./share.js";
 
 registerView({ id: "artist", title: "Artist", hidden: true, render: renderArtist });
 registerView({ id: "album", title: "Album", hidden: true, render: renderAlbum });
 
-/** Albums this page has already asked the provider about, so opening one twice
- *  in a session does not mean two round trips. */
-const syncedThisSession = new Set();
+/** How many songs one request fills in the artist's songs panel. */
+const SONGS_PAGE = 200;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function panelSearch(placeholder, onInput) {
+  return h("input", {
+    type: "search", class: "panel-search", placeholder, "aria-label": placeholder,
+    oninput: (event) => onInput(event.currentTarget.value.trim()),
+  });
+}
 
 // --- pieces both pages use --------------------------------------------------
 
@@ -63,51 +71,7 @@ function header({ client, artworkUrl, title, lines = [], actions = [] }) {
   );
 }
 
-/**
- * The sync control: a button and the line under it that says what is happening.
- *
- * A sync is one long request - an artist means a provider round trip per album,
- * which took 25 seconds for Radiohead - so the button says what it is doing
- * rather than sitting there looking pressed.
- */
-function syncControl({ label, running, title, work, hint }) {
-  const status = h("span", { class: "login-status sync-status", role: "status" });
-  const button = h("button", {
-    class: "btn suggested",
-    text: label,
-    title,
-    "aria-live": "off",
-    onclick: async (event) => {
-      const element = event.currentTarget;
-      if (element.dataset.busy === "true") return;
-      element.dataset.busy = "true";
-      element.textContent = running;
-      status.className = "login-status";
-      status.textContent = hint || "Talking to the provider. A big artist can take a minute.";
-      try {
-        await work();
-        status.className = "login-status";
-        status.textContent = "";
-      } catch (error) {
-        status.className = "login-status error";
-        status.textContent = String(error?.message || error);
-      } finally {
-        delete element.dataset.busy;
-        element.textContent = label;
-      }
-    },
-  });
-  return h("div", { class: "sync-control" }, button, status);
-}
 
-/** A sync that reports how much it added and then lets the page catch up. */
-async function syncAndSay(client, { id, name, album = false }, refresh) {
-  const result = album ? await client.syncAlbum(id) : await client.syncArtist(id, { syncAlbums: true });
-  const added = Number(result?.added) || 0;
-  // Syncing twice adds nothing, and "0 track(s)" reads like a failure.
-  toast(added ? `Synced ${name || "it"}: ${added} new track(s)` : `${name || "It"} was already in the library`);
-  await refresh();
-}
 
 /** The shape both provider-collection pages have, written once: a server to
  *  ask, an id to ask about, a line while it loads, and a paint that draws
@@ -141,77 +105,200 @@ function collectionFailed(sheet, icon, what, error) {
 
 async function renderArtist(container, params = {}) {
   const page = collectionPage(container, params, {
-    icon: "people",
-    what: "artist",
-    plural: "artists",
-    loading: "Loading the artist…",
+    icon: "people", what: "artist", plural: "artists", loading: "Loading the artist…",
   });
   if (!page) return;
   const { client, sheet } = page;
 
-  let artist;
-  let loadGeneration = 0;
-  const load = async () => {
-    const mine = ++loadGeneration;
-    const next = await client.artist(params.id);
-    if (mine !== loadGeneration || !sheet.isConnected) return;
-    artist = next;
-    paint();
-  };
-  const paint = () => {
-    if (!sheet.isConnected) return;
-    const albums = artist.albums || [];
+  let artist = null;
+  let catalogue = null;
+  let albumsQuery = "";
+  let songsQuery = "";
+  let songs = [];
+  let songsTotal = 0;
+  let songsGeneration = 0;
+  let songsLoading = false;
+  let shellBuilt = false;
+
+  const albumsCount = h("span", { class: "panel-count" });
+  const albumsList = h("div", { class: "panel-list" });
+  const songsCount = h("span", { class: "panel-count" });
+  const songsList = h("div", { class: "panel-list" });
+  const status = h("div", { class: "catalogue-status", role: "status" });
+  const albumsPanel = h("section", { class: "artist-panel" },
+    h("div", { class: "panel-head" }, h("span", { class: "panel-title", text: "Albums" }), albumsCount),
+    panelSearch("Search albums", (value) => { albumsQuery = value; renderAlbums(); }),
+    albumsList);
+  const songsPanel = h("section", { class: "artist-panel" },
+    h("div", { class: "panel-head" }, h("span", { class: "panel-title", text: "Songs" }), songsCount),
+    panelSearch("Search songs", (value) => { songsQuery = value; void loadSongs({ pages: 1 }); }),
+    songsList);
+
+  const buildShell = () => {
+    if (shellBuilt || !artist) return;
+    shellBuilt = true;
     clear(sheet);
     sheet.appendChild(backRow(params.from));
-    sheet.appendChild(header({ client, artworkUrl: artist.artworkUrl, title: artist.name || "Artist", lines: [
-      albums.length ? `${albums.length} album${albums.length === 1 ? "" : "s"}` : "Nothing in the library yet",
-      (artist.providers || []).join(", "),
-    ], actions: [syncControl({ label: "Sync into library", running: "Syncing…", title: "Bring every album this artist has into the library", hint: "Asking the provider about every album this artist has.", work: () => syncAndSay(client, { id: artist.id, name: artist.name }, load) }),
-      h("button", { class: "btn", text: "Share…", title: "Share this artist's link", onclick: () => void shareArtist(artist) }),
-    ] }));
-    sheet.appendChild(h("div", { class: "section-title", text: "Albums" }));
-    sheet.appendChild(albums.length ? h("div", { class: "list" }, albums.map((album) => albumRow(client, album, params, load))) : emptyState("note", "No albums yet", "Sync the artist to find out what they released."));
+    sheet.appendChild(header({
+      client, artworkUrl: artist.artworkUrl, title: artist.name || "Artist",
+      lines: [(artist.providers || []).join(", ")],
+      actions: [h("button", { class: "btn", text: "Share…", title: "Share this artist's link", onclick: () => void shareArtist(artist) })],
+    }));
+    sheet.appendChild(status);
+    sheet.appendChild(h("div", { class: "artist-panels" }, albumsPanel, songsPanel));
+  };
+
+  const renderStatus = () => {
+    const state = catalogue;
+    status.classList.toggle("busy", Boolean(state?.running));
+    if (state?.running) {
+      status.textContent = state.total
+        ? `reading the catalogue · ${state.done} of ${state.total} releases · ${state.added} songs so far`
+        : "reading the catalogue…";
+    } else if (state?.errors?.length) {
+      status.textContent = `${state.errors.length} release(s) could not be read; open the artist again to retry.`;
+    } else {
+      status.textContent = "";
+    }
+  };
+
+  const renderAlbums = () => {
+    const albums = artist?.albums || [];
+    const needle = albumsQuery.toLowerCase();
+    const shown = needle
+      ? albums.filter((album) => `${album.title || ""} ${album.year || ""}`.toLowerCase().includes(needle))
+      : albums;
+    albumsCount.textContent = needle ? `${shown.length} of ${albums.length}` : String(albums.length);
+    clear(albumsList);
+    if (!shown.length) {
+      albumsList.appendChild(emptyState("note", albums.length ? "No album matches" : "Nothing yet",
+        albums.length ? "Try another search." : "The provider's albums appear here as they are read."));
+      return;
+    }
+    albumsList.append(...shown.map((album) => albumRow(client, album, params)));
+  };
+
+  const renderSongs = () => {
+    songsCount.textContent = songsLoading ? "…" : songsTotal > songs.length ? `${songs.length} of ${songsTotal}` : String(songsTotal || songs.length);
+    clear(songsList);
+    if (!songs.length) {
+      songsList.appendChild(emptyState("note", songsLoading ? "Reading the artist…" : songsQuery ? "No song matches" : "No songs yet",
+        songsLoading ? "The provider's songs appear here as they are found." : songsQuery ? "Try another search." : "The catalogue has not found a song yet."));
+      return;
+    }
+    songsList.append(...songs.map((track, position) => trackRow({
+      track, position, client, onActivate: () => playOne(songs, position), menu: trackMenu(track),
+    })));
+  };
+
+  const loadSongs = async ({ pages = 1 } = {}) => {
+    const mine = ++songsGeneration;
+    songsLoading = true;
+    renderSongs();
+    const collected = [];
+    let total = 0;
+    try {
+      for (let page = 0; page < Math.max(1, pages); page += 1) {
+        const payload = await client.artistTracks(params.id, { query: songsQuery, limit: SONGS_PAGE, offset: page * SONGS_PAGE });
+        if (mine !== songsGeneration) return;
+        collected.push(...(payload.tracks || []));
+        total = payload.total;
+        if (collected.length >= total) break;
+      }
+    } catch (error) {
+      if (mine === songsGeneration) toast(String(error?.message || error));
+    } finally {
+      if (mine !== songsGeneration) return;
+      songsLoading = false;
+      songs = collected;
+      songsTotal = total;
+      renderSongs();
+    }
+  };
+
+  const loadMoreSongs = async () => {
+    if (songsLoading || songs.length >= songsTotal) return;
+    songsLoading = true;
+    try {
+      const payload = await client.artistTracks(params.id, { query: songsQuery, limit: SONGS_PAGE, offset: songs.length });
+      songs = songs.concat(payload.tracks || []);
+      songsTotal = payload.total;
+    } catch (error) {
+      toast(String(error?.message || error));
+    } finally {
+      songsLoading = false;
+      renderSongs();
+    }
+  };
+  songsList.addEventListener("scroll", () => {
+    if (songsList.scrollTop + songsList.clientHeight >= songsList.scrollHeight - 240) void loadMoreSongs();
+  });
+
+  const refresh = async () => {
+    const next = await client.artist(params.id);
+    if (!sheet.isConnected) return;
+    artist = next;
+    catalogue = next.catalogue || catalogue;
+    buildShell();
+    renderAlbums();
+    renderStatus();
+  };
+
+  const watchCatalogue = async () => {
+    while (sheet.isConnected && catalogue?.running) {
+      await sleep(1200);
+      if (!sheet.isConnected) return;
+      let state;
+      try {
+        state = await client.artistCatalogue(params.id);
+      } catch {
+        return;
+      }
+      const moved = state.done !== catalogue.done || state.running !== catalogue.running;
+      catalogue = state;
+      if (moved) {
+        const pages = Math.max(1, Math.ceil(songs.length / SONGS_PAGE));
+        await refresh();
+        await loadSongs({ pages });
+      } else {
+        renderStatus();
+      }
+    }
   };
 
   try {
-    await load();
+    await refresh();
+    await loadSongs();
+    void watchCatalogue();
   } catch (error) {
     collectionFailed(sheet, "people", "artist", error);
   }
 }
 
-function albumRow(client, album, params, refresh) {
-  const subtitle = [artistLine(album), album.year, album.trackCount ? `${album.trackCount} track(s)` : ""]
-    .filter(Boolean)
-    .join(" \u00b7 ");
+function albumRow(client, album, params) {
+  const singles = album.kind === "singles";
+  const subtitle = singles
+    ? ["all single releases", album.trackCount ? `${album.trackCount} track(s)` : ""]
+    : [artistLine(album), album.year, album.trackCount ? `${album.trackCount} track(s)` : ""];
+  const artwork = singles
+    ? artworkImage("icon-64.png", { className: "art", eager: false })
+    : artTile(client, album.artworkUrl);
   return h(
     "div",
-    { class: "row clickable", onclick: () => navigate("album", { id: album.id, from: { view: "artist", params: { id: params.id } } }) },
-    artTile(client, album.artworkUrl),
+    { class: `row clickable${singles ? " album-singles" : ""}`, onclick: () => navigate("album", { id: album.id, from: { view: "artist", params: { id: params.id } } }) },
+    artwork,
     h(
       "div",
       { class: "grow" },
       h("div", { class: "title", text: album.title || "Untitled" }),
-      subtitle ? h("div", { class: "subtitle", text: subtitle }) : null
+      subtitle.filter(Boolean).length ? h("div", { class: "subtitle", text: subtitle.filter(Boolean).join(" \u00b7 ") }) : null
     ),
-    h("span", { class: "time", text: album.year || "" }),
+    h("span", { class: "time", text: singles ? "" : album.year || "" }),
     iconButton("dots", {
       title: "More actions",
       onclick: (event) => {
         event.stopPropagation();
-        popover(event.currentTarget, [
-          {
-            label: "Sync into library",
-            onClick: async () => {
-              try {
-                await syncAndSay(client, { id: album.id, name: album.title, album: true }, refresh);
-              } catch (error) {
-                toast(String(error?.message || error));
-              }
-            },
-          },
-          { label: "Share…", onClick: () => shareAlbum(album) },
-        ]);
+        popover(event.currentTarget, [{ label: "Share…", onClick: () => shareAlbum(album) }]);
       },
     })
   );
@@ -231,46 +318,23 @@ async function renderAlbum(container, params = {}) {
 
   let album;
   let loadGeneration = 0;
-  let syncing = false;
   const load = async () => {
     const mine = ++loadGeneration;
     const next = await client.album(params.id);
     if (mine !== loadGeneration || !sheet.isConnected) return;
     album = next;
     paint();
-    if (shortOfItsRelease()) void fetchTheRest();
   };
-
-  /**
-   * An album built from single matches holds only the tracks that happened to
-   * be matched - the release knows the rest, and says how many it has. The page
-   * asks for them by itself rather than leaving a partial album looking whole.
-   */
-  const shortOfItsRelease = () => {
-    if (syncing || !(album.providers || []).length) return false;
-    if (syncedThisSession.has(album.id)) return false;
-    const release = (album.variants || []).reduce(
-      (most, variant) => Math.max(most, Number(variant.trackCount) || 0),
-      0
-    );
-    // No count recorded yet means the tracklist has never been read, so this is
-    // the ask that records it.
-    return release === 0 || (album.tracks || []).length < release;
-  };
-
-  const fetchTheRest = async () => {
-    syncing = true;
-    syncedThisSession.add(album.id);
-    paint();
-    try {
-      await client.syncAlbum(album.id);
-    } catch (error) {
-      // A provider that will not answer is not worth a banner over an album
-      // that already has something to show.
-      toast(String(error?.message || error));
+  const watchCatalogue = async () => {
+    while (sheet.isConnected && album?.catalogue?.running) {
+      await sleep(1500);
+      if (!sheet.isConnected) return;
+      try {
+        await load();
+      } catch {
+        return;
+      }
     }
-    syncing = false;
-    if (sheet.isConnected) await load();
   };
   const paint = () => {
     if (!sheet.isConnected) return;
@@ -284,34 +348,21 @@ async function renderAlbum(container, params = {}) {
         title: album.title || "Album",
         lines: [
           [artistLine(album), album.year].filter(Boolean).join(" \u00b7 "),
-          syncing
-            ? "getting the rest from the provider..."
-            : tracks.length
-              ? trackCountLine(tracks)
-              : "Not in the library yet",
+          album.catalogue?.running
+            ? `reading the singles · ${album.catalogue.done || 0} of ${album.catalogue.total || 0} releases`
+            : tracks.length ? trackCountLine(tracks) : "No tracks found",
           (album.providers || []).join(", "),
         ],
-        actions: [
-          syncControl({
-            label: tracks.length ? "Sync again" : "Sync into library",
-            running: "Syncing…",
-            title: "Bring this album's tracks into the library",
-            hint: "Asking the provider about this album.",
-            work: () => syncAndSay(client, { id: album.id, name: album.title, album: true }, load),
-          }),
-          h("button", {
-            class: "btn",
-            text: "Share…",
-            title: "Share this album's link",
-            onclick: () => void shareAlbum(album),
-          }),
-        ],
+        actions: [h("button", {
+          class: "btn",
+          text: "Share…",
+          title: "Share this album's link",
+          onclick: () => void shareAlbum(album),
+        })],
       })
     );
     if (!tracks.length) {
-      sheet.appendChild(
-        emptyState("note", "Nothing to play yet", "Syncing the album brings its tracks in and makes them playable.")
-      );
+      sheet.appendChild(emptyState("note", "No tracks found", "The provider did not return a tracklist for this album."));
       return;
     }
     sheet.appendChild(...playButtons(tracks));
@@ -334,6 +385,7 @@ async function renderAlbum(container, params = {}) {
 
   try {
     await load();
+    void watchCatalogue();
   } catch (error) {
     collectionFailed(sheet, "note", "album", error);
   }
