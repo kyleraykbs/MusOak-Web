@@ -8,7 +8,7 @@
 
 import { h, mount, clear, iconButton, popover, toast, artworkImage, skeletonRows } from "../dom.js";
 import { currentClient, navigate, registerView } from "../app.js";
-import { playOne, playTracks, queueNextTracks, shuffleItems } from "./queue.js";
+import { artistLink, playOne, playTracks, queueNextTracks, shuffleItems } from "./queue.js";
 import { emptyState, playButtons, trackCountLine, trackMenu, trackRow } from "./playlist.js";
 import { shareAlbum, shareArtist } from "./share.js";
 
@@ -73,7 +73,9 @@ function header({ client, artworkUrl, appIcon = false, title, lines = [], action
         "div",
         { class: "grow collection-header-copy" },
         h("div", { class: "title collection-header-title", text: title }),
-        ...lines.filter(Boolean).map((line) => h("div", { class: "subtitle wrap", text: line })),
+        // A line is a string, or a node when part of it is a link (an album's
+        // artist, which is the way back to the artist's page).
+        ...lines.filter(Boolean).map((line) => h("div", { class: "subtitle wrap" }, line)),
         actions.length ? h("div", { class: "form-row collection-header-actions" }, actions) : null
       )
     )
@@ -507,7 +509,10 @@ async function renderAlbum(container, params = {}) {
         appIcon: album.kind === "singles",
         title: album.title || "Album",
         lines: [
-          [artistLine(album), album.year].filter(Boolean).join(" \u00b7 "),
+          [
+            artistLink(artistLine(album), (album.artistIds || [])[0] || "") || h("span", { text: artistLine(album) }),
+            album.year ? h("span", { text: ` \u00b7 ${album.year}` }) : null,
+          ].filter(Boolean),
           album.catalogue?.running
             ? `reading the singles · ${album.catalogue.done || 0} of ${album.catalogue.total || 0} releases`
             : album.partial && album.releaseTrackCount
@@ -527,7 +532,10 @@ async function renderAlbum(container, params = {}) {
       sheet.appendChild(emptyState("note", "No tracks found", "The provider did not return a tracklist for this album."));
       return;
     }
-    sheet.appendChild(...playButtons(tracks));
+    // appendChild takes ONE node: spreading the buttons into it appended the
+    // first and silently dropped the rest, which is how an album page came to
+    // offer Play and no Shuffle.
+    sheet.appendChild(h("div", { class: "form-row" }, ...playButtons(tracks)));
     sheet.appendChild(
       h(
         "div",

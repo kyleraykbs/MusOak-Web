@@ -25,3 +25,19 @@ thinks is silent buys nothing.
 
 Firefox has no media session, so nothing in the e2e suite can see any of this;
 a green run says the queue still advances, never that the card stayed.
+
+## 2026-10-27 `appendChild` takes one node, and a spread hides it
+
+`sheet.appendChild(...playButtons(tracks))` on the album page appended the first
+button and silently dropped the other three - `appendChild` is single-argument,
+so the rest were ignored rather than throwing. The album page offered Play and
+no Shuffle, Queue or Shuffle Queue, and nothing in the console said so. Use
+`append(...nodes)` or wrap them in a container (`h("div", { class: "form-row" },
+...playButtons(tracks))`, which is what the playlist page does). The one
+occurrence in the tree was found by grepping `appendChild(\.\.\.`.
+
+Worth remembering when chasing a phone report: a service worker holding the old
+shell serves the cached module on the next load and only revalidates behind it,
+so a fix can look absent until the SW and Cache Storage are cleared for the
+origin. That cost a wrong turn here - the DOM showed the old markup after a fix
+that was already live.
