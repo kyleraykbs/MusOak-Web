@@ -10,8 +10,8 @@ import assert from "node:assert/strict";
 import {
   albumLine, artistLine, documentKey, mediaProgressLabel, mediaStateLabel, nextIndex, OFFLINE_KEEP, OFFLINE_MAX_BYTES,
   playbackDocument,
-  memorySource, playbackStateFrom, prefetchWindow, queueFromDocument, shouldSavePlayback, shuffleWhole, player,
-  silenceWav, volumeGain,
+  memorySource, playbackStateFrom, prefetchWindow, queueFromDocument, readMedia, shouldSavePlayback, shuffleWhole, player,
+  silenceWav, sourceStalled, volumeGain,
 } from "../player.js";
 import {
   groupSources, netVotes, pickSource, sourceLabel,
@@ -1128,6 +1128,217 @@ test("a frozen media element is replaced before retrying", () => {
 });
 test("a stale reload player can replace its Firefox-style frozen element", () => {
   assert.equal(typeof player._resetStalledAudio, "function");
+});
+
+// A page-built blob (`new Blob(chunks)`) is read by a Firefox media element
+// through a forward-only IPC pipe in 152-154 (bugzilla 2056444): the element
+// hangs at readyState 0 with no error, and a seek into it blocks the page. The
+// response's own blob is the path that plays. Reproduced here: a 12 MB Opus
+// copy built from chunks never loaded; the same file from `Response.blob()`
+// played and sought.
+test("a song's copy is the response's own blob, and its progress is still counted", async () => {
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array([1, 2, 3]));
+      controller.enqueue(new Uint8Array([4, 5, 6, 7, 8]));
+      controller.close();
+    },
+  });
+  const response = new Response(stream, {
+    headers: { "content-type": "audio/ogg", "content-length": "8" },
+  });
+  const own = new Blob([new Uint8Array([9])], { type: "audio/ogg" });   // a sentinel
+  let built = 0;
+  const spy = {
+    headers: response.headers,
+    body: response.body,
+    clone() {
+      return {
+        blob() {
+          built += 1;
+          return Promise.resolve(own);
+        },
+      };
+    },
+    blob: () => response.blob(),
+  };
+  const seen = [];
+  const got = await readMedia(spy, (received, total) => seen.push([received, total]));
+  assert.equal(got, own, "the blob the browser builds is what plays, not one made here");
+  assert.equal(built, 1, "the copy is built once");
+  assert.equal(seen.at(-1)[0], 8, "every byte went by");
+  assert.ok(seen.every(([, total]) => total === 8), "the stated length is the denominator");
+});
+
+test("a source that never became loadable is a dead source; a refusal is not", () => {
+  const now = 100_000;
+  const unloadable = {
+    src: "blob:dead", paused: false, currentTime: 0, readyState: 0, networkState: 1, duration: NaN,
+  };
+  const frozen = {
+    src: "blob:stuck", paused: false, currentTime: 0, readyState: 4, networkState: 1, duration: 200,
+  };
+  const refused = { ...unloadable, paused: true };
+  const playing = { ...unloadable, readyState: 4, networkState: 2, duration: 200, currentTime: 12 };
+  const opts = { wantsSound: true, loading: false, sourceAt: now - 10_000, clockAt: now - 10_000, clockPosition: 0, now };
+  assert.equal(sourceStalled(unloadable, opts), "unloadable");
+  assert.equal(sourceStalled(frozen, opts), "frozen");
+  assert.equal(sourceStalled(refused, opts), "", "a refused play is retried, not replaced");
+  assert.equal(sourceStalled({ ...unloadable, error: { code: 4 } }, opts), "", "an error is the error handler's");
+  assert.equal(sourceStalled(playing, opts), "", "a clock that moved is sound");
+  assert.equal(sourceStalled(unloadable, { ...opts, loading: true }), "", "a load in flight is not a dead source");
+  assert.equal(sourceStalled(unloadable, { ...opts, sourceAt: now - 1000, clockAt: now - 1000 }), "", "a new source gets its moment");
+});
+
+test("a copy that never loaded is fetched again instead of replaced with itself", () => {
+  const dead = {
+    src: "blob:dead", currentSrc: "blob:dead", paused: false, ended: false, readyState: 0,
+    networkState: 1, duration: NaN, currentTime: 0,
+  };
+  const saved = {
+    audio: player.audio, resume: player._resumeWanted, loading: player._loading,
+    sourceAt: player._sourceAt, stage: player._recoveryStage, recovering: player._recovering,
+    blocked: player._blocked, buffering: player._buffering, clockPosition: player._clockPosition,
+    clockAt: player._clockAt, reset: player._resetStalledAudio, refetch: player._refetchCopy,
+    stream: player._streamSource, hold: player._holdSession,
+  };
+  try {
+    let replaced = 0;
+    let refetched = 0;
+    player.audio = dead;
+    player._resumeWanted = true;
+    player._loading = false;
+    player._buffering = false;
+    player._blocked = false;
+    player._clockPosition = 0;
+    player._clockAt = Date.now() - 10_000;
+    player._sourceAt = Date.now() - 10_000;
+    player._recoveryStage = 0;
+    player._recovering = false;
+    player._resetStalledAudio = () => { replaced += 1; return true; };
+    player._refetchCopy = () => { refetched += 1; return Promise.resolve(); };
+    player._streamSource = () => true;
+    player._holdSession = () => {};
+
+    player._retryWanted();
+    assert.equal(replaced, 0, "the same unloadable blob is not assigned again");
+    assert.equal(refetched, 1, "the copy is fetched through the working path");
+    assert.equal(player._recoveryStage, 2, "and the server's own URL is the next step");
+  } finally {
+    player.audio = saved.audio;
+    player._resumeWanted = saved.resume;
+    player._loading = saved.loading;
+    player._sourceAt = saved.sourceAt;
+    player._recoveryStage = saved.stage;
+    player._recovering = saved.recovering;
+    player._blocked = saved.blocked;
+    player._buffering = saved.buffering;
+    player._clockPosition = saved.clockPosition;
+    player._clockAt = saved.clockAt;
+    player._resetStalledAudio = saved.reset;
+    player._refetchCopy = saved.refetch;
+    player._streamSource = saved.stream;
+    player._holdSession = saved.hold;
+  }
+});
+
+test("a kept playlist's URL is not re-fetched for a stalled clock", () => {
+  const audio = {
+    src: "/api/v1/media/v?ms=x", currentSrc: "/api/v1/media/v?ms=x", paused: false, ended: false,
+    readyState: 4, networkState: 1, duration: 200, currentTime: 0,
+    play() { return { catch() {} }; },
+  };
+  const saved = {
+    audio: player.audio, resume: player._resumeWanted, loading: player._loading,
+    sourceAt: player._sourceAt, stage: player._recoveryStage, recovering: player._recovering,
+    blocked: player._blocked, buffering: player._buffering, clockPosition: player._clockPosition,
+    clockAt: player._clockAt, reset: player._resetStalledAudio, refetch: player._refetchCopy,
+    stream: player._streamSource, hold: player._holdSession,
+  };
+  try {
+    let replaced = 0;
+    let refetched = 0;
+    player.audio = audio;
+    player._resumeWanted = true;
+    player._loading = false;
+    player._buffering = false;
+    player._blocked = false;
+    player._clockPosition = 0;
+    player._clockAt = Date.now() - 10_000;
+    player._sourceAt = Date.now() - 10_000;
+    player._recoveryStage = 0;
+    player._recovering = false;
+    player._resetStalledAudio = () => { replaced += 1; return true; };
+    player._refetchCopy = () => { refetched += 1; return Promise.resolve(); };
+    player._streamSource = () => true;
+    player._holdSession = () => {};
+
+    player._retryWanted();
+    assert.equal(replaced, 1, "the element is still replaced once");
+    assert.equal(refetched, 0, "a service-worker URL is not this browser bug");
+
+    player._recoveryStage = 1;
+    player._retryWanted();
+    assert.equal(refetched, 0, "and it never escalates past the element");
+  } finally {
+    player.audio = saved.audio;
+    player._resumeWanted = saved.resume;
+    player._loading = saved.loading;
+    player._sourceAt = saved.sourceAt;
+    player._recoveryStage = saved.stage;
+    player._recovering = saved.recovering;
+    player._blocked = saved.blocked;
+    player._buffering = saved.buffering;
+    player._clockPosition = saved.clockPosition;
+    player._clockAt = saved.clockAt;
+    player._resetStalledAudio = saved.reset;
+    player._refetchCopy = saved.refetch;
+    player._streamSource = saved.stream;
+    player._holdSession = saved.hold;
+  }
+});
+
+test("a re-fetched copy replaces the dead one the page holds", async () => {
+  const bytes = new Uint8Array([1, 2, 3, 4]);
+  const realFetch = globalThis.fetch;
+  const saved = {
+    client: player._clientIfAny, variant: player._variant, queue: player.queue, index: player._index,
+    offline: player._offline, bytes: player._offlineBytes, handOff: player._handOffSource,
+    emit: player._emit, recovering: player._recovering, stream: player._streamSource,
+  };
+  try {
+    globalThis.fetch = async () => new Response(bytes, { headers: { "content-type": "audio/ogg" } });
+    player._clientIfAny = () => ({ mediaUrl: (variant) => `/api/v1/media/${variant}` });
+    player._variant = "v-one";
+    player.queue = [track("one")];
+    player._index = 0;
+    player._offline = new Map([["one", { state: "ready", variantId: "v-one", url: "blob:dead", bytes: 4, at: 0 }]]);
+    player._offlineBytes = 4;
+    player._emit = () => {};
+    const handed = [];
+    player._handOffSource = (url, at) => { handed.push([url, at]); return true; };
+
+    await player._refetchCopy();
+
+    const entry = player._offline.get("one");
+    assert.equal(handed.length, 1, "the working copy is handed to the element");
+    assert.equal(entry.url, handed[0][0], "and kept as this page's copy");
+    assert.equal(entry.bytes, 4);
+    assert.equal(entry.state, "ready");
+    assert.equal(player._offlineBytes, 4, "the budget replaces the dead copy, it does not grow by it");
+  } finally {
+    globalThis.fetch = realFetch;
+    player._clientIfAny = saved.client;
+    player._variant = saved.variant;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._offline = saved.offline;
+    player._offlineBytes = saved.bytes;
+    player._handOffSource = saved.handOff;
+    player._emit = saved.emit;
+    player._recovering = saved.recovering;
+    player._streamSource = saved.stream;
+  }
 });
 //
 // The phone's two symptoms were one contract. A transition stopped the *element*

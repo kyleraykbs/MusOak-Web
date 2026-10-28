@@ -60,6 +60,17 @@ const POLL_MS = 400;
  *  this is the backstop for one that is stuck rather than failed, which would
  *  otherwise leave this member loading for ever and the room waiting on them. */
 const READY_TIMEOUT_MS = 60000;
+/** How long a source the element was asked to play may go without becoming
+ *  loadable before it is not loading but stuck.
+ *
+ *  A copy this page hands over is local: its metadata follows the `src` almost
+ *  at once, so a source still at `readyState 0` with nothing arriving is not a
+ *  slow file. Firefox's blob-URL hang (bugzilla 2056444) is exactly that shape
+ *  and never fires an error. */
+const SOURCE_DEAD_MS = 5000;
+/** How long a clock that claims to be playing may stand still before the
+ *  decoder is the suspect rather than the buffer. */
+const STALL_MS = 3000;
 /** How long a seek counts as still in progress after the last drag. */
 const SEEK_SETTLE_MS = 400;
 /** How long the volume waits before this machine remembers it. */
@@ -93,28 +104,80 @@ function deadline(ms) {
  *  Read rather than asked for whole, because this transfer is the wait a
  *  listener is in and its row says how far along it is; the length the server
  *  states is the denominator, and a response that states none is counted as
- *  unknown rather than as done. */
-async function readMedia(response, onProgress) {
+ *  unknown rather than as done.
+ *
+ *  The blob is the response's own (`Response.blob()`), not one this page
+ *  assembles from the chunks it read. A page-built blob is read back by a media
+ *  element through a forward-only IPC pipe in Firefox 152-154 (bugzilla
+ *  2056444): the element then hangs at `readyState 0` with no error event, and
+ *  every seek into it blocks, wedging blob-backed media for the whole content
+ *  process until the browser restarts. Reproduced here with a real 12 MB Opus
+ *  file - the page-built blob hung, the response's own played and sought. The
+ *  count comes from a clone, since `blob()` reports no progress. */
+export async function readMedia(response, onProgress) {
   const total = Number(response.headers?.get?.("content-length")) || 0;
   const body = response.body;
+  let made = null;
+  try {
+    made = response.clone().blob();
+  } catch {
+    made = null;
+  }
   if (!body || typeof body.getReader !== "function") {
-    const blob = await response.blob();
+    const blob = made ? await made : await response.blob();
     onProgress(blob.size, total || blob.size);
     return blob;
   }
   const reader = body.getReader();
-  const chunks = [];
+  // Only when there is no clone to build the blob from: the chunks are then the
+  // only copy of the bytes there is.
+  const chunks = made ? null : [];
   let received = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) {
-      chunks.push(value);
-      received += value.byteLength;
-      onProgress(received, total);
+  const counted = (async () => {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        received += value.byteLength;
+        onProgress(received, total);
+        if (chunks) chunks.push(value);
+      }
     }
+  })();
+  if (!made) {
+    await counted;
+    return new Blob(chunks, { type: response.headers?.get?.("content-type") || "" });
   }
-  return new Blob(chunks, { type: response.headers?.get?.("content-type") || "" });
+  const [blob] = await Promise.all([made, counted]);
+  return blob;
+}
+
+/**
+ * Whether the element is failing to make the sound it was asked to make.
+ *
+ *  Two shapes, both quiet. A source that never became loadable: `play()` was
+ *  accepted, the element reports no length and no data, and no error event ever
+ *  fires - Firefox's blob-URL hang. And a clock that claims to be playing and
+ *  has not moved. A paused element is the browser refusing to start (the
+ *  ordinary background-tab case), which is a retry and not a dead source; an
+ *  ended one is a song that has finished.
+ */
+export function sourceStalled(audio, {
+  wantsSound = false, loading = false, sourceAt = 0, clockAt = 0, clockPosition = 0, now = Date.now(),
+} = {}) {
+  if (loading || !wantsSound || !audio?.src || audio.paused) return "";
+  // A source that failed outright has said so, and the error handler owns the
+  // recovery: replacing it here would race that path.
+  if (audio.error) return "";
+  const position = Number(audio.currentTime);
+  if (!Number.isFinite(position)) return "";
+  const readyState = Number(audio.readyState);
+  const networkState = Number(audio.networkState);
+  if (readyState === 0 && !Number.isFinite(Number(audio.duration))
+    && (networkState === 0 || networkState === 1)
+    && sourceAt > 0 && now - sourceAt > SOURCE_DEAD_MS) return "unloadable";
+  if (clockAt > 0 && now - clockAt > STALL_MS && Math.abs(position - clockPosition) < 0.05) return "frozen";
+  return "";
 }
 
 // How long a failed fetch waits before the one retry: long enough for a blip,
@@ -489,7 +552,13 @@ class Player {
     this._buffering = false;      // the file is here, the sound is not yet
     this._clockPosition = 0;
     this._clockAt = 0;
-    this._clockRecovering = false;
+    // When the source on the element was assigned, and how far its recovery has
+    // gone: 0 nothing, 1 the element replaced, 2 the copy re-fetched, 3 the
+    // server's own URL, 4 given up on until the next track. A source that never
+    // becomes loadable is measured from here (see `sourceStalled`).
+    this._sourceAt = 0;
+    this._recoveryStage = 0;
+    this._recovering = false;
     this._positionTimer = 0;
     this._error = "";
     this._blocked = false;
@@ -1505,7 +1574,9 @@ class Player {
     this._loadFor = target;
     this._clockPosition = 0;
     this._clockAt = Date.now();
-    this._clockRecovering = false;
+    this._sourceAt = 0;
+    this._recoveryStage = 0;
+    this._recovering = false;
     clearInterval(this._positionTimer);
     this._positionTimer = 0;
     this._variant = "";
@@ -1624,7 +1695,7 @@ class Player {
 
     if (localUrl) {
       // The copy is already here: nothing to fetch and nothing to wait for.
-      audio.src = localUrl;
+      this._giveSource(localUrl);
     } else {
       // The song is downloaded first and played from that: the server holds
       // only files, and a rendition it does not hold is refused rather than
@@ -1957,7 +2028,7 @@ class Player {
     if (audio.src !== entry.url) {
       this._stateEvent();
       this.renderBar();
-      audio.src = entry.url;
+      this._giveSource(entry.url);
     } else if (this._pendingSeek !== null) {
       // The position lands whether or not this load is still flagged as in
       // flight: this is the moment it belongs to, and `seek` holds a position
@@ -2405,9 +2476,9 @@ class Player {
     audio.addEventListener("playing", () => {
       if (audio !== this.audio) return;
       this._setBuffering(false);
-      // A stall that was recovered from is over once sound is moving again: the
-      // next one in this song is a new one, and has its own replacement to make.
-      this._clockRecovering = false;
+      // A stalled source that is playing again is healthy: the next stall is a
+      // new one and has its own recovery to earn.
+      this._recoveryStage = 0;
       clearInterval(this._positionTimer);
       this._positionTimer = setInterval(() => {
         if (audio !== this.audio || audio.paused || audio.ended) return;
@@ -2710,6 +2781,8 @@ class Player {
     this.audio.pause();
     this.audio.removeAttribute("src");
     this.audio.load();
+    this._sourceAt = 0;
+    this._recoveryStage = 0;
   }
 
   // --- the client --------------------------------------------------------
@@ -2950,28 +3023,134 @@ class Player {
     // currentTime and the position bar never advance.
     const audio = this.audio;
     const readyState = Number(audio?.readyState);
-    // A frozen clock is only the dead-decoder state when the element *claims* to
-    // be playing. One the browser refused is paused, and its clock standing
-    // still is that refusal - not a decoder to throw away. Replacing the element
-    // there restarted the song from the top and killed the media session a
-    // second time, four seconds at a time, all the way to the listener's unlock.
-    const clockStalled = Boolean(
-      audio?.src && !audio.paused && this._clockAt > 0 && Date.now() - this._clockAt > 3000
-      && Math.abs(Number(audio.currentTime) - this._clockPosition) < 0.05
-    );
-    const waitingForData = Boolean(this._buffering || clockStalled || (audio?.src && Number.isFinite(readyState) && readyState < 3));
+    // A paused element is the browser refusing to start, not a source to throw
+    // away: replacing it there restarted the song from the top and killed the
+    // media session a second time, four seconds at a time, all the way to the
+    // listener's unlock. `sourceStalled` reads the two dead shapes that are not
+    // a refusal - a source that never became loadable, and a frozen clock.
+    const stalled = sourceStalled(audio, {
+      wantsSound: this._resumeWanted, loading: this._loading,
+      sourceAt: this._sourceAt, clockAt: this._clockAt, clockPosition: this._clockPosition,
+    });
+    const waitingForData = Boolean(this._buffering || stalled || (audio?.src && Number.isFinite(readyState) && readyState < 3));
     if (this._loading || !this._resumeWanted || (this.isPlaying() && !waitingForData) || this.hasEnded()) return;
-    if (clockStalled && !this._clockRecovering && !this._blocked && audio) {
-      this._clockRecovering = true;
-      this._resetStalledAudio();
-      return;
-    }
+    if (stalled && this._recoverStalled(stalled)) return;
     // Nothing is playing and something is meant to be: the session is renewed
     // here as well, so a wait that outlasts the first hold (a fetch, a refusal)
     // still has a card - and, on a phone, a page that is not throttled for it.
     this._holdSession();
     const playing = audio?.play();
     if (playing?.catch) playing.catch(() => { /* still not allowed: it waits */ });
+  }
+
+  /**
+   * Bring a stuck source back, one step at a time.
+   *
+   * A blob this page built used to be unreadable by a Firefox media element
+   * (bugzilla 2056444), so `readMedia` now builds it the way the browser can
+   * read. A tab that was wedged before that landed still has a dead element,
+   * and that is what the steps are for: the same source on a fresh element
+   * (a decoder that died), then the copy fetched again through the working
+   * path, then the backend's own URL - a network resource, which the bug never
+   * touched. Only a `blob:` source is escalated: a kept playlist is a URL the
+   * service worker answers, and a slow one is not this bug. Each step has one
+   * turn, so a file that will not play cannot loop.
+   */
+  _recoverStalled(kind) {
+    if (this._recovering) return true;
+    const source = String(this.audio?.currentSrc || this.audio?.src || "");
+    if (!source) return false;
+    // A source that never even became loadable cannot be fixed by assigning it
+    // again: start at the re-fetch.
+    if (kind === "unloadable" && this._recoveryStage < 1) this._recoveryStage = 1;
+    if (!source.startsWith("blob:") && this._recoveryStage > 0) return false;
+    const stage = this._recoveryStage;
+    if (stage === 0 && !this._blocked) {
+      this._recoveryStage = 1;
+      return this._resetStalledAudio();
+    }
+    if (stage <= 1) {
+      this._recoveryStage = 2;
+      void this._refetchCopy();
+      return true;
+    }
+    if (stage === 2) {
+      this._recoveryStage = 3;
+      return this._streamSource();
+    }
+    if (stage === 3) {
+      this._recoveryStage = 4;
+      this._error = "the browser stopped playing audio; restart it to hear anything";
+      this._stateEvent();
+      return true;
+    }
+    return false;
+  }
+
+  /** Ask the backend for the current song's bytes again, through
+   *  `Response.blob()`, and hand the working copy to a fresh element. */
+  async _refetchCopy() {
+    if (this._recovering) return;
+    this._recovering = true;
+    const token = this._token;
+    const trackId = String(this.current()?.id || "");
+    const variant = String(this._variant || "");
+    const client = this._clientIfAny();
+    try {
+      if (!variant || !client) throw new Error("no copy to fetch");
+      const response = await fetch(client.mediaUrl(variant));
+      if (!response.ok) throw new Error(`media ${response.status}`);
+      const blob = await response.blob();
+      if (token !== this._token) return;
+      const entry = this._offline.get(trackId);
+      const url = URL.createObjectURL(blob);
+      if (entry) {
+        if (entry.url && URL.revokeObjectURL) URL.revokeObjectURL(entry.url);
+        this._offlineBytes += blob.size - (Number(entry.bytes) || 0);
+        entry.url = url;
+        entry.bytes = blob.size;
+        entry.variantId = variant;
+        entry.state = "ready";
+        entry.error = "";
+        this._emit("offline-changed", this.offlineSummary());
+      }
+      this._handOffSource(url, this._pendingSeek ?? this.positionMs());
+    } catch {
+      this._streamSource();
+    } finally {
+      this._recovering = false;
+    }
+  }
+
+  /** Hand the element the backend's own URL: a network resource, which the
+   *  blob-URL hang never touched. Only a recovery step; a load still plays the
+   *  page's whole copy, as it always did. */
+  _streamSource() {
+    const client = this._clientIfAny();
+    const variant = String(this._variant || "");
+    if (!client || !variant || !this.online()) return false;
+    return this._handOffSource(client.mediaUrl(variant), this._pendingSeek ?? this.positionMs());
+  }
+
+  /** Put a source on a fresh element, at a position, keeping the recovery stage
+   *  it was given: a recovery does not start over because it replaced the
+   *  element. A same-element `load()` can leave Gecko's decoder in the same
+   *  dead state; a fresh element keeps the blob and the pending position. */
+  _handOffSource(source, atMs) {
+    const old = this.audio;
+    if (!old || !source || typeof Audio !== "function") return false;
+    const replacement = new Audio();
+    replacement.preload = "auto";
+    replacement.dataset.e2e = "audio";
+    replacement.style.display = "none";
+    this.audio = replacement;
+    if (typeof document !== "undefined") document.body?.appendChild(replacement);
+    this._wireAudio(replacement);
+    this._pendingSeek = atMs === null || atMs === undefined ? null : Math.max(0, Math.round(Number(atMs) || 0));
+    this._giveSource(source, { fresh: false });
+    try { old.pause(); old.removeAttribute("src"); old.load(); old.remove?.(); } catch { /* old element is no longer in hand */ }
+    this._startAudio(this._pendingSeek);
+    return true;
   }
 
   /** Replace a Firefox media element whose decoder reports playing but whose
@@ -2984,17 +3163,20 @@ class Player {
       try { old?.load?.(); } catch { /* the retry below still has a chance */ }
       return false;
     }
-    const replacement = new Audio();
-    replacement.preload = "auto";
-    replacement.dataset.e2e = "audio";
-    replacement.style.display = "none";
-    this.audio = replacement;
-    if (typeof document !== "undefined") document.body?.appendChild(replacement);
-    this._wireAudio(replacement);
-    replacement.src = source;
-    try { old.pause(); old.removeAttribute("src"); old.load(); old.remove?.(); } catch { /* old element is no longer in hand */ }
-    this._startAudio(this._pendingSeek);
-    return true;
+    return this._handOffSource(source, this._pendingSeek);
+  }
+
+  /** Give the element a source and remember when: a source that never becomes
+   *  loadable is measured from here (see `sourceStalled`). A recovery keeps its
+   *  stage; a load of a new file starts over. */
+  _giveSource(source, { fresh = true } = {}) {
+    if (!this.audio) return;
+    this.audio.src = source;
+    this._sourceAt = Date.now();
+    // The clock a stalled source is measured against is this source's, not the
+    // load's: assigning a source is the moment it gets to start.
+    this._clockAt = this._sourceAt;
+    if (fresh) this._recoveryStage = 0;
   }
 
   _wantResume(wanted) {

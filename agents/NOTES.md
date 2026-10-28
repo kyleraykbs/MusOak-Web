@@ -41,3 +41,37 @@ shell serves the cached module on the next load and only revalidates behind it,
 so a fix can look absent until the SW and Cache Storage are cleared for the
 origin. That cost a wrong turn here - the DOM showed the old markup after a fix
 that was already live.
+
+## 2026-10-27 Gecko 2056444, reproduced here and fixed in the player
+
+LibreWolf 152.0.6-1 on this box, the bug's own repro page
+(`vincent0700.github.io/firefox-arraybuffer-blob-video-repro`): the element sits
+at `networkState=1 readyState=0 duration=NaN` with no error. Then the same
+thing with musoak's own bytes: a real 12 MB Opus file, fetched, `new
+Blob([arrayBuffer])`, `src`, `currentTime = 60`, `play()` - the **async script
+never returned**; the read blocks the content process's main thread. The same
+file through `Response.blob()` played and sought (`currentTime` 63.88 after
+4s, duration 763.654). An 871 KB Opus from chunks did *not* hang, so a small
+file is not a repro; real songs are.
+
+The player's `readMedia` built `new Blob(chunks)` - the hanging path - and every
+load that starts part way in seeks right after the source lands. `readMedia` now
+returns `response.clone().blob()` and takes its progress count from the original
+body; the clone is the response's own blob factory, which is the path the bug
+report names as working.
+
+A tab already wedged before that fix has a dead element and no browser-side way
+out, so `sourceStalled` (pure, player.js) classifies two shapes: "unloadable"
+(`readyState 0`, `networkState 0/1`, no duration, 5 s since the source was
+assigned) and "frozen" (clock claims playing, has not moved for 3 s). The retry
+tick escalates a `blob:` source through: replace the element, re-fetch the copy
+with `Response.blob()`, then the backend's own URL - a network resource, which
+the bug never touched. One turn each, stage reset by `playing` and by a new
+source. A kept playlist's `/api/v1/media/...` URL is not escalated: the service
+worker answers it, and a slow response there is not this bug. An element with
+`error` set is left to the error handler.
+
+Verified in LibreWolf 152 headless against a scratch `musoakd` + `musoak-web`
+(this checkout, `-web-dir web`) with the real 12 MB variant: `readMedia` gave a
+12,547,880-byte `audio/ogg` blob, progress ended at the full length, seek to 60
+then play reached 63.88 s with `readyState 4` and no error.

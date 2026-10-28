@@ -596,3 +596,16 @@
   the option is the useful half, and the debounce is the part that was actually
   missing.
 - Reversible: yes.
+
+## 2026-10-27 A song's copy is the response's blob, and a stuck source recovers
+
+- Decision: `readMedia` returns `response.clone().blob()` and counts progress
+  from the original body, instead of building `new Blob(chunks)`; a source the
+  element was asked to play and never became loadable is recovered through
+  replace-element, re-fetch, then the backend's own URL (blob sources only).
+- Why: Gecko 2056444 (Firefox 152-154) hangs a media element given a blob the
+  page assembled, and every load that starts mid-song seeks into it. Reproduced
+  on this box with a real 12 MB Opus: the page-built blob blocked the page,
+  `Response.blob()` played and sought. The staged recovery exists for tabs
+  already wedged before the fix and costs nothing on a healthy one.
+- Reversible: yes
