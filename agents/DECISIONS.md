@@ -609,3 +609,18 @@
   `Response.blob()` played and sought. The staged recovery exists for tabs
   already wedged before the fix and costs nothing on a healthy one.
 - Reversible: yes
+
+## 2026-10-28 The song being played owns the one transfer
+- Decision: `_preemptOffline(trackId)` runs at the start of `_awaitCopy` - before
+  the current song's copy is claimed - and aborts every other in-flight transfer
+  (client fetch and the backend's own, through `_abortOffline`), then puts the
+  current id first in `_offlineWanted` so the queue's one download mark is its
+  own. `_startOffline` refuses to start while any other transfer is in flight,
+  making one-at-a-time an invariant of the function rather than of its callers.
+- Why: Kyle: "I start playing a playlist or shuffle it, the song card and info on
+  the player will be one thing but another older song will be downloading in the
+  queue... the queue downloads should ALWAYS follow EXACTLY where the current
+  playing song is." The load used to start its own transfer beside the old one:
+  the provider pipe split, the song on the bar arrived late, and the one mark in
+  the queue named the song nobody was listening to.
+- Reversible: yes.

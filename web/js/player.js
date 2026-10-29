@@ -1960,6 +1960,9 @@ class Player {
   async _awaitCopy(attempt) {
     const trackId = String(this.current()?.id || "");
     if (!trackId) return;
+    // Whatever was being fetched stops first: this song is the one being waited
+    // on, and it is the only transfer from here until its file is here.
+    this._preemptOffline(trackId);
     // The entry first, so the queue's row for this song says "downloading" from
     // the moment the song is chosen, and the backend is told right after that
     // somebody is waiting on this rendition rather than fetching it ahead.
@@ -2255,6 +2258,28 @@ class Player {
     this._emit("offline-changed", this.offlineSummary());
   }
 
+  /**
+   * Make the song being played the one transfer, and the first the queue draws.
+   *
+   * What is playing is what somebody is waiting to hear. A transfer for another
+   * song - the one that was playing a moment ago, a look-ahead that is now
+   * behind it, a song the replaced queue will never reach - is stopped here, at
+   * the page and at the backend, and goes back in the queue behind this one.
+   * Two transfers racing splits the provider's pipe: the song on the bar arrives
+   * late, and the row that shows a download is the row of a song nobody is
+   * listening to.
+   */
+  _preemptOffline(trackId) {
+    const id = String(trackId || "");
+    if (!id) return;
+    for (const other of [...this._offlineInFlight.keys()]) {
+      if (other !== id) this._abortOffline(other);
+    }
+    // The current song leads the order the marks are drawn from, so the one
+    // bar in the queue is the one transfer that is running.
+    this._offlineWanted = [id, ...(this._offlineWanted || []).filter((each) => each !== id)];
+  }
+
   /** Start the next song the window wants, one at a time.
    *
    *  The song somebody is waiting to hear owns the pipe: nothing else is fetched
@@ -2297,6 +2322,11 @@ class Player {
     if (!entry || entry.state !== "pending") return null;
     const inHand = this._offlineInFlight.get(id);
     if (inHand) return inHand.entry === entry ? inHand.promise : null;
+    // One transfer, and it is the song the play path chose: anything else
+    // starting beside it would split the pipe the listener is waiting on. The
+    // play path stops the other transfer first (`_preemptOffline`), so this is
+    // the invariant rather than a queue of them.
+    if (this._offlineInFlight.size) return null;
     const controller = new AbortController();
     const held = { entry, controller, promise: null };
     this._offlineInFlight.set(id, held);

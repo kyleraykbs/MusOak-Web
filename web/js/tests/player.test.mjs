@@ -3678,3 +3678,131 @@ test("a refused play holds the card so the lock screen can ask again", async () 
     player._holdSession = saved.hold;
   }
 });
+
+// Starting a playlist or shuffling it while a look-ahead transfer is running
+// used to leave both transfers going: the song on the bar waited behind the one
+// nobody was listening to, and the queue's one download bar named the old song.
+// What is playing owns the pipe, at the page and at the backend.
+test("the song being played stops the transfer that was running", async () => {
+  const saved = {
+    audio: player.audio,
+    ensureAudio: player.ensureAudio,
+    queue: player.queue,
+    index: player._index,
+    variant: player._variant,
+    token: player._token,
+    loading: player._loading,
+    pendingSeek: player._pendingSeek,
+    playingWanted: player._playingWanted,
+    resumeWanted: player._resumeWanted,
+    resumeTimer: player._resumeTimer,
+    offline: player._offline,
+    offlineWanted: player._offlineWanted,
+    offlineOrder: player._offlineOrder,
+    offlineInFlight: player._offlineInFlight,
+    offlineActive: player._offlineActive,
+    offlineBytes: player._offlineBytes,
+    variantFor: player._variantFor,
+    startDownload: player._startDownload,
+    prefetch: player._prefetch,
+    clientIfAny: player._clientIfAny,
+    online: player.online,
+    room: player._room,
+    renderBar: player.renderBar,
+    fetchOffline: player._fetchOffline,
+    cancelDownload: player._cancelDownload,
+  };
+  const audio = {
+    src: "blob:old", currentSrc: "blob:old", currentTime: 5, duration: 200,
+    paused: true, ended: false, readyState: 4, volume: 1, muted: false,
+    dataset: {}, style: {},
+    addEventListener() {}, removeEventListener() {},
+    pause() {}, play() { return { catch() {} }; }, removeAttribute() {}, load() {},
+  };
+  try {
+    player.setRoom(null);
+    player.audio = audio;
+    player.ensureAudio = () => audio;
+    player.renderBar = () => {};
+    player._wireAudio = () => {};
+    player.clientIfAny = () => null;
+    player.online = () => true;
+    player._clientIfAny = () => null;
+    player.queue = [track("old"), track("new")];
+    player._index = 0;
+    player._variant = "v-old";
+    player._loading = false;
+    player._playingWanted = true;
+    player._offline = new Map([
+      ["old", { state: "pending", variantId: "v-old", url: "", bytes: 0, at: 0 }],
+      ["new", { state: "pending", variantId: "v-new", url: "", bytes: 0, at: 0 }],
+    ]);
+    player._offlineWanted = ["old", "new"];
+    player._offlineOrder = ["old", "new"];
+    player._offlineInFlight = new Map();
+    player._offlineActive = 0;
+    player._offlineBytes = 0;
+    player._variantFor = async () => ({ sources: [], preferredVariantId: "", variantId: "v-new", source: null });
+    player._startDownload = () => {};
+    player._prefetch = () => {};
+    player._wantResume(false);
+
+    // A look-ahead transfer is under way for the song that is still playing.
+    const aborted = [];
+    const stopped = [];
+    player._cancelDownload = (variant) => stopped.push(variant);
+    player._fetchOffline = (trackId, signal) => new Promise((resolve) => {
+      signal?.addEventListener("abort", () => {
+        aborted.push(trackId);
+        resolve(null);
+      });
+    });
+    player._startOffline("old");
+    assert.equal(player._offlineInFlight.size, 1, "one transfer is running");
+
+    // The playlist is replaced and a new song starts: its copy is not here.
+    const load = player._load(1, { autoplay: true });
+    // The load resolves its rendition first, which is a microtask away.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.deepEqual(aborted, ["old"], "the old song's transfer is stopped");
+    assert.deepEqual(stopped, ["v-old"], "and the backend is told to stop it too");
+    assert.deepEqual([...player._offlineInFlight.keys()], ["new"], "only the song being played is transferring");
+    assert.equal(player._offlineWanted[0], "new", "and it leads the order the marks are drawn from");
+    assert.equal(player.downloading("new"), true, "so the queue's one bar is its own");
+    assert.equal(player.downloading("old"), false, "and not the old song's");
+
+    player._token += 1;
+    player._loading = false;
+    void load;
+  } finally {
+    player._wantResume(false);
+    clearInterval(player._resumeTimer);
+    player._cancelDownload = saved.cancelDownload;
+    player._fetchOffline = saved.fetchOffline;
+    player.renderBar = saved.renderBar;
+    player.audio = saved.audio;
+    player.ensureAudio = saved.ensureAudio;
+    player.queue = saved.queue;
+    player._index = saved.index;
+    player._variant = saved.variant;
+    player._token = saved.token;
+    player._loading = saved.loading;
+    player._pendingSeek = saved.pendingSeek;
+    player._playingWanted = saved.playingWanted;
+    player._resumeWanted = saved.resumeWanted;
+    player._resumeTimer = saved.resumeTimer;
+    player._offline = saved.offline;
+    player._offlineWanted = saved.offlineWanted;
+    player._offlineOrder = saved.offlineOrder;
+    player._offlineInFlight = saved.offlineInFlight;
+    player._offlineActive = saved.offlineActive;
+    player._offlineBytes = saved.offlineBytes;
+    player._variantFor = saved.variantFor;
+    player._startDownload = saved.startDownload;
+    player._prefetch = saved.prefetch;
+    player._clientIfAny = saved.clientIfAny;
+    player.online = saved.online;
+    player.setRoom(saved.room);
+  }
+});
