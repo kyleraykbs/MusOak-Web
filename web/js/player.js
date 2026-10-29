@@ -116,13 +116,17 @@ function deadline(ms) {
  *  count comes from a clone, since `blob()` reports no progress. */
 export async function readMedia(response, onProgress) {
   const total = Number(response.headers?.get?.("content-length")) || 0;
-  const body = response.body;
+  // The body is taken AFTER the clone, never before it: cloning tees the stream,
+  // and in Chromium a reference taken beforehand is the tee's source - locked -
+  // so `getReader` on it throws "already locked to a reader" and every song
+  // fails to arrive. `response.body` after the clone is the branch to read.
   let made = null;
   try {
     made = response.clone().blob();
   } catch {
     made = null;
   }
+  const body = response.body;
   if (!body || typeof body.getReader !== "function") {
     const blob = made ? await made : await response.blob();
     onProgress(blob.size, total || blob.size);

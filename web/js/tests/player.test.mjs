@@ -1170,6 +1170,31 @@ test("a song's copy is the response's own blob, and its progress is still counte
   assert.ok(seen.every(([, total]) => total === 8), "the stated length is the denominator");
 });
 
+// The clone and the reader are two branches of one stream: cloning tees the
+// body, and a reference taken *before* the clone is the tee's source, locked.
+// Chromium (and this runtime) throw "already locked to a reader" for it, which
+// no song survives - every copy fails and the queue skips through itself. The
+// spy above cannot see that, because it fakes the clone; this one uses a real
+// Response, so the tee is the runtime's.
+test("a response's body is read after its clone, so the copy still arrives", async () => {
+  const bytes = new Uint8Array([10, 20, 30, 40, 50]);
+  const response = new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(bytes.slice(0, 2));
+      controller.enqueue(bytes.slice(2));
+      controller.close();
+    },
+  }), { headers: { "content-type": "audio/ogg", "content-length": "5" } });
+
+  const seen = [];
+  const blob = await readMedia(response, (received, total) => seen.push([received, total]));
+
+  assert.equal(blob.size, 5, "the whole copy arrived");
+  assert.deepEqual([...new Uint8Array(await blob.arrayBuffer())], [...bytes], "and it is the response's bytes");
+  assert.equal(seen.at(-1)?.[0], 5, "every byte was counted");
+  assert.equal(seen.at(-1)?.[1], 5, "against the stated length");
+});
+
 test("a source that never became loadable is a dead source; a refusal is not", () => {
   const now = 100_000;
   const unloadable = {

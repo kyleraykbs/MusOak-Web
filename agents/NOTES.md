@@ -75,3 +75,26 @@ Verified in LibreWolf 152 headless against a scratch `musoakd` + `musoak-web`
 (this checkout, `-web-dir web`) with the real 12 MB variant: `readMedia` gave a
 12,547,880-byte `audio/ogg` blob, progress ended at the full length, seek to 60
 then play reached 63.88 s with `readyState 4` and no error.
+
+## 2026-10-29 `Response.clone()` tees the body; a pre-clone reference is locked
+
+```js
+const body = response.body;          // the tee's SOURCE in Chromium
+const made = response.clone().blob(); // tees it
+body.getReader();                     // throws: already locked to a reader
+```
+
+Chromium (and node's undici, which is why a plain node test can pin it) locks
+the stream that was in hand before `clone()`, and `response.body` afterwards is a
+different, readable branch. `readMedia` did it in the wrong order for a day and
+every song failed to arrive: `_fetchOffline` stored the error, `_awaitCopy` took
+the failure road, and the queue skipped through itself one song at a time - the
+"never plays, rapid fire" report. The Firefox browser suite cannot see it (Gecko
+tolerates the stale reference), so a regression test has to use a real `Response`
+and a real stream - the older test faked `clone()` and was blind to the tee.
+
+Debug route worth keeping: a CDP-attached tab can be read in its MAIN world with
+`page.target().createCDPSession()` + `Runtime.evaluate`, and `import("/js/player.js")`
+there returns the same `player` singleton the app uses. `tab.run`'s own
+`page.evaluate` is an isolated world and shows `window` as the app never sees it -
+which had me chasing a phantom earlier.
