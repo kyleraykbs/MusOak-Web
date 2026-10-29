@@ -3063,7 +3063,15 @@ class Player {
       sourceAt: this._sourceAt, clockAt: this._clockAt, clockPosition: this._clockPosition,
     });
     const waitingForData = Boolean(this._buffering || stalled || (audio?.src && Number.isFinite(readyState) && readyState < 3));
-    if (this._loading || !this._resumeWanted || (this.isPlaying() && !waitingForData) || this.hasEnded()) return;
+    // A load can outlast the hold that began it: the file is still on its way,
+    // and a session that is not renewed meanwhile is a card that goes away in
+    // the middle of a changeover. The element is left alone - playing it here
+    // would start the song before this one - and only the silent player runs.
+    if (this._loading) {
+      if (this._playingWanted) this._holdSession();
+      return;
+    }
+    if (!this._resumeWanted || (this.isPlaying() && !waitingForData) || this.hasEnded()) return;
     if (stalled && this._recoverStalled(stalled)) return;
     // Nothing is playing and something is meant to be: the session is renewed
     // here as well, so a wait that outlasts the first hold (a fetch, a refusal)

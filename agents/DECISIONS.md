@@ -624,3 +624,12 @@
   the provider pipe split, the song on the bar arrived late, and the one mark in
   the queue named the song nobody was listening to.
 - Reversible: yes.
+
+## 2026-10-29 The card is held for the whole of a load, not only at its start
+- Decision: `_retryWanted` renews `_holdSession()` while a load is in flight and
+  the player means to be playing, then returns without touching the main
+  element. The guard that keeps a load from restarting the previous song stays.
+- Why: a hold that happens once at the changeover is a card that lasts as long as
+  Chrome's grace. A file that takes ten seconds is ten seconds of silence, and
+  the retry tick is the only thing awake in it.
+- Reversible: yes.

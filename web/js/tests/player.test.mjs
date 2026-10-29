@@ -3806,3 +3806,57 @@ test("the song being played stops the transfer that was running", async () => {
     player.setRoom(saved.room);
   }
 });
+
+// The card has to survive a wait, not only the instant of the change: a file
+// that takes ten seconds to arrive is ten seconds in which nothing is playing,
+// and the retry tick is the only thing awake to hold the session open. It must
+// hold without starting the song the element still has.
+test("the card is held for the whole of a load, and the old song is not started", () => {
+  const held = [];
+  const played = [];
+  const saved = {
+    audio: player.audio,
+    loading: player._loading,
+    playingWanted: player._playingWanted,
+    resumeWanted: player._resumeWanted,
+    blocked: player._blocked,
+    buffering: player._buffering,
+    clockPosition: player._clockPosition,
+    clockAt: player._clockAt,
+    hold: player._holdSession,
+    reset: player._recoverStalled,
+  };
+  try {
+    player.audio = {
+      src: "blob:previous", currentSrc: "blob:previous", currentTime: 180, duration: 180,
+      paused: true, ended: true, readyState: 2,
+      play() { played.push("play"); return { catch() {} }; },
+    };
+    player._loading = true;
+    player._playingWanted = true;
+    player._resumeWanted = true;
+    player._blocked = false;
+    player._buffering = false;
+    player._holdSession = () => held.push("held");
+    player._recoverStalled = () => false;
+
+    player._retryWanted();
+    assert.deepEqual(held, ["held"], "the session is renewed while the file is on its way");
+    assert.deepEqual(played, [], "and the song the element still holds is not started");
+
+    // A load that will not play (a restore) has no card to keep.
+    held.length = 0;
+    player._playingWanted = false;
+    player._retryWanted();
+    assert.deepEqual(held, [], "nothing is held for a load that is a pause");
+  } finally {
+    player.audio = saved.audio;
+    player._loading = saved.loading;
+    player._playingWanted = saved.playingWanted;
+    player._resumeWanted = saved.resumeWanted;
+    player._blocked = saved.blocked;
+    player._buffering = saved.buffering;
+    player._holdSession = saved.hold;
+    player._recoverStalled = saved.reset;
+  }
+});
