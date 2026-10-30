@@ -1256,20 +1256,27 @@ function markUnplayable(running, itemId) {
 function followOfflineRoom(running, room, { force = false } = {}) {
   const player = running.player;
   const order = list(room.masterQueue).filter((entry) => entry?.id && entry?.trackId);
-  // A song the room's order does not contain is not this room's: it is what was
-  // playing when this page arrived - another room's, or the user's own - and
-  // leaving it there is how a page is heard playing something the room knows
-  // nothing about. It is let go of, and the room's order decides from here.
-  const playing = str(player.current()?.id);
-  if (playing && !order.some((entry) => str(entry.trackId) === playing)) player.clear?.();
+  // On a song that has not ended: leave it alone. It is the song the room last
+  // said, and it is already here - unless somebody asked for the next one.
+  // This comes before the order and ownership checks: dropping or pausing the
+  // audio at the moment the network goes away is exactly the failure this
+  // branch exists to prevent, including when the room has no song after it.
+  if (!force && player.current() && !player.hasEnded?.()) return;
 
   if (!order.length) {
     if (!player.isPaused()) player.pause();
     return;
   }
-  // On a song that has not ended: leave it alone. It is the song the room last
-  // said, and it is already here - unless somebody asked for the next one.
-  if (!force && player.current() && !player.hasEnded?.()) return;
+
+  const roomItem = room.current?.item;
+  // A song neither on nor waiting in this room is not this room's: it is what
+  // was playing when this page arrived - another room's, or the user's own -
+  // and leaving it there is how a page is heard playing something the room
+  // knows nothing about. The song *on* belongs here too, even though the
+  // server keeps it out of `masterQueue`.
+  const known = roomItem ? [roomItem, ...order] : order;
+  const playing = str(player.current()?.id);
+  if (playing && !known.some((entry) => str(entry.trackId) === playing)) player.clear?.();
 
   const localId = str(player.current()?.roomItemId);
   const roomItemId = str(room.current?.item?.id);

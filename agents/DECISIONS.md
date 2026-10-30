@@ -1,5 +1,16 @@
 # Decisions
 
+## 2026-10-30 A room member going offline keeps the song it is hearing
+- Decision: the offline room tick leaves a non-ended current song alone before
+  it looks at the room's order, ownership, or whether any song remains. The
+  current item is also treated as part of the room even though the server keeps
+  it out of `masterQueue`. Only an ended file or the user's own skip moves on.
+- Why: `masterQueue` is the songs *after* the current one, so the old ownership
+  check saw the song on as foreign and cleared it the moment the network went
+  away; an empty order paused it for the same reason. The user's report was
+  exactly that drop.
+- Reversible: yes.
+
 ## 2026-10-15 The hand-over reads play intent, not the element's paused flag
 - Decision: `player._wantsSound()` (`_playingWanted || audio.paused === false`)
   is what `_handOverTo`'s callers pass as "was paused", and the paused branch

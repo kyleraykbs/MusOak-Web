@@ -371,6 +371,7 @@ class FakePlayer {
     this.paused = true;
     this.ended = false;
     this.plays = [];
+    this.cleared = 0;
     this.seeks = [];
     this.warmed = [];
     this.deferLoad = false;
@@ -430,6 +431,13 @@ class FakePlayer {
   }
 
   pause() {
+    this.paused = true;
+  }
+
+  clear() {
+    this.cleared += 1;
+    this.queue = [];
+    this.index = -1;
     this.paused = true;
   }
 
@@ -999,6 +1007,54 @@ function offlineRoom() {
   };
   return { first, second, third, room };
 }
+
+test("going offline leaves the song that is already playing alone", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const { first, second, third, room } = offlineRoom();
+  // `masterQueue` is what the room has left to play; the song on is not in it.
+  const live = { ...room, masterQueue: [second, third] };
+  const client = fakeClient({ room: live, memberId: SAM });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1", rejoin: true });
+
+  player.queue = [{ id: first.trackId, title: first.title, roomItemId: first.id }];
+  player.index = 0;
+  player.ended = false;
+  player.paused = false;
+  player.held = new Set([second.trackId]);
+  player.offline = true;
+  const playsBefore = player.plays.length;
+  player.emit("state-changed");
+  await new Promise((resolve) => setTimeout(resolve, 60));
+
+  assert.equal(player.cleared, 0, "the room's current song was treated as a foreign one");
+  assert.equal(player.current()?.id, first.trackId, "the current song is still on");
+  assert.equal(player.isPaused(), false, "the audio kept going");
+  assert.equal(player.plays.length, playsBefore, "going offline did not load anything");
+});
+
+test("going offline with nothing left in the room still plays the song on", async (t) => {
+  t.after(closeRoom);
+  const player = new FakePlayer();
+  const { first, room } = offlineRoom();
+  const live = { ...room, masterQueue: [] };
+  const client = fakeClient({ room: live, memberId: SAM });
+  t.after(followWithPlayer(player));
+  await enterRoom({ client, roomId: "room-1", rejoin: true });
+
+  player.queue = [{ id: first.trackId, title: first.title, roomItemId: first.id }];
+  player.index = 0;
+  player.ended = false;
+  player.paused = false;
+  player.offline = true;
+  player.emit("state-changed");
+  await new Promise((resolve) => setTimeout(resolve, 60));
+
+  assert.equal(player.cleared, 0, "the last song was dropped");
+  assert.equal(player.current()?.id, first.trackId, "the last song is still on");
+  assert.equal(player.isPaused(), false, "an empty order paused the audio");
+});
 
 test("an offline follower plays the room's order out of this device", async (t) => {
   t.after(closeRoom);
