@@ -10,11 +10,14 @@ has a rating), which is why "unfavourite" is the dialog's own Remove.
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 from conftest import sign_in_ui
 from journeys import open_favourites, person, press, press_bar, titles
-from test_library import wait_sounding
+from test_account_edges import _tagged_tone, _upload
+from test_library import Account, wait_sounding
 
 pytestmark = [pytest.mark.slow]
 
@@ -85,6 +88,57 @@ def _rating_text(ui, title):
         f".find((el) => (el.querySelector('.title')?.textContent || '').trim() === {title!r});"
         "return row ? (row.querySelector('.favourites-rating')?.textContent || '').trim() : null;"
     )
+
+
+def test_a_song_is_favourited_from_its_row_menu_and_removed_again(ui, backend, media_factory):
+    """A plain search result: Rate from its own menu, find it in Favourites,
+    then take the rating back and see it leave.
+
+    "Favourite" here is the rating itself, so the menu action, the list and the
+    dialog's Remove are one round trip. It must not need the song to be on the
+    list first, and the removal must reach the account, not just this page.
+    """
+    delta = uuid.uuid4().hex[:6]
+    account = Account(backend, prefix="rowmenu")
+    title = f"Rowmenu Song {delta}"
+    artist = f"Rowmenu Artist {delta}"
+    album = f"Rowmenu Album {delta}"
+    _upload(
+        backend,
+        account.token,
+        _tagged_tone(backend, title, artist, album, 6, 360),
+        title,
+        [artist],
+        album,
+    )
+    sign_in_ui(ui, account)
+
+    ui.click_tab("Search")
+    ui.type("input[placeholder='Search tracks']", title)
+    ui.wait(lambda: title in (titles(ui) or []), f"the search never found {title!r}", timeout=20)
+    _click_in_row(ui, title, "button[title='More actions'], button[title='More']")
+    _click_menu_item(ui, "Rate")
+    ui.wait(lambda: ui.has(".dialog-backdrop input.rating-range") or None, "the rating dialog never opened", timeout=15)
+    _set_rating(ui, "4.5")
+    # A new favourite's dialog says Rate; an existing one's says Save.
+    ui.click_xpath(
+        f"{RATING_DIALOG}//button[normalize-space(.)='Rate' or normalize-space(.)='Save']",
+        "the rating dialog's commit button",
+    )
+
+    ui.click_tab("Favourites")
+    ui.wait(lambda: title in (titles(ui) or []), f"{title!r} never appeared in Favourites", timeout=20)
+    assert _rating_text(ui, title) == "4.5/5.0", f"the new favourite says {_rating_text(ui, title)!r}"
+
+    _open_rating(ui, title)
+    ui.click_xpath(f"{RATING_DIALOG}//button[normalize-space(.)='Remove rating']", "the dialog's Remove")
+    ui.wait(lambda: title not in (titles(ui) or []), f"{title!r} stayed in Favourites", timeout=15)
+
+    ui.reload()
+    ui.wait_shell()
+    open_favourites(ui, 0)
+    assert title not in (titles(ui) or []), "the removal did not survive the reload"
+    ui.assert_no_errors("favouriting from a row menu and removing it")
 
 
 def test_a_rating_survives_a_reload(ui, backend, media_factory):

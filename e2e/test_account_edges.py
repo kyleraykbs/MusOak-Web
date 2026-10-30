@@ -17,7 +17,7 @@ import pytest
 
 import harness
 from conftest import sign_in_ui
-from journeys import PASSWORD, Person, person, press, titles
+from journeys import PASSWORD, Person, person, press, queue_titles, titles
 from test_library import Account, wait_sounding
 
 pytestmark = [pytest.mark.slow, pytest.mark.browsers]
@@ -86,6 +86,49 @@ def test_a_guest_can_play_a_song_from_a_search(ui, backend):
 
     wait_sounding(ui, title, 8)
     ui.assert_no_errors("a guest playing a song")
+
+
+def test_a_guest_can_queue_songs_without_an_account(ui, backend):
+    """A guest queues one search result behind another and plays the queue.
+
+    An account is what keeps a queue, not what makes one work: the page's own
+    queue is local, and a signed-out listener can add a song behind the one
+    already playing without a login wall.
+    """
+    delta = uuid.uuid4().hex[:6]
+    owner = Account(backend, prefix="guest-queue")
+    titles = [f"Queued Guest {index} {delta}" for index in range(2)]
+    for index, title in enumerate(titles):
+        _upload(
+            backend,
+            owner.token,
+            _tagged_tone(backend, title, f"Queue Artist {delta}", f"Queue Album {delta}", 8 + index, 420 + 20 * index),
+            title,
+            [f"Queue Artist {delta}"],
+            f"Queue Album {delta}",
+        )
+
+    ui.goto("/")
+    for title in titles:
+        ui.click_tab("Search")
+        ui.type("input[placeholder='Search tracks']", title)
+        ui.wait(lambda: title in (ui.texts(".row .title") or []), f"a guest's search never found {title!r}", timeout=20)
+        ui.click_xpath(
+            f"//div[contains(@class,'row')][.//div[@class='title'][normalize-space(.)={title!r}]]"
+            "//button[@title='Queue']",
+            f"the Queue button on {title!r}",
+        )
+
+    first = titles[0]
+    wait_sounding(ui, first, 8)
+    ui.click_tab("Queue")
+    ui.wait(
+        lambda: titles[1] in (queue_titles(ui) or []) or None,
+        f"the guest's second song never reached the queue: {queue_titles(ui)}",
+        timeout=20,
+    )
+    assert ui.now_playing() == first, f"the guest's queue plays {ui.now_playing()!r}, want {first!r}"
+    ui.assert_no_errors("a guest queueing songs")
 
 
 def test_two_tabs_of_one_account_both_play_and_save_one_document(host, guest, backend, media_factory):
