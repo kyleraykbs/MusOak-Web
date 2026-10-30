@@ -11,6 +11,14 @@ a service worker that re-downloads the app, a room whose two clients disagree
 about the order, a song that reports "loading" forever while the clock says it
 is playing.
 
+Two kinds of file. `test_playback`, `test_rooms`, `test_progress`,
+`test_caching`, `test_images`, `test_sources`, `test_library` and `test_panels`
+each take one seam apart. `test_scenarios.py` is the other kind: whole journeys a
+person takes - a playlist shuffled and heard through without a song missing,
+three accounts filling one room, a search that ends in an album played to its
+last second - because a seam can be green while the flow it belongs to is
+broken.
+
 ## Running it
 
 ```sh

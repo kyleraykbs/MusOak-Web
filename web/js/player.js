@@ -2543,6 +2543,12 @@ class Player {
       if (audio !== this.audio) return;
 
       this._setBuffering(false);
+      // A song reaching its end is a listen that ended, whether or not another
+      // follows it: the last song of a queue used to leave no record at all,
+      // because the listen was only ever reported by the *next* load. Reporting
+      // here as well is harmless - the server folds a repeat of the same listen
+      // - and it is what puts the last song in somebody's history.
+      this._reportListen("");
       // The room host is a normal queue player: its own queue advances on the
       // element's end. Followers never advance locally; the host's next sync
       // tells them which song is on, which is a wait the session has to survive.

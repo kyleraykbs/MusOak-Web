@@ -633,3 +633,14 @@
   Chrome's grace. A file that takes ten seconds is ten seconds of silence, and
   the retry tick is the only thing awake in it.
 - Reversible: yes.
+
+## 2026-10-29 A song reaching its end is a listen, even the last one
+- Decision: the element's `ended` handler reports the listen before advancing.
+  `_load` still reports on a track change, so a middle song is reported twice;
+  the server folds a repeat of the same listen (same track, variant, length and
+  start within three seconds), which is what makes the double report harmless.
+- Why: a listen was only ever reported by the *next* load, so the last song of a
+  queue - the last track of an album, the end of a shuffled playlist - never
+  reached the account's history at all. Found by the new scenario test, which
+  plays an album to its end and asks the history what was heard.
+- Reversible: yes.
