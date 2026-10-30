@@ -13,11 +13,20 @@ is playing.
 
 Two kinds of file. `test_playback`, `test_rooms`, `test_progress`,
 `test_caching`, `test_images`, `test_sources`, `test_library` and `test_panels`
-each take one seam apart. `test_scenarios.py` is the other kind: whole journeys a
-person takes - a playlist shuffled and heard through without a song missing,
-three accounts filling one room, a search that ends in an album played to its
-last second - because a seam can be green while the flow it belongs to is
-broken.
+each take one seam apart.
+
+The rest are journeys - whole things a person does, in order, because a seam can
+be green while the flow it belongs to is broken. `journeys.py` holds their shared
+ground (a person with a few songs, the queue page's own view of it, a row drag):
+
+| file | the journeys |
+| --- | --- |
+| `test_scenarios.py` | a playlist shuffled and heard through; three accounts in one room; search → artist → album → played to its end |
+| `test_queue_actions.py` | drag a row and hear it; remove one and it never plays; a duplicate song plays twice; shuffle while one plays; reload mid-queue |
+| `test_favourites_ratings.py` | rate a song (and reload), the rating filter, unfavourite from the row menu, the history of what was just played |
+| `test_playlist_editing.py` | make/fill/drag/prune/rename a playlist and reload it; a 120-song playlist; Queue album and Play album from the artist row |
+| `test_room_extra.py` | the same song queued twice, the host leaving, a member whose file is gone |
+| `test_account_edges.py` | a guest playing a search result, two tabs of one account, a tagged file imported and played from its artist |
 
 ## Running it
 

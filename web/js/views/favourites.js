@@ -5,7 +5,9 @@
 // the star back.
 
 import { h, icon, mount, skeletonRows, loadingState } from "../dom.js";
-import { currentClient, favoriteRating, on, ratingStage, registerView, requireLogin } from "../app.js";
+import {
+  currentClient, favoriteRating, on, openFavoriteDialog, ratingStage, registerView, requireLogin,
+} from "../app.js";
 import { isSignedIn, state } from "../state.js";
 import { playOne, reportError } from "./queue.js";
 import { emptyState, playButtons, trackCountLine, trackMenu, trackRow } from "./playlist.js";

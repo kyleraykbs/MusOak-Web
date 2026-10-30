@@ -98,3 +98,55 @@ Debug route worth keeping: a CDP-attached tab can be read in its MAIN world with
 there returns the same `player` singleton the app uses. `tab.run`'s own
 `page.evaluate` is an isolated world and shows `window` as the app never sees it -
 which had me chasing a phantom earlier.
+
+## 2026-10-29 What the suite can and cannot reach with providers off
+
+`test_scenarios.py` is the flow file (journeys, not seams). Two facts it had to
+learn the hard way:
+
+- **The library's search is over uploads only.** `handleSearch`'s library half is
+  `userUploadGroups` → `SearchUploads`, which matches an upload's title,
+  artists, album or filename. A file put in through `/api/v1/library/import`
+  creates a track and a `local` variant and no upload row, so it is *not*
+  findable; `/api/v1/uploads` is, and it also sets the track's artists and album
+  (`SetTrackArtists`/`SetTrackAlbums`), which is what makes an artist page list
+  the album. A scenario about searching must upload, not import.
+- **The artists section of Search is provider-only** (`searchArtists`), so with
+  providers off an artist is reached by the artist line on a song's own row -
+  which is also the path a person takes from a search result.
+
+A listen is a play of at least five seconds (`minPlayMs`); the history endpoint
+answers `{"plays": [{track, variantId, playedMs, atMs}]}` with the id nested in
+the track. A song reaching its end reports its listen now, so the *last* song of
+a queue is in the history too - it never was before.
+
+## 2026-10-30 Writing journeys: what the harness makes easy and what it fights
+
+The journey files (`test_scenarios.py`, `test_queue_actions.py`,
+`test_favourites_ratings.py`, `test_account_edges.py`,
+`test_playlist_editing.py`, `test_room_extra.py`) share `journeys.py`. Three
+traps cost reruns each:
+
+- **A tab is a button too.** `//button[normalize-space(.)='Queue']` clicks the
+  *tab* of that name, not the list's Queue control. Scope list buttons:
+  `.favourites-actions //button[...]`. That mistake reads as "the queue never
+  filled", so it looks like an app bug.
+- **The queue page draws the upcoming songs numbered, and the song on last,
+  unnumbered.** A `:last-child` drag therefore grabs the song being heard. Rows
+  are found by title (`journeys.drag_row(ui, source_title, target_title)`), and
+  `journeys.queue_titles()` returns the numbered ones only.
+- **`page.click()` via JS is trustworthy; `WebDriver`'s actionability is not.**
+  A row is itself a click target, so "is something else on top of this?" answers
+  about the row and can refuse a button inside it. Controls are pressed with
+  `element.click()` in the page (`journeys`/`_click_in_row`).
+- **The rating slider is `opacity: 0`** (the stars are the picture), so
+  `wait_css`/`wait_xpath` (which require visibility) never see it. Wait for it by
+  presence: `ui.has(".dialog-backdrop input.rating-range")`.
+- **A room's size is not a number to wait for**: it plays as it queues. Collect
+  the entries over a window (`_collect_items`) instead of `wait_queue_size`.
+
+Two real bugs came out of these tests, both invisible from the outside: the
+Favourites page's trailing star called `openFavoriteDialog` without importing it
+(a silent ReferenceError, dead control), and a playlist reorder left every row's
+"Remove from playlist" closure on its *pre-drop* position, so removing the moved
+row deleted its neighbour.

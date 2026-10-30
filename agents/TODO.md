@@ -69,3 +69,13 @@ to check on Android Chrome:
       decision, not by accident); if the notification instead describes the
       silent player - no title, no artwork - the fix is to set the session's
       metadata after the hold as well as before it.
+
+## Room reload journey hangs, 2026-10-30
+
+`test_a_member_reloads_and_lands_back_in_the_room` (written for
+`e2e/test_room_extra.py`, then removed) hangs instead of failing: three tests in
+that file pass and the fourth never returns, with no `WaitTimeout` raised - so it
+is not one of the waits with a deadline. Every wait in it has one (25-30 s), so
+the block is a blocking Selenium call, most likely `ui.reload()` on a page with a
+room's modal open. Reproduce with `pytest --timeout` (pytest-timeout is not wired
+into `nix run .#e2e` yet) or by wrapping each step in a print.

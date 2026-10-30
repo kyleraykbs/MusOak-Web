@@ -488,6 +488,11 @@ async function reorderPlaylistTracks(tracks, from, to, list) {
   list.insertBefore(moved, list.children[toIndex] || null);
   try {
     await currentClient().reorderPlaylist(activeId, tracks.map((track, index) => original.indexOf(track)));
+    // The rows were re-ordered by hand above, but each row's own actions still
+    // close over the *position it had before the drop* - so "Remove from
+    // playlist" on the moved row would delete whatever now sits at that index.
+    // The list is redrawn from the order that is now the server's.
+    refreshCurrent();
   } catch (error) {
     tracks.splice(0, tracks.length, ...original);
     refreshCurrent();

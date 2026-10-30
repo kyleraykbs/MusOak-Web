@@ -644,3 +644,19 @@
   reached the account's history at all. Found by the new scenario test, which
   plays an album to its end and asks the history what was heard.
 - Reversible: yes.
+
+## 2026-10-30 Journeys are tested, and two dead controls came out of it
+- Decision: six journey files beside `test_scenarios.py`, sharing `journeys.py`:
+  queue actions, favourites/ratings/history, playlist editing, room edges,
+  account edges. Each asserts what a person perceives (the element's own clock,
+  the server's order, the history), never that a list re-rendered.
+- Why: Kyle: "We should have tests for all of these common things users do...
+  user scenarios, make tests." A seam can be green while the flow is broken, and
+  this suite is Firefox-only, which is how a Chromium-only failure got shipped
+  once already.
+- Found and fixed on the way: the Favourites page's trailing rating star called
+  `openFavoriteDialog` without importing it (a silent ReferenceError - the
+  control did nothing), and a playlist reorder left every row's "Remove from
+  playlist" closure on its pre-drop position, so removing the moved row deleted
+  its neighbour. Both are invisible from the outside and neither had a test.
+- Reversible: yes.
