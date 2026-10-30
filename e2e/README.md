@@ -26,6 +26,7 @@ ground (a person with a few songs, the queue page's own view of it, a row drag):
 | `test_favourites_ratings.py` | rate a song (and reload), the rating filter, unfavourite from the row menu, the history of what was just played |
 | `test_playlist_editing.py` | make/fill/drag/prune/rename a playlist and reload it; a 120-song playlist; Queue album and Play album from the artist row |
 | `test_room_extra.py` | the same song queued twice, the host leaving, a member whose file is gone |
+| `test_offline.py` | a kept playlist plays without the server, one evicted song is named, reload opens the kept list |
 | `test_account_edges.py` | a guest playing a search result, two tabs of one account, a tagged file imported and played from its artist |
 
 ## Running it

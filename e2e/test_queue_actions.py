@@ -87,40 +87,27 @@ def test_a_dropped_row_is_the_row_that_plays(ui, backend, media_factory):
     ui.assert_no_errors("dragging a queue row and playing it")
 
 
-def test_removing_the_next_song_means_it_never_plays(ui, backend, media_factory):
-    """Take the song the queue would play next out of the queue.
+def test_removing_the_playing_song_advances_to_the_next(ui, backend, media_factory):
+    """Remove the song on the bar; the next queue entry starts.
 
-    What is asserted is that it never sounds and the one after it does: a
-    removal that only repaints the list leaves the player holding the entry
-    nobody can see, and the queue plays a song that is no longer in it.
+    A current row has its own Remove button too. Removing it must advance the
+    player, not leave the bar naming a song whose row is gone or clear the whole
+    queue under it.
     """
-    someone = person(backend, media_factory, "remove", lengths=(4, 5, 6))
+    someone = person(backend, media_factory, "remove", lengths=(6, 7, 8))
     order = _queue_from_favourites(ui, someone)
     wait_sounding(ui, order[0], someone.seconds(order[0]))
-    # Paused while the queue is shaped: a four-second song would otherwise end
-    # in the middle of the assertions and advance the queue underneath them.
-    press_bar(ui, "Pause")
-    ui.wait_player(lambda s: s if s and s.get("paused") else None, "the pause never landed")
+    playing_title = ui.now_playing()
+    upcoming = queue_titles(ui)
+    assert upcoming, "the queue drew no upcoming rows"
+    following = upcoming[0]
 
-    rows = queue_titles(ui)
-    assert rows, "the queue drew no upcoming rows"
-    doomed, following = rows[0], (rows[1] if len(rows) > 1 else "")
+    ui.click("[data-playing='true'] button[title='Remove from the queue']")
 
-    # The row's own remove control, on the first upcoming song.
-    ui.click_xpath(
-        "//div[contains(@class,'list')][.//div[contains(@class,'title')][normalize-space(.)="
-        f"{doomed!r}]]//button[@title='Remove from the queue']",
-        f"the remove control on {doomed!r}",
-    )
-    ui.wait(lambda: doomed not in (queue_titles(ui) or []), f"{doomed!r} is still in the queue", timeout=10)
-
-    press_bar(ui, "Next")
-    ui.wait_quiet(quiet_for=0.2, timeout=5)
-    if following:
-        state = wait_sounding(ui, following, someone.seconds(following))
-        assert state["paused"] is False
-    assert ui.now_playing() != doomed, f"the removed song {doomed!r} played anyway"
-    ui.assert_no_errors("removing a queue row")
+    state = wait_sounding(ui, following, someone.seconds(following), timeout=20)
+    assert ui.now_playing() == following, f"after removing {playing_title!r}, the bar says {ui.now_playing()!r}"
+    assert state["paused"] is False
+    ui.assert_no_errors("removing the song being played")
 
 
 def test_the_same_song_queued_twice_plays_twice(ui, backend, media_factory):

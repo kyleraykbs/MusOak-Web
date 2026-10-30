@@ -552,12 +552,12 @@ async function drawKept(target) {
     }),
     list
   );
-  for (const [position, track] of tracks.entries()) {
-    if (!target.isConnected) return true;
-    const row = keptTrackRow(tracks, track, position);
-    list.appendChild(row);
-    await waitForArtwork(row);
-  }
+  // Rows are appended in chunks and their artwork fills in behind the spinner,
+  // as in every other list: this page used to wait for each picture, and the
+  // helper it waited with was removed with that behaviour - leaving this call
+  // to throw a ReferenceError, which is what "the kept playlist never opens"
+  // was.
+  await appendProgressively(list, tracks.map((track, position) => keptTrackRow(tracks, track, position)));
   return true;
 }
 
