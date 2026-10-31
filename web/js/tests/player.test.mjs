@@ -3593,8 +3593,61 @@ test("the silent player is a tenth of a second of real silence", () => {
   assert.ok(bytes.slice(44).every((byte) => byte === 0x80), "every sample is silence");
 });
 
+test("the silent hold is one loop, and it stops when the player does", () => {
+  const saved = {
+    silent: player._silent,
+    audio: player.audio,
+    playingWanted: player._playingWanted,
+    resumeWhenReady: player._resumeWhenReady,
+    resumeWanted: player._resumeWanted,
+    resumeTimer: player._resumeTimer,
+  };
+  const silent = {
+    paused: true,
+    loop: false,
+    plays: 0,
+    pauses: 0,
+    play() {
+      this.plays += 1;
+      this.paused = false;
+      return { catch() {} };
+    },
+    pause() {
+      this.pauses += 1;
+      this.paused = true;
+    },
+  };
+  try {
+    player._silent = silent;
+    player.audio = null;
+
+    // A gap asks for the hold once; asking again while it is running does not
+    // stack a second play on the same element.
+    player._holdSession();
+    player._holdSession();
+    assert.equal(silent.loop, true, "the silent stream loops instead of ending after a tenth of a second");
+    assert.equal(silent.plays, 1, "the running hold is not started again");
+    assert.equal(silent.paused, false, "and it is actually playing");
+
+    // The player pausing is the listener's own pause: the hold goes with it.
+    player.pause();
+    assert.equal(silent.paused, true, "the pause stops the silent hold");
+    assert.equal(silent.pauses, 1);
+  } finally {
+    player._silent = saved.silent;
+    player.audio = saved.audio;
+    player._playingWanted = saved.playingWanted;
+    player._resumeWhenReady = saved.resumeWhenReady;
+    player._resumeWanted = saved.resumeWanted;
+    player._resumeTimer = saved.resumeTimer;
+    clearInterval(player._resumeTimer);
+    player._resumeTimer = 0;
+  }
+});
+
 test("a changeover plays the silent player, and a restored pause does not", () => {
   const held = [];
+  const order = [];
   const saved = {
     audio: player.audio,
     ensureAudio: player.ensureAudio,
@@ -3617,7 +3670,8 @@ test("a changeover plays the silent player, and a restored pause does not", () =
     paused: false, ended: false, readyState: 4, volume: 1, muted: false,
     dataset: {}, style: {},
     addEventListener() {}, removeEventListener() {},
-    pause() { this.paused = true; }, play() { this.paused = false; return { catch() {} }; },
+    pause() { this.paused = true; order.push("pause"); },
+    play() { this.paused = false; return { catch() {} }; },
     removeAttribute() {}, load() {},
   };
   try {
@@ -3626,7 +3680,10 @@ test("a changeover plays the silent player, and a restored pause does not", () =
     player.ensureAudio = () => audio;
     player.renderBar = () => {};
     player._wireAudio = () => {};
-    player._holdSession = () => held.push(player._index);
+    player._holdSession = () => {
+      held.push(player._index);
+      order.push("hold");
+    };
     player.queue = [track("one"), track("two")];
     player._index = 0;
     player._variant = "v-one";
@@ -3641,6 +3698,7 @@ test("a changeover plays the silent player, and a restored pause does not", () =
     // session is held through it.
     const playing = player._load(1, { autoplay: true });
     assert.deepEqual(held, [1], "the gap of a load that will play is held");
+    assert.deepEqual(order.slice(0, 2), ["hold", "pause"], "the hold starts before the old song is stopped");
     player._token += 1;
     player._loading = false;
     void playing;

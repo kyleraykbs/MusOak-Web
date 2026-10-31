@@ -872,6 +872,7 @@ class Player {
     this._playingWanted = false;
     this._resumeWhenReady = false;
     this._wantResume(false);
+    this._releaseSessionHold();
     this.audio?.pause();
   }
 
@@ -884,6 +885,7 @@ class Player {
     if (this._loading) {
       this._resumeWhenReady = true;
       this._playingWanted = true;
+      this._holdSession();
       this._stateEvent();
       return;
     }
@@ -1621,12 +1623,15 @@ class Player {
     // song meanwhile: every other path that could call `play()` defers or is
     // gated while `_loading` is set. The element is emptied only when there is
     // nothing to play at all (`_stopAudio`).
-    if (audio.src) audio.pause();
     // Stopping the element is the moment the session would go, so the silent
     // player takes over for the gap - but only when this load is going to play.
     // A load that will not (a restore) is a pause, and a paused page needs no
-    // session of its own.
+    // session of its own. Start the hold before the pause, not after it: the
+    // pause is reported in the same task, and a session with no playing element
+    // between the two calls is a session a phone may already have dropped.
     if (autoplay) this._holdSession();
+    else this._releaseSessionHold();
+    if (audio.src) audio.pause();
     this._emit("track-changed", track);
     // The bar says "downloading" from the moment the track is chosen.
     this._stateEvent();
@@ -2510,6 +2515,9 @@ class Player {
     audio.addEventListener("playing", () => {
       if (audio !== this.audio) return;
       this._setBuffering(false);
+      // The real song is sounding: the silent loop has done its job and must
+      // not keep the audio session (or the phone's audio focus) beside it.
+      this._releaseSessionHold();
       // A stalled source that is playing again is healthy: the next stall is a
       // new one and has its own recovery to earn.
       this._recoveryStage = 0;
@@ -2812,6 +2820,7 @@ class Player {
     this._playingWanted = false;
     this._resumeWhenReady = false;
     this._betweenSongs = false;
+    this._releaseSessionHold();
     // Nothing to play is not something to retry: the wait a load just armed is
     // for a track that turned out not to exist.
     this._wantResume(false);
@@ -2913,26 +2922,45 @@ class Player {
    * state to "playing" is not enough on its own; something has to actually be
    * playing at the moment the real element is not.
    *
-   * A second element carrying a tenth of a second of silence, played and paused
-   * inside one task, is that something: the documented way to hold a session
-   * open across a source change. Silent by content rather than by volume, since
-   * a muted element is not "playing audio" to the browser and a card the browser
-   * believes is silent buys nothing. Detached from the document, because it is
-   * not part of the page and a list of the page's audio elements should not grow
-   * one.
+   * The hold is a loop, not a pulse. Playing a tenth of a second of silence and
+   * pausing it in the same task leaves a gap in which the page has no player
+   * at all; Android Chrome and Brave can drop the card in that gap, and once
+   * the card is gone the background page is throttled and every retry becomes
+   * one of the tiny, uneven attempts heard from a locked phone. A detached
+   * element looping a tenth of a second of silence keeps one media player
+   * genuinely running until the real song starts or the listener pauses.
+   *
+   * Silent by content rather than by volume, since a muted element is not
+   * "playing audio" to the browser and a card the browser believes is silent
+   * buys nothing. Detached from the document, because it is not part of the
+   * page and a list of the page's audio elements should not grow one.
    */
   _holdSession() {
     const silent = this._silentPlayer();
     if (!silent) return;
+    silent.loop = true;
+    if (!silent.paused) return;
     try {
       const playing = silent.play();
       if (playing?.catch) playing.catch(() => {
         /* refused while hidden: the retry asks again, and the gap says so */
       });
     } catch {
-      return;
+      /* refused while hidden: the retry asks again */
     }
-    silent.pause();
+  }
+
+  /** Stop the silent loop once the real element has the session again. */
+  _releaseSessionHold() {
+    const silent = this._silent;
+    if (!silent) return;
+    // Pause even if it still reads `paused`: a play that has been asked for but
+    // has not started yet would otherwise begin looping after this release.
+    try {
+      silent.pause();
+    } catch {
+      /* an element the browser has already torn down */
+    }
   }
 
   /** The silent element `_holdSession` plays, made once and then kept. */
@@ -2951,6 +2979,7 @@ class Player {
     const silent = new Audio(url);
     if (typeof silent.play !== "function" || typeof silent.pause !== "function") return null;
     silent.preload = "auto";
+    silent.loop = true;
     this._silent = silent;
     return silent;
   }

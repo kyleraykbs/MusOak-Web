@@ -1,5 +1,17 @@
 # Decisions
 
+## 2026-10-31 The silent session hold loops until the song starts
+- Decision: `player._holdSession()` keeps a detached silent element playing in a
+  loop across a load, a refused play, or a room follower's gap. `_releaseSessionHold()`
+  pauses it when the real element fires `playing`, the listener pauses, or playback
+  is stopped. It is not played-and-paused in one task any more.
+- Why: a pulse leaves the page with no media player between ticks. Android
+  Chrome and Brave can drop the lock-screen card in that gap; the background
+  page is then throttled, and the recovery is the uneven tiny playback Kyle
+  heard from a locked phone. A continuous silent player keeps the session and
+  the page's foreground-audio standing alive until the real file takes over.
+- Reversible: yes.
+
 ## 2026-10-30 A room member going offline keeps the song it is hearing
 - Decision: the offline room tick leaves a non-ended current song alone before
   it looks at the room's order, ownership, or whether any song remains. The
