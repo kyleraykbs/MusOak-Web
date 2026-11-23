@@ -63,16 +63,6 @@ export const CLOCK_RESYNC_MS = 15000;
 const CLOCK_SAMPLES = 5;
 const CLOCK_BURST = 3;
 
-/** How long a track whose sources could not be read is left alone. */
-const RESOLVE_BACKOFF_MS = 5000;
-/** How long a song this client cannot play is left alone at its worst. A song
- *  whose source the server cannot find is not found by asking again every five
- *  seconds: the search behind each ask is a provider round trip, and the room's
- *  own status line says the same thing each time. The wait doubles per try, so
- *  the first few are quick (a provider having a bad minute is common) and a song
- *  that is really unplayable settles into one ask every five minutes. */
-const RESOLVE_BACKOFF_MAX_MS = 5 * 60 * 1000;
-
 const DEFAULT_SKIP = {
   skipThreshold: 2,
   minVotersForSkip: 2,
@@ -772,6 +762,10 @@ function scheduleReconnect(connection) {
   // retry every half second for the rest of the session.
   const lasted = Date.now() - num(connection.openedAt);
   if (connection.openedAt && lasted >= RECONNECT_STABLE_MS) connection.attempts = 0;
+  // Spent: the next failure is measured from the next socket that opens. Left
+  // set, every retry after one long-lived connection read as "stayed up" and
+  // the backoff never left its first step.
+  connection.openedAt = 0;
   connection.attempts += 1;
   const delay = Math.min(RECONNECT_BASE_MS * 2 ** (connection.attempts - 1), RECONNECT_MAX_MS);
   setState({
@@ -1231,20 +1225,6 @@ async function loadItem(running, item, { positionMs: at = 0, autoplay = true } =
 }
 
 /**
- * A song this client cannot play: left alone for longer each time it is tried.
- *
- * The count is per item, so a provider having a bad minute costs a few quick
- * retries and a song that is really unplayable settles into one ask every few
- * minutes instead of the room asking for ever on a five-second beat.
- */
-function markUnplayable(running, itemId) {
-  running.failedTries ||= new Map();
-  running.failedTries.set(itemId, Number(running.failedTries.get(itemId) || 0) + 1);
-  running.failedItemId = itemId;
-  running.failedAt = Date.now();
-}
-
-/**
  * A follower with nothing reachable plays the order it last knew, out of the
  * copies this page kept for it.
  *
@@ -1346,28 +1326,6 @@ function ensureRoomMode(player, room) {
     skip: () => skip().catch(() => {}),
     seek: (ms) => seek(ms).catch(() => {}),
   });
-}
-
-/** The variant this member plays: the one the player itself would choose. */
-async function resolveVariant(trackId, player) {
-  try {
-    const resolved = await player.variantFor({ id: trackId });
-    return str(resolved && resolved.variantId);
-  } catch {
-    return "";
-  }
-}
-
-/** The track behind a room item: the item carries only a title, and the bar
- *  needs the artist and the artwork too. Failing is not fatal. */
-async function loadTrack(connection, trackId) {
-  if (!connection || !connection.client) return null;
-  try {
-    const track = await connection.client.track(trackId);
-    return track && track.id ? track : null;
-  } catch {
-    return null;
-  }
 }
 
 // --- notices ---------------------------------------------------------------

@@ -61,6 +61,19 @@ export function mediaCacheKey(mediaUrl, base = defaultBase()) {
 }
 
 /**
+ * The cache entry of one variant kept from one backend, with no client to ask:
+ * the same key `mediaCacheKey(client.mediaUrl(variantId))` gives for a client on
+ * that backend. A record says which backend its songs were kept from, so they
+ * can be found - and freed - whichever backend the page is on now.
+ */
+export function keptMediaKey(server, variantId, base = defaultBase()) {
+  return mediaCacheKey(
+    `/api/v1/media/${encodeURIComponent(variantId)}?ms=${encodeURIComponent(server || "")}`,
+    base,
+  );
+}
+
+/**
  * The variant a media URL names. The media path is `/api/v1/media/<variant>`;
  * nothing else in the URL is the song - not the backend in the query, and not
  * the position a stream was asked to start at.
@@ -254,7 +267,7 @@ async function inQueueOrder(tracks) {
 
 // --- the index of kept playlists -------------------------------------------
 
-/** id -> {id, name, trackIds, bytes, savedAt}, so reads are synchronous. */
+/** id -> {id, name, server, trackIds, bytes, savedAt}, so reads are synchronous. */
 let mirror = new Map();
 let loading = null;
 const listeners = new Set();
@@ -687,6 +700,11 @@ function downloadDialog(name, onCancel) {
  * song made it.
  */
 export async function download(playlistId, name, tracks, onProgress) {
+  // Asked for here, when somebody first keeps something, rather than at load:
+  // Firefox asks the person, and that question belongs to the moment they chose
+  // to keep songs. Granted, the browser stops treating the kept songs as cache
+  // it may empty when the phone runs short of room. Refused, nothing changes.
+  globalThis.navigator?.storage?.persist?.()?.catch?.(() => {});
   if (!playlistId || jobs.has(playlistId)) return null;
   await ensureLoaded();
   const client = activeClient();
@@ -753,6 +771,10 @@ export async function download(playlistId, name, tracks, onProgress) {
     const record = {
       id: playlistId,
       name: name || "",
+      // Which backend these songs came from: it is part of every cache key
+      // they are stored under, and the page may be on another one by the time
+      // somebody takes the playlist off this machine.
+      server: client.server,
       trackIds: entries,
       bytes,
       savedAt: Date.now(),
@@ -781,21 +803,28 @@ export async function remove(playlistId) {
   // A keep-in-step still running would fetch the songs straight back, so the
   // ask to remove is also the ask to stop.
   syncing.get(record.id)?.abort();
-  const client = activeClient();
   mirror.delete(record.id);
   await dropRecord(record.id);
 
+  // The songs are under the backend they were kept from, which is the record's
+  // own word where it has one: built from whichever backend the page is on now,
+  // the keys matched nothing, the record went, and the bytes stayed for good
+  // with "Freed 0 B" said over them. A record from before that was written
+  // down can only be assumed to be this backend's.
+  const serverOf = (kept) => String(kept?.server || state.server || "");
   const stillKept = new Set();
   for (const other of mirror.values()) {
-    for (const entry of other.trackIds || []) stillKept.add(entry.variantId);
+    const server = serverOf(other);
+    for (const entry of other.trackIds || []) stillKept.add(keptMediaKey(server, entry.variantId));
   }
 
   let freed = 0;
-  const cache = client ? await openCache() : null;
+  const server = serverOf(record);
+  const cache = server ? await openCache() : null;
   if (cache) {
     for (const entry of record.trackIds || []) {
-      if (stillKept.has(entry.variantId)) continue;
-      const key = mediaCacheKey(client.mediaUrl(entry.variantId));
+      const key = keptMediaKey(server, entry.variantId);
+      if (stillKept.has(key)) continue;
       const hit = await cache.match(key);
       if (!hit) continue;
       freed += await responseBytes(hit);
@@ -882,7 +911,9 @@ async function syncOne(playlistId, name, { quiet = true } = {}) {
     const changed =
       bytes !== record.bytes || JSON.stringify(entries) !== JSON.stringify(record.trackIds || []);
     if (changed) {
-      await saveRecord({ ...record, name: name || record.name, trackIds: entries, bytes, savedAt: Date.now() });
+      await saveRecord({
+        ...record, name: name || record.name, server: record.server || client.server, trackIds: entries, bytes, savedAt: Date.now(),
+      });
       notifyChanged();
     }
     if (changed && !quiet) await announce(`Updated ${record.name || "the playlist"} for offline play.`);

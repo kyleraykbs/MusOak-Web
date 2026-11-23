@@ -160,7 +160,7 @@ test("a room socket names its backend, since headers are impossible there", () =
     client.roomSocket({ roomId: "r1" });
     const url = new URL(sent[0]);
     assert.equal(url.pathname, "/api/v1/ws");
-    assert.equal(url.searchParams.get("ps"), BACKEND);
+    assert.equal(url.searchParams.get("ms"), BACKEND, "the name the proxy routes by");
     assert.equal(url.searchParams.get("roomId"), "r1");
     assert.equal(url.searchParams.get("memberId"), "m1");
   } finally {

@@ -802,6 +802,23 @@ export function entryForKey(entries, key) {
   return (entries || []).find((entry) => String(entry?.key ?? entry?.id ?? "") === wanted) || null;
 }
 
+/** Which entry each draggable row is, by the row itself. */
+const rowEntries = new WeakMap();
+
+/** The entry a drop landed on, from the row under the pointer.
+ *
+ *  The row is asked first, because a key is not always one row's own: a queue
+ *  with the same song in it twice has two rows with that song's id, and looking
+ *  the key up found the first of them - so a song dropped on the second copy
+ *  landed at the first one's place. A row this list did not wire (another list
+ *  that happens to be under the pointer) falls back to its key, which finds
+ *  nothing unless the key really is one of these entries'. */
+export function entryForRow(entries, target) {
+  const own = target ? rowEntries.get(target) : null;
+  if (own && (entries || []).includes(own)) return own;
+  return entryForKey(entries, target?.dataset?.key);
+}
+
 /**
  * Drag a row onto another with the pointer, which is the one gesture a phone
  * has: HTML5 drag-and-drop never fires from a touch without a long press. The
@@ -818,6 +835,7 @@ export function entryForKey(entries, key) {
  * involved; each caller knows how its own list is reordered.
  */
 export function listDrag({ row, handle = null, entry, entries, onDrop }) {
+  rowEntries.set(row, entry);
   let over = null;
   let moved = false;
   let startX = 0;
@@ -862,7 +880,7 @@ export function listDrag({ row, handle = null, entry, entries, onDrop }) {
       },
       { capture: true, once: true }
     );
-    const to = entryForKey(entries, target.dataset.key);
+    const to = entryForRow(entries, target);
     if (to) onDrop(entry, to);
   };
 

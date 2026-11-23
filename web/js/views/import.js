@@ -64,7 +64,14 @@ function fail(error, fallback) {
 
 // --- loading ---------------------------------------------------------------
 
+/** Which read of a server's playlists is the newest one asked for. */
+let sourceGeneration = 0;
+
 async function loadSource(url) {
+  // Picking one server and then another is two reads racing, and the slow one
+  // must not land last: its playlists would be listed under the other server's
+  // name, and an import from there would ask the wrong server for them.
+  const mine = ++sourceGeneration;
   ui.source = url;
   ui.personal = [];
   ui.provider = [];
@@ -77,9 +84,11 @@ async function loadSource(url) {
 
   try {
     const playlists = await sourceClient().playlists();
+    if (mine !== sourceGeneration) return;
     ui.personal = Array.isArray(playlists) ? playlists : [];
     ui.status = `${ui.personal.length} playlist(s) on ${serverLabel(url)}`;
   } catch (error) {
+    if (mine !== sourceGeneration) return;
     ui.status = fail(error, "could not read that server");
   }
   rebuild();

@@ -79,6 +79,10 @@ function showRoom() {
 }
 
 let host = null;
+/** The create-room form, built once for a visit to this page and kept in the
+ *  document through every redraw: the list under it changes with the room's
+ *  every event, and a form rebuilt with it lost what was being typed. */
+let createPanel = null;
 let listed = [];
 let loading = false;
 /** Why the last read of the rooms came back empty, when it was a failure:
@@ -89,6 +93,8 @@ let loadGeneration = 0;
 
 function render(container, params = {}) {
   host = container;
+  clear(host);
+  createPanel = openPanel();
   if (!unsubscribe) unsubscribe = subscribe(() => scheduleRedraw());
   paint();
   const wanted = params.roomId ? String(params.roomId) : "";
@@ -116,12 +122,17 @@ const scheduleRedraw = scheduleFrame(() => {
 
 function paint() {
   if (!host) return;
-  clear(host);
+  if (!createPanel) createPanel = openPanel();
   const room = currentRoom();
-  mount(
-    host,
-    room ? followingCard(room) : null,
-    openPanel(),
+  // Everything around the form is drawn again; the form itself is never taken
+  // out of the document, so a name half typed - and the caret in it - is still
+  // there after the room list has changed under it.
+  for (const child of [...host.childNodes]) {
+    if (child !== createPanel) host.removeChild(child);
+  }
+  if (createPanel.parentNode !== host) host.appendChild(createPanel);
+  if (room) host.insertBefore(followingCard(room), createPanel);
+  host.appendChild(
     h(
       "div",
       { class: "card" },
@@ -346,17 +357,30 @@ function askPassword(room, { password = "", error = "" } = {}) {
     value: password,
     autocomplete: "current-password",
   });
+  // One way in for the button and for Enter, and it closes this dialog itself
+  // either way it ends: Enter used to join and leave the question on screen,
+  // and a wrong password put a second dialog on top of the first. `false` is
+  // what tells the dialog's own button not to close it a second time.
+  let opened = null;
+  let joining = false;
   const submit = async () => {
+    if (joining) return false;
+    joining = true;
     try {
       await join(room.id, input.value, room.name);
+      opened?.close();
     } catch (failure) {
+      opened?.close();
       askPassword(room, { password: input.value, error: failure.message || "could not join" });
     }
+    return false;
   };
   input.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") submit();
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    submit();
   });
-  dialog({
+  opened = dialog({
     title: `Join “${room.name}”`,
     body: h(
       "div",

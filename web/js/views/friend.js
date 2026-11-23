@@ -105,7 +105,7 @@ function trackRow(client, track, { note = "", rating = null } = {}) {
   const artists = artistLine(track);
   return h(
     "div",
-    { class: "row clickable", title: "Play this song", onclick: () => play([track]) },
+    { class: "row clickable", title: "Play this song", "data-track-id": track?.id || null, onclick: () => play([track]) },
     cover(client, track?.artworkUrl),
     h(
       "div",
@@ -378,7 +378,13 @@ export function renderFriend(container, userId) {
       return;
     }
     if (mine !== generation || !container.isConnected) return;
+    // Redrawn on every refresh, so each scrolling list keeps where it was: a
+    // profile being read must not jump back to the top every half minute.
+    const scrolled = [...container.querySelectorAll(".scroll-list")].map((list) => list.scrollTop);
     mount(container, bannerBox(client, userId, detail?.user || {}, load), listsGrid(client, detail, uploads));
+    container.querySelectorAll(".scroll-list").forEach((list, index) => {
+      if (scrolled[index]) list.scrollTop = scrolled[index];
+    });
   };
   load();
   return load;

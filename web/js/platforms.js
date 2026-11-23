@@ -49,12 +49,22 @@ export function selectedPlatforms(providers = [], preferred = null) {
  * the rest of the session, which is a lie a reload was the only way out of.
  */
 let platformCache = null;
+/** Which server that answer was: another server's platforms are not this one's,
+ *  and a filter offering them sends a search names the backend does not know. */
+let platformServer = "";
 
 export async function platformsFor(client) {
+  const server = String(client?.server || "");
+  if (server !== platformServer) {
+    platformCache = null;
+    platformServer = server;
+  }
   if (platformCache?.length) return platformCache;
   try {
     const list = enabledPlatforms(await client.providers());
-    if (list.length) platformCache = list;
+    // Only while this is still the server being asked about: an answer that
+    // lands after a switch belongs to the one that was left.
+    if (list.length && platformServer === server) platformCache = list;
     return list;
   } catch {
     return [];
@@ -69,6 +79,7 @@ export function knownPlatforms() {
 /** Forget what the server said, so the next call asks again. */
 export function forgetPlatforms() {
   platformCache = null;
+  platformServer = "";
 }
 
 /**

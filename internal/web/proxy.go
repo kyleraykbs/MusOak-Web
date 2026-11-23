@@ -53,7 +53,11 @@ func (s *Server) newProxy() *httputil.ReverseProxy {
 			// A request from a media element carries no Authorization header;
 			// the session cookie is its stand-in. The backend never sees the
 			// cookie itself.
-			if out.Out.Header.Get("Authorization") == "" {
+			//
+			// Only for the backend that session is with. The backend can be
+			// named by anyone who can make this browser fetch a URL (`?ms=`),
+			// and a token sent wherever a link points is a token given away.
+			if out.Out.Header.Get("Authorization") == "" && s.sessionIsWith(out.In) {
 				if cookie, err := out.In.Cookie(tokenCookie); err == nil && cookie.Value != "" {
 					out.Out.Header.Set("Authorization", "Bearer "+cookie.Value)
 				}
@@ -82,6 +86,18 @@ func (s *Server) selected(r *http.Request) string {
 		return strings.TrimSpace(cookie.Value)
 	}
 	return s.cfg.DefaultServer
+}
+
+// sessionIsWith reports whether the backend this request is going to is the one
+// the browser's session cookies were issued for.
+func (s *Server) sessionIsWith(r *http.Request) bool {
+	cookie, err := r.Cookie(serverCookie)
+	if err != nil {
+		return false
+	}
+	same := func(raw string) string { return strings.TrimRight(strings.TrimSpace(raw), "/") }
+	session := same(cookie.Value)
+	return session != "" && session == same(s.selected(r))
 }
 
 // route turns what a user chose into a backend this deployment will talk to.

@@ -26,6 +26,8 @@ export class ServerError extends Error {
 }
 
 const REQUEST_TIMEOUT = 30000;
+/** How long an upload may take: sending the file is most of the request. */
+const UPLOAD_TIMEOUT = 30 * 60 * 1000;
 
 function routed(server, path) {
   const separator = path.includes("?") ? "&" : "?";
@@ -87,32 +89,42 @@ export class Client {
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
+    const tookTooLong = () => new ServerError(0, `${path} took longer than ${Math.round(timeout / 1000)}s`, {
+      timedOut: true,
+    });
     let response;
+    let payload;
+    // The wait covers the whole answer, body included: headers that arrive and
+    // a body that then stalls is a request that never settles, and a GET that
+    // never settles stays in `_inflight` for every later caller to share.
     try {
-      response = await fetch(path, {
-        method,
-        headers,
-        body: body === undefined || body === null ? undefined : JSON.stringify(body),
-        signal: controller.signal,
-      });
-    } catch (error) {
-      // Giving up on a slow request is not the server being unreachable: a
-      // resolve searches providers and outlasts any timeout worth having, and
-      // an app that read it as unreachable stopped the download mid-playback
-      // and played only what was already on the device.
-      if (error?.name === "AbortError") {
-        throw new ServerError(0, `${path} took longer than ${Math.round(timeout / 1000)}s`, {
-          timedOut: true,
+      try {
+        response = await fetch(path, {
+          method,
+          headers,
+          body: body === undefined || body === null ? undefined : JSON.stringify(body),
+          signal: controller.signal,
         });
+      } catch (error) {
+        // Giving up on a slow request is not the server being unreachable: a
+        // resolve searches providers and outlasts any timeout worth having, and
+        // an app that read it as unreachable stopped the download mid-playback
+        // and played only what was already on the device.
+        if (error?.name === "AbortError") throw tookTooLong();
+        this.reportReachable(false);
+        throw new ServerError(0, `cannot reach ${this.server || "the server"}: ${error.message}`);
       }
-      this.reportReachable(false);
-      throw new ServerError(0, `cannot reach ${this.server || "the server"}: ${error.message}`);
+      this.reportReachable(true);
+      try {
+        payload = await response.text();
+      } catch (error) {
+        if (error?.name === "AbortError") throw tookTooLong();
+        throw new ServerError(0, `${path} was cut off part way: ${error?.message || error}`);
+      }
     } finally {
       clearTimeout(timer);
     }
-    this.reportReachable(true);
 
-    const payload = await response.text();
     if (!response.ok) {
       let message = payload.trim();
       try {
@@ -495,7 +507,10 @@ export class Client {
     artworkContentType = "",
     associateTrackId = "",
   }) {
-    return this.post("/api/v1/uploads", {
+    // Its own wait: the clock runs while the body is being sent, and a song is
+    // tens of megabytes - on a home uplink the ordinary thirty seconds is a
+    // limit every large file fails, however healthy the connection.
+    return this.request("POST", "/api/v1/uploads", {
       filename,
       contentType,
       data,
@@ -506,7 +521,7 @@ export class Client {
       artworkData: artwork,
       artworkContentType,
       associateTrackId,
-    }).then((payload) => payload?.upload || {});
+    }, { timeout: UPLOAD_TIMEOUT }).then((payload) => payload?.upload || {});
   }
 
   uploads() {
@@ -837,7 +852,7 @@ export class Client {
    */
   roomSocket({ roomId, onEvent, onOpen, onClose } = {}) {
     const scheme = location.protocol === "https:" ? "wss:" : "ws:";
-    const query = new URLSearchParams({ ps: this.server });
+    const query = new URLSearchParams({ ms: this.server });   // the proxy's routing parameter, as `routed` spells it
     if (roomId) query.set("roomId", roomId);
     if (this.memberId) query.set("memberId", this.memberId);
     if (this.memberName) query.set("memberName", this.memberName);

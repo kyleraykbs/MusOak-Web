@@ -26,7 +26,7 @@ class FakeInput {
 }
 globalThis.HTMLInputElement = FakeInput;
 
-const { transportBlocked, transportCommand } = await import("../app.js");
+const { transportBlocked, transportCommand, markNowPlaying } = await import("../app.js");
 
 /** A keypress, as the shell's own listener sees one. */
 function press(key, { target = null, ...modifiers } = {}) {
@@ -85,4 +85,40 @@ test("nothing transports behind a dialog or an open menu", () => {
   assert.equal(transportBlocked(withSelector(".dialog-backdrop, .popover", false)), false);
   // Nothing to ask: a page with no DOM is not blocked, it has no keyboard.
   assert.equal(transportBlocked(null), false);
+});
+// A control reached by keyboard keeps the keys it uses: space presses a focused
+// button and an arrow moves a focused slider. Clicked with the mouse, the same
+// control leaves them to the player, as before.
+test("a control the keyboard is on keeps space and the arrows", () => {
+  const control = (tag, { type = "", role = "", keyboard = true } = {}) => ({
+    tagName: tag,
+    getAttribute: (name) => (name === "type" ? type : name === "role" ? role : null),
+    matches: (selector) => selector === ":focus-visible" && keyboard,
+  });
+  assert.equal(transportCommand(press(" ", { target: control("BUTTON") })), "", "space presses the button");
+  assert.equal(transportCommand(press(" ", { target: control("DIV", { role: "button" }) })), "", "and a row that is a button");
+  assert.equal(transportCommand(press("ArrowRight", { target: control("INPUT", { type: "range" }) })), "", "an arrow moves the slider");
+  assert.equal(transportCommand(press("l", { target: control("BUTTON") })), "next-track", "a letter is still the player's");
+  assert.equal(transportCommand(press(" ", { target: control("BUTTON", { keyboard: false }) })), "toggle-play", "clicked, space is the player's");
+  assert.equal(transportCommand(press("ArrowRight", { target: control("BUTTON") })), "next-track", "a button has no use for arrows");
+});
+
+// The song that is playing is marked by one rule naming its id, so every list
+// drawn before or after the change shows it; the tab names it too.
+test("the playing song is one rule, and the tab names it", () => {
+  const style = { id: "now-playing-rule", textContent: "" };
+  const saved = { getElementById: document.getElementById, title: document.title };
+  document.getElementById = (id) => (id === "now-playing-rule" ? style : null);
+  try {
+    markNowPlaying({ id: "abc-123", title: "Song", artists: ["One", "Two"] });
+    assert.match(style.textContent, /\.row\[data-track-id="abc-123"\] \.title/);
+    assert.match(style.textContent, /var\(--now-playing\)/, "the colour is the theme's");
+    assert.equal(document.title, "Song \u2014 One, Two \u00b7 MusOak");
+    markNowPlaying(null);
+    assert.equal(style.textContent, "", "nothing playing marks nothing");
+    assert.equal(document.title, "MusOak");
+  } finally {
+    document.getElementById = saved.getElementById;
+    document.title = saved.title;
+  }
 });

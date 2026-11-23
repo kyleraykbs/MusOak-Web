@@ -316,8 +316,9 @@ export function shareOptions(kind, item, variants = [], base = "") {
  *  a broken dialog: the app's own link still works. */
 async function loadVariants(client, trackId) {
   try {
-    const payload = await client.variants(trackId);
-    return Array.isArray(payload?.variants) ? payload.variants : [];
+    // `client.variants` already answers with the list itself.
+    const variants = await client.variants(trackId);
+    return Array.isArray(variants) ? variants : [];
   } catch {
     return [];
   }
@@ -615,6 +616,7 @@ export async function inviteFriendsToRoom(room) {
   const client = currentClient();
   if (!client || !roomIdOf(room)) return;
   const pending = new Set();
+  const invited = new Set();
   const rows = new Map();
   const list = h("div", { class: "list" }, loadingState("Loading friends…"));
   const search = h("input", { class: "input", type: "search", placeholder: "Search friends", "aria-label": "Search friends", disabled: true });

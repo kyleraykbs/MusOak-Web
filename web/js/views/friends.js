@@ -259,7 +259,9 @@ function loadSearch() {
     searchStatus,
     searchResults
   );
-  reload = () => runSearch(true);
+  // A refresh from outside - the bell's poll, a friend accepting - is quiet:
+  // the results already on screen stay until the new ones replace them.
+  reload = () => runSearch(true, { quiet: true });
   searchInput.addEventListener("input", debounce(() => runSearch(false), TYPING_PAUSE_MS));
   searchInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") runSearch(true);
@@ -277,7 +279,7 @@ function searchExtras(client, user) {
   return label ? [h("span", { class: "subtitle", text: label })] : [];
 }
 
-async function runSearch(force = false) {
+async function runSearch(force = false, { quiet = false } = {}) {
   if (!searchInput || !searchResults || !searchStatus) return;
   const client = currentClient();
   const wanted = searchInput.value.trim();
@@ -296,8 +298,12 @@ async function runSearch(force = false) {
   // An empty box asks for everybody. A server small enough to answer lists the
   // people on it, which is what finding somebody you have not met needs; a
   // larger one answers with nothing rather than a page that reads as empty.
-  searchStatus.textContent = wanted ? `Looking for \u201c${wanted}\u201d\u2026` : "Looking…";
-  mount(searchResults, h("div", { class: "loading-panel friends-search-loading" }, skeletonRows(4), h("span", { class: "loading-caption", text: "Searching people…" })));
+  // A refresh of what is already shown keeps it there while it asks: skeletons
+  // over a list somebody is reading are a flash every thirty seconds.
+  if (!quiet || !searchResults.childElementCount) {
+    searchStatus.textContent = wanted ? `Looking for \u201c${wanted}\u201d\u2026` : "Looking…";
+    mount(searchResults, h("div", { class: "loading-panel friends-search-loading" }, skeletonRows(4), h("span", { class: "loading-caption", text: "Searching people…" })));
+  }
   let users = [];
   let directory = false;
   try {

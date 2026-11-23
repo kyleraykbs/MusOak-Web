@@ -29,3 +29,23 @@ test("history view module loads after shaping entries in paint", async () => {
   assert.equal(typeof history.playCountLabel, "function");
   assert.equal(typeof history.playedLengthLabel, "function");
 });
+
+// The rows are worked out apart from the toolbar, so a keystroke can redraw
+// them without rebuilding the field it was typed into.
+test("the history search narrows the tab it is on, by title or artist", async () => {
+  const { historyRows } = await import("../views/history.js");
+  const recent = [
+    { track: { id: "a", title: "Blue Monday", artists: ["New Order"] }, playedMs: 60_000 },
+    { track: { id: "b", title: "Temptation", artists: ["New Order"] }, playedMs: 5_000 },
+    { track: { id: "c", title: "Blue", artists: ["Joni Mitchell"] }, playedMs: 5_000 },
+  ];
+  const mostPlayed = [{ track: { id: "c", title: "Blue", artists: ["Joni Mitchell"] }, plays: 3 }];
+  const titles = (rows) => rows.map((row) => row.track.title);
+
+  assert.deepEqual(titles(historyRows({ mode: "recent", recent, mostPlayed, query: "" })), ["Blue Monday", "Temptation", "Blue"]);
+  assert.deepEqual(titles(historyRows({ mode: "recent", recent, mostPlayed, query: "  BLUE " })), ["Blue Monday", "Blue"]);
+  assert.deepEqual(titles(historyRows({ mode: "recent", recent, mostPlayed, query: "new order" })), ["Blue Monday", "Temptation"]);
+  const top = historyRows({ mode: "top", recent, mostPlayed, query: "" });
+  assert.deepEqual(top.map((row) => row.detail), ["3 plays"]);
+  assert.equal(historyRows({ mode: "recent", recent, mostPlayed, query: "" })[0].detail, "1:00 played");
+});

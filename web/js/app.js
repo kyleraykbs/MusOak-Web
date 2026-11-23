@@ -13,6 +13,7 @@ import {
 } from "./state.js";
 import { Client, isTimeout, randomId } from "./client.js";
 import { linkedItem } from "./links.js";
+import { forgetPlatforms } from "./platforms.js";
 import { enterRoom, rejoinRoom, roomsTabTarget } from "./rooms-state.js";
 
 const views = new Map();
@@ -182,6 +183,15 @@ export { on, emit, toast };
 
 export async function boot() {
   loadLocal();
+  // Where this tab was, from the tab's own history entry: the stored view is
+  // only a name, shared by every tab, and a detail page without its
+  // parameters is "that link does not name an album". A reload keeps the
+  // entry, so it lands back on the album, artist or playlist it was showing.
+  const route = typeof history === "undefined" ? null : history.state;
+  if (route && typeof route.view === "string" && route.view) {
+    state.view = route.view;
+    state.viewParams = route.params && typeof route.params === "object" ? route.params : {};
+  }
   // The deployment's config, from the last run when there is one. Waiting on
   // this round trip before painting is a page that sits empty for as long as
   // the network takes to say something it already said last time - so when the
@@ -227,8 +237,13 @@ export async function boot() {
     await refreshMe();
     startNotifications();
     await restorePlayback();
-    await restoreRoom();
-    maybeLoginPopup();
+    // The room question waits for a person, and nothing below waits for it: a
+    // dialog left unanswered used to hold up the shared link, the server's
+    // light, the service worker and everything else this function still has to
+    // start. The sign-in popup follows the answer so the two do not stack.
+    void restoreRoom()
+      .catch((error) => console.warn("could not offer the last room", error))
+      .then(maybeLoginPopup);
   }
 
   // A share link names one song, album or artist. It is read after the session
@@ -238,7 +253,16 @@ export async function boot() {
 
   // The server's state, from the client's own calls and a slow poll between
   // them: a light that only changes when something asked is a light that lies.
-  window.addEventListener("musoak:reachable", (event) => markReachable(event?.detail?.ok));
+  window.addEventListener("musoak:reachable", (event) => {
+    // Every client says whether its own backend answered, and the Import page
+    // reads another server through one: that server being down is not this
+    // one being down.
+    const about = event?.detail?.server;
+    if (about && about !== state.server) return;
+    markReachable(event?.detail?.ok);
+  });
+  // What one backend has enabled is not what the next one has.
+  on("server-changed", () => forgetPlatforms());
   window.addEventListener("online", () => markReachable(true));
   window.addEventListener("offline", () => markReachable(false));
   window.addEventListener("focus", () => checkServer());
@@ -378,13 +402,8 @@ function askJoin(title, body, { confirm = "Join", cancel = "Not now" } = {}) {
     const done = (value) => {
       if (settled) return;
       settled = true;
-      document.removeEventListener("keydown", onKey);
       resolve(value);
     };
-    const onKey = (event) => {
-      if (event.key === "Escape") done(false);
-    };
-    document.addEventListener("keydown", onKey);
     dialog({
       title,
       body,
@@ -392,6 +411,9 @@ function askJoin(title, body, { confirm = "Join", cancel = "Not now" } = {}) {
         { label: cancel, onClick: () => done(false) },
         { label: confirm, class: "suggested", onClick: () => done(true) },
       ],
+      // Escape and a click beside the dialog close it without pressing either
+      // button, and both are "no".
+      onClose: () => done(false),
     });
   });
 }
@@ -461,7 +483,12 @@ function landingView() {
   // A view whose module does not carry its name: the room is registered by the
   // Rooms module, and an artist or an album page by the catalog. A reload on
   // one of those has to ask for that module first, or it lands on nothing.
-  const owner = { room: "./views/rooms.js", artist: "./views/catalog.js", album: "./views/catalog.js" };
+  const owner = {
+    room: "./views/rooms.js",
+    artist: "./views/catalog.js",
+    album: "./views/catalog.js",
+    providerPlaylist: "./views/provider-playlist.js",
+  };
   return owner[state.view] || VIEW_MODULES[0];
 }
 
@@ -665,15 +692,6 @@ function wireQueueDrawer() {
     }
   });
 }
-/** An open drawer follows the queue; a closed one has nothing to follow. */
-function followPlayerQueue() {
-  for (const event of ["queue-changed", "track-changed"]) {
-    playerModule?.player?.on?.(event, () => {
-      if (layout?.drawer && !layout.drawer.hidden) fillQueueDrawer();
-    });
-  }
-}
-
 /** Scroll the tab strip by about a screenful, the way the arrows do. */
 function scrollNav(direction) {
   if (!layout) return;
@@ -764,12 +782,43 @@ function updateNavEdges() {
   indicator.style.left = `${travel.toFixed(2)}%`;
 }
 
+/**
+ * Mark the song that is playing in every list that shows it.
+ *
+ * One rule, rewritten when the track changes, rather than a pass over the rows:
+ * every song row carries its track's id (`data-track-id`), so a playlist, an
+ * album or a search drawn after the change is marked the moment it appears,
+ * and nothing has to know which views are open. The colour is theme.css's.
+ */
+export function markNowPlaying(track) {
+  if (typeof document === "undefined") return;
+  let style = document.getElementById("now-playing-rule");
+  if (!style) {
+    style = h("style", { id: "now-playing-rule" });
+    document.head.appendChild(style);
+  }
+  const id = String(track?.id || "");
+  const escaped = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(id) : id.replace(/["\\]/g, "");
+  style.textContent = id
+    ? `.row[data-track-id="${escaped}"] .title { color: var(--now-playing); }`
+    : "";
+  // The tab says what is on, so a page behind twenty others can be found by
+  // the song in it.
+  const artists = Array.isArray(track?.artists) ? track.artists.filter(Boolean).join(", ") : "";
+  document.title = id && track?.title ? `${track.title}${artists ? ` \u2014 ${artists}` : ""} \u00b7 MusOak` : "MusOak";
+}
+
 async function mountPlayer() {
   try {
     const module = await import("./player.js");
     playerModule = module;
     module.mountPlayer?.(layout.player);
-    followPlayerQueue();
+    module.player?.on?.("track-changed", markNowPlaying);
+    markNowPlaying(module.player?.current?.());
+    // The drawer needs no following from here: the queue view repaints every
+    // sheet it has drawn, the drawer's among them, and drawing it afresh on
+    // each change is what pulled the list back to the playing row under a
+    // thumb that had scrolled away from it.
   } catch (error) {
     console.warn("player unavailable", error);
     mount(layout.player, h("div", { class: "row" }, h("span", { class: "subtitle", text: "player unavailable" })));
@@ -789,6 +838,9 @@ async function mountPlayer() {
  */
 export async function restorePlayback() {
   if (!client || !isSignedIn()) return null;
+  // The player arrives as its own module, and a boot that gets here first used
+  // to find nothing to restore into and silently pick nothing up.
+  await playerReady;
   const restore = playerModule?.player?.restorePlayback;
   if (typeof restore !== "function") return null;
   try {
@@ -814,6 +866,7 @@ async function openSharedLink() {
     // The other tabs load behind the first paint, so the page an album or
     // artist link names may not be registered yet.
     await importView("./views/catalog.js");
+    forgetSharedLink();
     navigate(shared.kind, { id: shared.id });
     return true;
   }
@@ -825,6 +878,7 @@ async function openSharedLink() {
     if (!track?.id) throw new Error("that song could not be read");
     player.setContext({ playlistId: "" });
     player.loadPaused([track], 0);
+    forgetSharedLink();
     toast(`Shared song: ${track.title || "a song"}`);
     return true;
   } catch (error) {
@@ -834,6 +888,31 @@ async function openSharedLink() {
     );
     return false;
   }
+}
+
+/**
+ * Take the share parameter off the address once it has been acted on.
+ *
+ * The router never changes the address, so the parameter stayed for the life
+ * of the tab and was acted on again by every reload: a queue built since was
+ * replaced by the one shared song, and an album link dragged the page back to
+ * that album. A link is opened once.
+ */
+function forgetSharedLink() {
+  if (typeof history === "undefined" || typeof location === "undefined") return;
+  let url;
+  try {
+    url = new URL(location.href);
+  } catch {
+    return;
+  }
+  let named = false;
+  for (const kind of ["track", "album", "artist"]) {
+    if (!url.searchParams.has(kind)) continue;
+    url.searchParams.delete(kind);
+    named = true;
+  }
+  if (named) history.replaceState(history.state, "", url.href);
 }
 
 function renderBrand() {
@@ -1693,6 +1772,40 @@ export function isTypingTarget(element) {
   return !NON_TYPING_INPUTS.has(type);
 }
 
+/**
+ * Whether a key belongs to the control the keyboard is on.
+ *
+ * A control clicked with the mouse keeps focus, and space after that is the
+ * player's: that is the rule above, and why clicking the seek no longer made
+ * space do nothing. A control reached with Tab is different - the person is
+ * driving the page by keyboard, and space on a focused button has to press that
+ * button, and an arrow on a focused slider has to move it. The browser already
+ * tells the two apart: only keyboard focus matches `:focus-visible`.
+ */
+export function keyboardControlKey(event) {
+  const target = event?.target;
+  if (!target || typeof target.matches !== "function") return false;
+  let keyboard = false;
+  try {
+    keyboard = target.matches(":focus-visible");
+  } catch {
+    return false;
+  }
+  if (!keyboard) return false;
+  const type = String(target.getAttribute?.("type") || "").toLowerCase();
+  const role = String(target.getAttribute?.("role") || "").toLowerCase();
+  const tag = String(target.tagName || "").toUpperCase();
+  if (event.key === " ") {
+    return tag === "BUTTON" || tag === "A" || tag === "SUMMARY" || role === "button" ||
+      role === "menuitem" || role === "tab" || type === "checkbox" || type === "radio";
+  }
+  if (event.key?.startsWith?.("Arrow")) {
+    return type === "range" || role === "slider" || role === "menu" || role === "menuitem" ||
+      role === "tablist" || role === "tab" || role === "listbox";
+  }
+  return false;
+}
+
 /** Input types that never take a space: the ones that are controls, not fields. */
 const NON_TYPING_INPUTS = new Set([
   "range", "checkbox", "radio", "button", "submit", "reset",
@@ -1717,6 +1830,7 @@ const NON_TYPING_INPUTS = new Set([
 export function transportCommand(event) {
   if (!event || isTypingTarget(event.target)) return "";
   if (event.ctrlKey || event.metaKey || event.altKey) return "";
+  if (keyboardControlKey(event)) return "";
   switch (event.key) {
     case " ":
       return "toggle-play";

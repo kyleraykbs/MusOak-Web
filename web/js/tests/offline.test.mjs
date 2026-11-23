@@ -37,6 +37,18 @@ test("the key survives the percent-encoding the router needs", () => {
   assert.equal(key, `${ROUTER}/api/v1/media/v1?ms=${encodeURIComponent("https://music.example.com/sub")}`);
 });
 
+test("a kept song's entry can be named from its record alone", async () => {
+  const { keptMediaKey } = await import("../offline.js");
+  const { Client } = await import("../client.js");
+  // Taking a playlist off this machine has no client for the backend it was
+  // kept from: the key has to come out the same from the record's own server.
+  for (const server of [HERE, "https://music.example.com/sub", "http://10.0.0.5:4420"]) {
+    const client = new Client({ server });
+    assert.equal(keptMediaKey(server, "v 1", ROUTER), mediaCacheKey(client.mediaUrl("v 1"), ROUTER));
+  }
+  assert.notEqual(keptMediaKey(HERE, "v1", ROUTER), keptMediaKey(ELSEWHERE, "v1", ROUTER));
+});
+
 test("a kept set adds up across its songs", () => {
   assert.equal(totalBytes([{ bytes: 100 }, { bytes: 250 }]), 350);
   assert.equal(totalBytes([100, 250]), 350);

@@ -54,7 +54,11 @@ DECISIONS.md, same date). Left open by it:
 - [ ] `internal/web/server.go`: one strong ETag is sent for the gzip and the
       identity representation of the same asset.
 
-## Open on the phone, 2026-10-19, updated 2026-10-27
+## Open on the phone, 2026-10-19, updated 2026-11-19
+
+The hold was a 0.1 s clip until 2026-11-19, which Chromium does not count as
+playback at all (see DECISIONS); the list below has not been run since it became
+ten seconds and pre-armed.
 
 The card can only be watched on a device: Firefox has no media session, and
 headless has no notification. The silent player (`_holdSession`) is in, so Kyle
@@ -79,3 +83,25 @@ is not one of the waits with a deadline. Every wait in it has one (25-30 s), so
 the block is a blocking Selenium call, most likely `ui.reload()` on a page with a
 room's modal open. Reproduce with `pytest --timeout` (pytest-timeout is not wired
 into `nix run .#e2e` yet) or by wrapping each step in a print.
+
+## Feature ideas, 2026-11-20
+
+Not started; ordered by value for the effort.
+
+- [x] Loudness levelling (2026-11-20; still to do: the CLI's mpv, the Discord bot, and kept-playlist files): measure each file once with ffmpeg `loudnorm`/`ebur128`
+      at download (server side), store the gain with the media row, and apply it
+      on the element. Songs from different providers jump in volume today.
+- [ ] Sleep timer on the playbar: stop after N minutes or at the end of this song.
+- [ ] Gapless/crossfade between songs that are already in memory (both copies are
+      blobs; a second element or Web Audio can overlap the last seconds).
+- [ ] Per-member room secret, issued at join and required on commands and the
+      socket - the only real fix for guests acting as each other (server, web,
+      GTK client and the Discord bot all change).
+- [ ] Scrobbling to ListenBrainz/Last.fm from `play_history` (server side, opt-in
+      per account).
+- [ ] "Made for you" stations from the account's own history (top tracks as radio
+      seeds), refreshed daily.
+- [ ] Kept playlists sync on Wi-Fi only (`navigator.connection.type` where it
+      exists), with a setting.
+- [ ] Reactions in rooms (a short emoji burst on the now-playing card) - cheap on
+      the existing event bus, and it makes a room feel shared.

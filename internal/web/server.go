@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"crypto/sha256"
@@ -249,11 +250,16 @@ func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 			Value:    body.Token,
 			Path:     "/",
 			SameSite: http.SameSiteLaxMode,
-			// The token is only ever forwarded to the chosen backend, never
-			// read by script: a stolen script cannot read it back.
+			// The token is only ever forwarded to the backend it is for.
 			HttpOnly: true,
 			MaxAge:   30 * 24 * 60 * 60,
 		})
+	} else {
+		// No token is a session without one - signed out, or a backend this
+		// browser is only a guest on - and the last token must not outlive it:
+		// it would go on signing media requests, and to whichever backend the
+		// server cookie now names.
+		http.SetCookie(w, &http.Cookie{Name: tokenCookie, Value: "", Path: "/", MaxAge: -1})
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -390,6 +396,14 @@ func (s *Server) handleSite(w http.ResponseWriter, r *http.Request) {
 		// and it is the kind of file worth packing.
 		entry, err = s.asset(route, gzip && packable(route))
 		page = err != nil
+		// A name with a suffix that holds nothing is a file that is not there,
+		// and says so. Answered with the shell it was a module that "loaded" as
+		// a page of markup - a syntax error in place of a 404 - and a service
+		// worker keeping that answer as the file.
+		if err != nil && path.Ext(route) != "" {
+			http.NotFound(w, r)
+			return
+		}
 	}
 	if page {
 		// The page is built for the request that asked for it - it carries the
@@ -588,7 +602,11 @@ func digestSite(fsys fs.FS) string {
 func (s *Server) serveAsset(w http.ResponseWriter, r *http.Request, name string, entry assetEntry) {
 	w.Header().Set("ETag", entry.tag)
 	w.Header().Set("Content-Type", assetType(name))
-	if r.URL.Query().Has("v") {
+	// Only the stamp this revision hands out is a promise about these bytes: a
+	// URL carrying an older one - a page still open across a deploy - or one
+	// somebody made up is answered with today's file, and kept for a year under
+	// that name it is the wrong file for a year.
+	if stamp := r.URL.Query().Get("v"); stamp != "" && stamp == s.assetStamp() {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	}
 	if matchesETag(r.Header.Get("If-None-Match"), entry.tag) {
@@ -681,14 +699,38 @@ var dialer = &net.Dialer{
 
 func (s *Server) dialGuard(ctx context.Context, network, address string) (net.Conn, error) {
 	if s.cfg.BlockPrivateServers {
-		host, _, err := net.SplitHostPort(address)
-		if err == nil {
-			if ip := net.ParseIP(host); ip != nil && isPrivate(ip) {
-				return nil, fmt.Errorf("web: %s is on a private range", host)
-			}
-		}
+		return guardedDialer.DialContext(ctx, network, address)
 	}
 	return dialer.DialContext(ctx, network, address)
+}
+
+// guardedDialer is the dialer with the private-range check on the socket.
+//
+// The address a transport hands over is the name it was given, not where the
+// name leads: a check made on that only ever refused the hosts spelled as
+// numbers, and any name pointed at 127.0.0.1 or 10.x walked straight in.
+// Control runs after resolution, once for each address a connection is tried
+// on, so what it reads is the address the socket is about to be opened to.
+var guardedDialer = &net.Dialer{
+	Timeout:   dialer.Timeout,
+	KeepAlive: dialer.KeepAlive,
+	Control:   refusePrivate,
+}
+
+func refusePrivate(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("web: cannot read the address being dialled: %w", err)
+	}
+	// An IPv6 link-local address carries its interface after a percent sign.
+	if zone := strings.IndexByte(host, '%'); zone >= 0 {
+		host = host[:zone]
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || isPrivate(ip) {
+		return fmt.Errorf("web: %s is on a private range", host)
+	}
+	return nil
 }
 
 func isPrivate(ip net.IP) bool {

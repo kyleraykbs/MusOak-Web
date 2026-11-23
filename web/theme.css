@@ -87,6 +87,8 @@
   --aqua: #8ec07c;
   --aqua-dim: #689d6a;
   --orange: #fe8019;
+  /* The title of the song that is playing, in every list that shows it. */
+  --now-playing: var(--orange);
   --orange-dim: #d65d0e;
 
   --radius: 8px;
@@ -448,6 +450,11 @@ button, input, select, textarea {
   padding: 9px 12px;
   border-bottom: 1px solid var(--bg1);
 }
+/* A row off screen is laid out and painted only when it comes near: a playlist,
+   a queue or an artist's songs of a thousand rows costs what the screenful
+   costs. `auto` keeps a row's real height once it has been drawn, so the
+   scrollbar settles to the truth. */
+.list > .row { content-visibility: auto; contain-intrinsic-size: auto 56px; }
 .row:last-child { border-bottom: 0; }
 .row:hover { background: var(--bg1); }
 .row.clickable { cursor: pointer; }

@@ -1,5 +1,52 @@
 # Decisions
 
+## 2026-11-20 Songs are levelled down to -14 LUFS from the server's measurement
+- Decision: the server measures each stored file once (ffmpeg ebur128, on
+  download and import, and an hourly backlog pass) and sends it as
+  `X-Loudness-LUFS` with the file. `_fetchOffline` keeps it on the copy, and the
+  element's volume is the fader's `volumeGain` times `levelGain(lufs)`: down to
+  -14 LUFS, never up (an element stops at 1; Web Audio would put every song
+  through the graph the phone's background playback depends on), never below a
+  quarter. "Even out loudness" on the account page turns it off
+  (`state.levelLoudness`). A kept playlist's file played by the service worker
+  is not levelled yet.
+- Why: songs from different providers are mastered several dB apart, and the
+  volume jumped at every change.
+- Reversible: yes.
+
+## 2026-11-20 A control reached by keyboard keeps space and the arrows
+- Decision: `keyboardControlKey` hands space to a `:focus-visible` button, link,
+  checkbox or `role=button` row, and the arrows to a `:focus-visible` slider or
+  menu; letters stay the player's everywhere but fields. Clicked rows are
+  focusable (`dom.js` `reachable`), and the app ships a manifest so a phone can
+  install it.
+- Why: with the old rule a keyboard user could not press a button with space;
+  `:focus-visible` keeps the mouse case (click the seek, press space) as it was.
+- Reversible: yes.
+
+## 2026-11-19 The silent hold is ten seconds long and starts before the song ends
+- Decision: the clip behind `player._holdSession()` is `SESSION_HOLD_CLIP_SECONDS`
+  (10 s) of silence, looped, instead of a tenth of a second. `_armSessionHold`
+  starts it from `timeupdate` once the song on the element has three seconds
+  left and another follows; the real element's `playing` releases it as before.
+  A hold nobody renews lets go after two minutes. The lock screen's play and
+  pause are `resume()` and `pause()` (or the room's own commands), not
+  `toggle()`, and `setPositionState` is sent only when the lock screen's own
+  clock would be wrong rather than on every `timeupdate`.
+- Why: Chromium sorts players by duration. One of five seconds or less is
+  "transient": it gets ducking audio focus and no media notification, and a
+  session whose only player is transient is not controllable - so the 0.1 s
+  loop of 2026-10-27 and 2026-10-31 could not hold the card, whatever it was
+  doing. And a player leaves the session when its file ends, before the page
+  hears `ended`, so a hold started in the `ended` handler always left one moment
+  with nothing in the session: the card going and coming back at every song,
+  which Kyle reported on Brave, and playback not surviving past the songs that
+  were preloaded. Started before the end, the session never empties.
+- Not verified on a device: reasoned from Chromium's media session code and the
+  documented five-second rule, and checked only against fake elements. The
+  2026-10-27 checklist in TODO.md is still the test.
+- Reversible: yes.
+
 ## 2026-10-31 The silent session hold loops until the song starts
 - Decision: `player._holdSession()` keeps a detached silent element playing in a
   loop across a load, a refused play, or a room follower's gap. `_releaseSessionHold()`

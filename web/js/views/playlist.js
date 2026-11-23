@@ -328,6 +328,7 @@ export function trackRow({ track, position, client, onActivate, menu = [], trail
     "div",
     {
       class: "row clickable",
+      "data-track-id": track.id || null,
       onclick: (event) => {
         if (event.target.closest?.("button")) return;
         onActivate?.();

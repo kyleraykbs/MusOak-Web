@@ -692,6 +692,9 @@ async function oneFile({ client, file, known }) {
     match = known;
     if (!title) ({ title, artists } = guessMetadata(file.name));
   } else {
+    // The file's own name is all there is to go on: it fills the fields, and
+    // it is what the automatic match searches for.
+    ({ title, artists } = guessMetadata(file.name));
     let groups = [];
     try {
       ({ groups } = await client.search([title, ...artists].join(" "), 5));

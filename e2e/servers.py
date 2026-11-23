@@ -303,6 +303,11 @@ class Backend:
         os.makedirs(self.media_dir, exist_ok=True)
         self.config_path = os.path.join(work_dir, "musoakd.json")
         self._config = {"storageDir": self.storage_dir, **(config or {})}
+        # The suite seeds songs by importing files from media-in, and a daemon
+        # imports only from directories its config names.
+        media = dict(self._config.get("media") or {"quotaMB": 0, "prefetchPlaylists": True})
+        media["importDirs"] = [self.media_dir]
+        self._config["media"] = media
 
         def spawn(port):
             self._config["listen"] = f"127.0.0.1:{port}"

@@ -45,6 +45,9 @@ export const state = {
   /** How many songs *after* the one playing this device downloads ahead of the
    *  playhead. It fetches them one at a time, in queue order (player.js). */
   preloadAhead: 5,
+  /** Whether songs are played at one loudness: each file's measured level
+   *  (the server's X-Loudness-LUFS) turns a loud master down to the rest. */
+  levelLoudness: true,
   /** GET /ui/config: what this deployment offers. */
   config: { defaultServer: "", loginPopup: false, servers: [], allowCustomServer: true },
   /** Backends this browser knows: the configured ones plus what users added. */
@@ -215,6 +218,7 @@ export function loadLocal() {
     state.preloadAhead = Number.isFinite(ahead)
       ? Math.min(PRELOAD_MAX_CEILING, Math.max(0, Math.floor(ahead)))
       : DEFAULT_PRELOAD_AHEAD;
+    state.levelLoudness = stored.levelLoudness !== false;
     state.sessions = stored.sessions && typeof stored.sessions === "object" ? stored.sessions : {};
     state.server = typeof stored.server === "string" ? stored.server : "";
     state.view = typeof stored.view === "string" ? stored.view : "";
@@ -278,6 +282,7 @@ function writeLocal() {
     iconVersions: state.iconVersions || {},
     searchKind: state.searchKind || "tracks",
     preloadAhead: preloadAhead(),
+    levelLoudness: state.levelLoudness !== false,
     sessions: state.sessions,
     view: state.view,
     room: state.room,

@@ -167,6 +167,32 @@ test("a drop finds its entry whether the list carries keys or ids", async () => 
   assert.equal(queue.entryForKey(undefined, "one"), null);
 });
 
+test("a drop on the second copy of a song lands on that copy", async () => {
+  const queue = await import("../views/queue.js");
+  // The same song queued twice: two rows, one track id, so one data-key.
+  const entries = [{ key: "a", index: 0 }, { key: "b", index: 1 }, { key: "a", index: 2 }, { key: "c", index: 3 }];
+  const rows = entries.map((entry) => {
+    const row = document.createElement("div");
+    row.dataset.key = entry.key;
+    queue.listDrag({ row, entry, entries, onDrop() {} });
+    return row;
+  });
+
+  assert.equal(queue.entryForKey(entries, "a"), entries[0], "the key alone can only ever find the first");
+  assert.equal(queue.entryForRow(entries, rows[2]), entries[2], "the row knows which of the two it is");
+  assert.equal(queue.entryForRow(entries, rows[0]), entries[0]);
+
+  // A row from some other list is not one of these entries: its key decides.
+  const stranger = document.createElement("div");
+  stranger.dataset.key = "c";
+  queue.listDrag({ row: stranger, entry: { key: "c" }, entries: [], onDrop() {} });
+  assert.equal(queue.entryForRow(entries, stranger), entries[3]);
+  const unknown = document.createElement("div");
+  unknown.dataset.key = "zzz";
+  assert.equal(queue.entryForRow(entries, unknown), null);
+  assert.equal(queue.entryForRow(entries, null), null);
+});
+
 test("a list without a grip still drags by its row", async () => {
   const queue = await import("../views/queue.js");
   const row = document.createElement("div");

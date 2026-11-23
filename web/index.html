@@ -32,6 +32,11 @@
          anything a page draws. -->
     <link rel="icon" type="image/png" href="icon-64.png" />
     <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+    <!-- Installable: added to a phone's home screen it opens as its own app,
+         full screen, with the bar in the app's colour rather than the browser's.
+         Relative, so a deployment under a subpath installs as itself. -->
+    <link rel="manifest" href="manifest.json" />
+    <meta name="theme-color" content="#282828" />
   </head>
   <body>
     <div id="app" class="app"></div>

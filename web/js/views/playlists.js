@@ -13,7 +13,7 @@ import {
 import { isSignedIn } from "../state.js";
 import * as offline from "../offline.js";
 import { player } from "../player.js";
-import { dragHandle, listDrag } from "./queue.js";
+import { dragHandle, listDrag, shuffleItems } from "./queue.js";
 import {
   AUDIO_ACCEPT, audioContentType, guessMetadata, isAudioFile, pickFolder, pickFiles,
   uploadSizeError,
@@ -157,7 +157,7 @@ async function play(playlist, shuffle = false) {
     toast(`${playlist.name || "That playlist"} has no tracks yet.`);
     return;
   }
-  if (shuffle) tracks = [...tracks].sort(() => Math.random() - 0.5);
+  if (shuffle) tracks = shuffleItems(tracks);
   player.play(tracks, 0);
 }
 
@@ -183,7 +183,7 @@ async function playKept(playlist, shuffle = false) {
     toast(offline.keptGoneMessage(playlist.name || kept.name, kept.missing, tracks.length + kept.missing.length));
   }
   player.setContext({ playlistId: playlist.id });
-  player.play(shuffle ? [...tracks].sort(() => Math.random() - 0.5) : tracks, 0);
+  player.play(shuffle ? shuffleItems(tracks) : tracks, 0);
   return true;
 }
 
@@ -635,23 +635,36 @@ function importDialog() {
       for (;;) {
         await new Promise((resolve) => setTimeout(resolve, 900));
         const job = await client.importStatus(jobId);
+        // The box may have been closed meanwhile. The import is the server's
+        // job and carries on there, so its end is still worth saying - but a
+        // page somebody has moved on from is not taken over to show it.
+        const watched = status.isConnected;
         if (job.state === "running") {
-          status.className = "login-status";
-          status.textContent = job.total
-            ? `Finding each song: ${job.done} of ${job.total}…`
-            : "Reading the playlist…";
+          if (watched) {
+            status.className = "login-status";
+            status.textContent = job.total
+              ? `Finding each song: ${job.done} of ${job.total}…`
+              : "Reading the playlist…";
+          }
           continue;
         }
         if (job.state !== "done") throw new Error(job.error || "the import failed");
         const playlist = job.playlist || {};
         toast(`Imported ${job.done || 0} track(s), ${job.playable || 0} ready to play`);
-        await load();
-        if (playlist.id) navigate("playlist", { id: playlist.id });
+        if (watched || listEl?.isConnected) await load();
+        if (watched && playlist.id) navigate("playlist", { id: playlist.id });
         return undefined;
       }
     } catch (error) {
-      status.className = "login-status error";
-      status.textContent = String(error?.message || error);
+      const message = String(error?.message || error);
+      if (status.isConnected) {
+        status.className = "login-status error";
+        status.textContent = message;
+      } else {
+        // Nobody is looking at the box any more: the failure is said where
+        // they are instead of into a node that is off the page.
+        banner(message, "error");
+      }
       busy = false;
       return false;
     }

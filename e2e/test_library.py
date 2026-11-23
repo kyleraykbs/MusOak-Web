@@ -572,3 +572,47 @@ def test_the_same_song_plays_twice_without_a_reload_storm(ui, backend, media_fac
     )
     assert_clock_moves(ui, "the song on its second play")
     ui.assert_no_errors("playing the same song again")
+
+def test_a_loud_song_is_levelled_and_the_tab_names_it(ui, backend, media_factory):
+    """A song mastered loud plays turned down to the rest, the account's switch
+    turns that off, and the tab says what is playing.
+
+    The server measures a file's loudness as it arrives and sends it with the
+    file; the player turns anything louder than -14 LUFS down to it. A plain test
+    tone is quieter than that and would be left alone, so this one is made 10 dB
+    hotter: about -12 LUFS, which plays at roughly three quarters.
+    """
+    tag = uuid.uuid4().hex[:6]
+    title = f"Loud {tag}"
+    path = os.path.join(backend.media_dir, f"loud-{tag}.ogg")
+    subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+         "-f", "lavfi", "-i", "sine=frequency=500:duration=7", "-af", "volume=10dB",
+         "-c:a", "libopus", path],
+        check=True,
+    )
+    account = Account(backend)
+    upload_via_api(backend, account, path, title)
+    enter(ui, account)
+
+    play_from_manage(ui, title)
+    wait_sounding(ui, title, 7)
+
+    element_volume = "return document.querySelector('audio[data-e2e=audio]').volume;"
+    levelled = ui.wait(
+        lambda: (lambda volume: volume if volume is not None and volume < 0.95 else None)(ui.js(element_volume)),
+        "the loud song was not turned down",
+        timeout=10.0,
+    )
+    assert levelled > 0.5, f"the loud song was turned down to {levelled:.2f}, far past the 2 dB it is over"
+
+    assert title in (ui.js("return document.title;") or ""), "the tab does not name the song that is playing"
+
+    ui.click_tab("Account")
+    ui.click("input[aria-describedby='account-level-note']")
+    ui.wait(
+        lambda: (lambda volume: volume if volume is not None and volume > 0.99 else None)(ui.js(element_volume)),
+        "turning levelling off did not put the song back to full volume",
+        timeout=10.0,
+    )
+    ui.assert_no_errors("levelling a loud song")

@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 
 import {
   albumLine, artistLine, documentKey, mediaProgressLabel, mediaStateLabel, nextIndex, OFFLINE_KEEP, OFFLINE_MAX_BYTES,
+  SESSION_HOLD_CLIP_SECONDS, levelGain, LEVEL_TARGET_LUFS,
   playbackDocument,
   memorySource, playbackStateFrom, prefetchWindow, queueFromDocument, readMedia, shouldSavePlayback, shuffleWhole, player,
   silenceWav, sourceStalled, volumeGain,
@@ -199,20 +200,28 @@ test("nextIndex walks the queue and stops at its end", () => {
   assert.equal(nextIndex([], -1), -1);
 });
 
-test("nextIndex with shuffle picks another track, and still ends", () => {
-  const list = queue("a", "b", "c");
-  const original = Math.random;
+test("a shuffled queue is played in the order it shows", () => {
+  // Shuffling reorders the queue itself, so what follows a song is the next row
+  // - the one that was fetched ahead - and never a second, random pick that
+  // could land on a song already heard.
+  const saved = { queue: player.queue, index: player._index, room: player._room, jumpTo: player.jumpTo, emit: player._emit, prefetch: player._prefetch };
+  const jumps = [];
   try {
-    Math.random = () => 0;
-    assert.equal(nextIndex(list, 1, true), 0);
-    assert.equal(nextIndex(list, 0, true), 1);
-    Math.random = () => 0.999;
-    assert.equal(nextIndex(list, 1, true), 2);
-    // A queue with nothing else in it still ends instead of repeating itself.
-    assert.equal(nextIndex(queue("only"), 0, true), -1);
-    assert.equal(nextIndex([], 0, true), -1);
+    player._room = null;
+    player._emit = () => {};
+    player._prefetch = () => {};
+    player.jumpTo = (index) => { jumps.push(index); player._index = index; };
+    player.queue = queue("a", "b", "c", "d", "e", "f");
+    player._index = 0;
+    player.shuffleQueue();
+    const order = ids(player.queue);
+    assert.equal(order[0], "a", "the song that is playing keeps its place");
+    for (let step = 0; step < 5; step += 1) player.next();
+    assert.deepEqual(jumps, [1, 2, 3, 4, 5], "every song once, in the order on screen");
+    player.next();
+    assert.equal(jumps.length, 5, "and the queue ends");
   } finally {
-    Math.random = original;
+    Object.assign(player, { queue: saved.queue, _index: saved.index, _room: saved.room, jumpTo: saved.jumpTo, _emit: saved.emit, _prefetch: saved.prefetch });
   }
 });
 
@@ -220,7 +229,6 @@ test("the room host uses the mixed queue locally and keeps duplicate entries dis
   const saved = {
     queue: player.queue,
     index: player._index,
-    shuffle: player._shuffle,
     room: player._room,
     load: player._load,
   };
@@ -252,7 +260,6 @@ test("the room host uses the mixed queue locally and keeps duplicate entries dis
     player._load = saved.load;
     player.queue = saved.queue;
     player._index = saved.index;
-    player._shuffle = saved.shuffle;
     player.setRoom(saved.room);
   }
 });
@@ -2210,7 +2217,6 @@ test("what is still to be downloaded follows a shuffle", async () => {
     active: player._offlineActive,
     fetchOffline: player._fetchOffline,
     room: player._room,
-    shuffle: player._shuffle,
     loading: player._loading,
     ahead: state.preloadAhead,
   };
@@ -2219,7 +2225,6 @@ test("what is still to be downloaded follows a shuffle", async () => {
   try {
     player.setRoom(null);
     state.preloadAhead = 5;
-    player._shuffle = true;
     player._loading = false;
     // Fourteen songs, five preloaded: whatever the shuffle does, the window it
     // lands on has something cold in it to fetch.
@@ -2289,7 +2294,6 @@ test("what is still to be downloaded follows a shuffle", async () => {
     player._fetchOffline = saved.fetchOffline;
     player._loading = saved.loading;
     player.setRoom(saved.room);
-    player._shuffle = saved.shuffle;
   }
 });
 
@@ -3941,5 +3945,189 @@ test("the card is held for the whole of a load, and the old song is not started"
     player._buffering = saved.buffering;
     player._holdSession = saved.hold;
     player._recoverStalled = saved.reset;
+  }
+});
+
+// Chromium counts a player of five seconds or less as a notification sound: it
+// is given transient focus and no card, so a session held by one is not held.
+test("the silent hold is long enough to be counted as playback", () => {
+  assert.ok(SESSION_HOLD_CLIP_SECONDS > 5, "longer than the five seconds a media notification needs");
+  const bytes = silenceWav(SESSION_HOLD_CLIP_SECONDS);
+  assert.equal(bytes.length, 44 + SESSION_HOLD_CLIP_SECONDS * 8000);
+  assert.ok(bytes.slice(44).every((byte) => byte === 0x80), "and all of it is silence");
+});
+
+const fakeSilent = () => ({
+  paused: true, loop: false, plays: 0,
+  play() { this.plays += 1; this.paused = false; return { catch() {} }; },
+  pause() { this.paused = true; },
+});
+
+test("the hold starts before a song ends, when another follows it", () => {
+  const saved = {
+    silent: player._silent, queue: player.queue, index: player._index, room: player._room,
+    loading: player._loading, wanted: player._playingWanted, armed: player._holdArmed,
+  };
+  const silent = fakeSilent();
+  try {
+    player._silent = silent;
+    player._room = null;
+    player._loading = false;
+    player._playingWanted = true;
+    player.queue = queue("a", "b");
+    player._index = 0;
+    const audio = { paused: false, duration: 200, currentTime: 100 };
+
+    player._armSessionHold(audio);
+    assert.equal(silent.paused, true, "mid-song there is nothing to hold");
+
+    audio.currentTime = 198;
+    player._armSessionHold(audio);
+    player._armSessionHold(audio);
+    assert.equal(silent.paused, false, "the session has a second player before the first one leaves it");
+    assert.equal(silent.plays, 1, "started once");
+
+    // A seek back out of the ending is a song with minutes left to play.
+    audio.currentTime = 20;
+    player._armSessionHold(audio);
+    assert.equal(silent.paused, true, "the hold goes when the ending does");
+
+    // The last song has nothing after it: the session ends with the queue.
+    player._index = 1;
+    audio.currentTime = 199;
+    player._armSessionHold(audio);
+    assert.equal(silent.paused, true, "nothing follows, so nothing is held");
+
+    // A pause in the last seconds is a pause.
+    player._index = 0;
+    player._playingWanted = false;
+    player._armSessionHold(audio);
+    assert.equal(silent.paused, true);
+  } finally {
+    player._releaseSessionHold();
+    Object.assign(player, {
+      _silent: saved.silent, queue: saved.queue, _index: saved.index, _room: saved.room,
+      _loading: saved.loading, _playingWanted: saved.wanted, _holdArmed: saved.armed,
+    });
+  }
+});
+
+test("a hold for a load is not stopped by the timeline", () => {
+  const saved = { silent: player._silent, loading: player._loading, armed: player._holdArmed };
+  const silent = fakeSilent();
+  try {
+    player._silent = silent;
+    player._loading = false;
+    player._holdSession();
+    player._armSessionHold({ paused: false, duration: 200, currentTime: 10 });
+    assert.equal(silent.paused, false, "only the hold the ending started is the ending's to stop");
+  } finally {
+    player._releaseSessionHold();
+    Object.assign(player, { _silent: saved.silent, _loading: saved.loading, _holdArmed: saved.armed });
+  }
+});
+
+test("the lock screen's buttons are play and pause, not a toggle", () => {
+  const handlers = new Map();
+  const session = { setActionHandler: (name, run) => handlers.set(name, run) };
+  const navDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  const saved = {
+    room: player._room, wanted: player._playingWanted, resume: player.resume, pause: player.pause,
+  };
+  const calls = [];
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { mediaSession: session, onLine: true } });
+  try {
+    player._installMediaSession();
+    player._room = null;
+    player.resume = () => calls.push("resume");
+    player.pause = () => calls.push("pause");
+
+    // A play the browser refused: the intent is "playing" and nothing sounds.
+    // The press on the card is the gesture that starts it.
+    player._playingWanted = true;
+    handlers.get("play")();
+    assert.deepEqual(calls, ["resume"], "play starts, whatever the page believed");
+
+    player._playingWanted = false;
+    handlers.get("pause")();
+    assert.deepEqual(calls, ["resume", "pause"], "pause pauses, whatever the page believed");
+  } finally {
+    if (navDescriptor) Object.defineProperty(globalThis, "navigator", navDescriptor);
+    else delete globalThis.navigator;
+    Object.assign(player, { _room: saved.room, _playingWanted: saved.wanted, resume: saved.resume, pause: saved.pause });
+  }
+});
+
+test("the lock screen is given a position when its own clock would be wrong", () => {
+  const sent = [];
+  const session = { playbackState: "", setPositionState: (value) => sent.push(value) };
+  const navDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  const saved = {
+    audio: player.audio, loading: player._loading, wanted: player._playingWanted,
+    room: player._room, positionSent: player._positionSent,
+  };
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { mediaSession: session, onLine: true } });
+  try {
+    const audio = { paused: false, ended: false, duration: 200, currentTime: 10 };
+    player.audio = audio;
+    player._room = null;
+    player._loading = false;
+    player._playingWanted = true;
+    player._positionSent = null;
+
+    player._syncMediaSession();
+    player._syncMediaSession();
+    assert.equal(sent.length, 1, "a tick that says what the lock screen already worked out is not sent");
+
+    audio.currentTime = 90;
+    player._syncMediaSession();
+    assert.equal(sent.length, 2, "a seek is");
+    assert.equal(sent[1].position, 90);
+
+    audio.paused = true;
+    player._playingWanted = false;
+    player._syncMediaSession();
+    assert.equal(sent.length, 3, "and so is a stop");
+    assert.equal(session.playbackState, "paused");
+  } finally {
+    if (navDescriptor) Object.defineProperty(globalThis, "navigator", navDescriptor);
+    else delete globalThis.navigator;
+    Object.assign(player, {
+      audio: saved.audio, _loading: saved.loading, _playingWanted: saved.wanted,
+      _room: saved.room, _positionSent: saved.positionSent,
+    });
+  }
+});
+
+// Songs are levelled down to one loudness: a master 6 dB over the target plays
+// at half amplitude, one at or under it is left alone, and an unknown level is
+// played as it is.
+test("levelGain turns loud songs down to the target and nothing up", () => {
+  assert.equal(levelGain(LEVEL_TARGET_LUFS), 1);
+  assert.ok(Math.abs(levelGain(LEVEL_TARGET_LUFS + 6) - Math.pow(10, -6 / 20)) < 1e-12);
+  assert.equal(levelGain(LEVEL_TARGET_LUFS - 8), 1, "a quiet song is not lifted past the element's ceiling");
+  assert.equal(levelGain(null), 1);
+  assert.equal(levelGain("not a number"), 1);
+  assert.equal(levelGain(""), 1);
+  assert.equal(levelGain(10), 0.25, "a wildly hot measurement is not turned down to nothing");
+  assert.equal(levelGain("-8.0"), levelGain(-8), "the header's text reads as its number");
+});
+
+test("the element plays the fader's volume times the song's level, unless levelling is off", () => {
+  const saved = { audio: player.audio, volume: player._volume, level: player._level, on: player._levelOn };
+  try {
+    const audio = { volume: 1 };
+    player.audio = audio;
+    player._volume = 1;
+    player._levelOn = true;
+    player._setLevel(LEVEL_TARGET_LUFS + 6);
+    assert.ok(Math.abs(audio.volume - Math.pow(10, -6 / 20)) < 1e-12);
+    player.setLevelLoudness(false);
+    assert.equal(audio.volume, 1, "off, the song plays as it was mastered");
+    player.setLevelLoudness(true);
+    player._setLevel(null);
+    assert.equal(audio.volume, 1, "a song nobody measured plays as it is");
+  } finally {
+    Object.assign(player, { audio: saved.audio, _volume: saved.volume, _level: saved.level, _levelOn: saved.on });
   }
 });

@@ -194,6 +194,28 @@ const FETCH_RETRY_PAUSE_MS = 700;
 const METADATA_TIMEOUT_MS = 10000;
 const clamp01 = (value) => Math.min(1, Math.max(0, value));
 
+/** How long the silent clip behind `_holdSession` is.
+ *
+ *  The length is the point. Chromium sorts every player by duration: one of
+ *  five seconds or less is a notification sound, is given transient audio focus
+ *  and never gets a media notification, and a session whose only player is one
+ *  of those has no lock-screen card at all (web.dev's Media Session guide: the
+ *  notification is "only shown if the media duration is at least 5 seconds").
+ *  A tenth of a second, looped, was that kind of player - it held nothing. */
+export const SESSION_HOLD_CLIP_SECONDS = 10;
+/** How long before a song's end the silent player is started beside it.
+ *
+ *  The browser takes a player out of the session the moment its file ends,
+ *  before the page has heard `ended`. Starting the hold afterwards leaves the
+ *  session empty for that moment at every song boundary; started just before,
+ *  there is always one player in it. */
+const SESSION_HOLD_LEAD_MS = 3000;
+/** The longest one hold may run without being asked for again. A load renews
+ *  it every few seconds while it waits (`_retryWanted`); a hold nobody renews
+ *  is a wait that ended some other way, and silence must not keep a phone awake
+ *  and a card on its lock screen for the rest of the night. */
+const SESSION_HOLD_MAX_MS = 120000;
+
 /**
  * A WAV of silence: `seconds` of mono 8-bit PCM at 8 kHz, header and all.
  *
@@ -248,6 +270,29 @@ function rangeFillPercent(input, fraction) {
  * step of travel sound like a step - half the bar is half the loudness, not
  * half the voltage. The ends stay exact: full is 0 dB, empty is silence.
  */
+/** The loudness every song is levelled to, in LUFS: what the large streaming
+ *  services play at, so a song sounds here as it does there. */
+export const LEVEL_TARGET_LUFS = -14;
+/** The most a song is turned down for being loud: a file measured absurdly
+ *  hot (or wrongly) is not left near silent. */
+const LEVEL_FLOOR = 0.25;
+
+/**
+ * The factor a song's level is multiplied by to bring it to the target.
+ *
+ * Only ever down. An element's volume stops at 1, so a quiet song cannot be
+ * lifted without routing every song through Web Audio - which is also what the
+ * phone's media session and background playback are most fragile about - and
+ * most of what is loud is too loud by several decibels while what is quiet is
+ * quiet by one or two. An unknown level is played as it is.
+ */
+export function levelGain(lufs, target = LEVEL_TARGET_LUFS) {
+  const measured = Number(lufs);
+  if (lufs === null || lufs === undefined || lufs === "" || !Number.isFinite(measured)) return 1;
+  const gain = Math.pow(10, (target - measured) / 20);
+  return Math.min(1, Math.max(LEVEL_FLOOR, gain));
+}
+
 export function volumeGain(position) {
   return Math.pow(clamp01(Number(position) || 0), 5 / 3);
 }
@@ -356,19 +401,14 @@ export function prefetchWindow(queue, index, count = 0) {
 /**
  * The index that plays after this one, or -1 when the queue is over.
  *
- * Without shuffle that is simply the next one. With shuffle it is a random
- * *other* track: a queue with nothing else left still ends, rather than
- * repeating itself for ever.
+ * Always the next one: a shuffle reorders the queue itself (`shuffleWhole`),
+ * so the order on screen is the order played and the songs fetched ahead are
+ * the songs that follow.
  */
-export function nextIndex(queue, index, shuffle = false) {
+export function nextIndex(queue, index) {
   const count = queue?.length || 0;
   if (count === 0) return -1;
-  if (!shuffle) return index + 1 < count ? index + 1 : -1;
-  const playing = index >= 0 && index < count;
-  const span = playing ? count - 1 : count;
-  if (span <= 0) return -1;
-  const pick = Math.floor(Math.random() * span);
-  return playing && pick >= index ? pick + 1 : pick;
+  return index + 1 < count ? index + 1 : -1;
 }
 
 /** The whole queue shuffled, with the song that is playing left where it is.
@@ -512,13 +552,22 @@ class Player {
     /** The silent player that keeps the media session alive across a gap. Made
      *  the first time it is needed; null once it cannot be made at all. */
     this._silent = undefined;
+    /** Whether the hold running now was started for the end of the song on the
+     *  element, and the timer that lets any hold go if nobody renews it. */
+    this._holdArmed = false;
+    this._holdTimer = 0;
+    /** The last position the lock screen was given, and when. */
+    this._positionSent = null;
     /** Plain track objects, in play order. */
     this.queue = [];
 
     this._index = -1;
     this._volume = 1;
     this._muted = false;
-    this._shuffle = false;
+    // The song on the element's own level (see levelGain), and whether the
+    // listener wants songs levelled at all.
+    this._level = 1;
+    this._levelOn = state.levelLoudness !== false;
 
     this._listeners = new Map();
     this._room = null;
@@ -782,7 +831,6 @@ class Player {
     }
     this.queue = [track];
     this._index = 0;
-    this._shuffle = false;
     this._emit("queue-changed", this.queue);
     return this._load(0, { startMs: positionMs, autoplay });
   }
@@ -804,7 +852,6 @@ class Player {
     if (!entry || entry.state !== "ready" || !entry.url) return false;
     this.queue = [{ ...track, id: trackId }];
     this._index = 0;
-    this._shuffle = false;
     this._emit("queue-changed", this.queue);
     this._load(0, { autoplay: true });
     return true;
@@ -828,7 +875,6 @@ class Player {
     if (!trackId || !source) return false;
     this.queue = [{ ...track, id: trackId, localUrl: source }];
     this._index = 0;
-    this._shuffle = false;
     this._emit("queue-changed", this.queue);
     this._load(0, { autoplay: true });
     return true;
@@ -856,7 +902,7 @@ class Player {
       this._room.offlineSkip?.();
       return;
     }
-    const target = nextIndex(this.queue, this._index, this._shuffle);
+    const target = nextIndex(this.queue, this._index);
     if (target >= 0) this.jumpTo(target);
   }
 
@@ -1039,6 +1085,24 @@ class Player {
     return this._volume;
   }
 
+  /** What the element is set to: the fader's loudness step, times the song's
+   *  own level when songs are levelled. */
+  _elementVolume() {
+    return volumeGain(this._volume) * (this._levelOn ? this._level : 1);
+  }
+
+  /** Level songs to one loudness, or play each as it was mastered. */
+  setLevelLoudness(on) {
+    this._levelOn = Boolean(on);
+    if (this.audio) this.audio.volume = this._elementVolume();
+  }
+
+  /** The song about to be on the element, at this measured loudness. */
+  _setLevel(lufs) {
+    this._level = levelGain(lufs);
+    if (this.audio) this.audio.volume = this._elementVolume();
+  }
+
   setMuted(muted) {
     this._muted = Boolean(muted);
     this._applyVolume();
@@ -1051,7 +1115,7 @@ class Player {
    *  to repeat those four steps. */
   _applyVolume() {
     if (this.audio) {
-      this.audio.volume = volumeGain(this._volume);
+      this.audio.volume = this._elementVolume();
       this.audio.muted = this._muted;
     }
     this._emit("volume-changed", this._volume);
@@ -1101,25 +1165,16 @@ class Player {
       durationMs: this.durationMs(),
       volume: this._volume,
       muted: this._muted,
-      shuffle: this._shuffle,
     };
   }
 
-  /** Shuffle what is left of the queue, keeping the current track playing. */
+  /** Shuffle the queue around the track that is playing, which stays put. */
   shuffleQueue() {
     if (this.queue.length < 2) return false;
     this.queue = shuffleWhole(this.queue, this._index);
     this._emit("queue-changed", this.queue);
     this._prefetch();
     return true;
-  }
-
-  /** Turn shuffle on (shuffling what is left) or off. */
-  toggleShuffle() {
-    this._shuffle = !this._shuffle;
-    if (this._shuffle) this.shuffleQueue();
-    this._stateEvent();
-    return this._shuffle;
   }
 
   on(event, handler) {
@@ -1173,7 +1228,6 @@ class Player {
     const same = old?.roomItemId && old.roomItemId === target?.roomItemId;
     this.queue = list;
     this._index = index;
-    this._shuffle = false;
     this._emit("queue-changed", this.queue);
     if (same) {
       this._prefetch();
@@ -1456,7 +1510,6 @@ class Player {
     bar.shuffle.title = inRoom
       ? (mayShuffle ? "Shuffle your own queue" : "Queue another song to shuffle yours")
       : "Shuffle what is left of the queue";
-    bar.shuffle.setAttribute("aria-pressed", inRoom ? "false" : this._shuffle ? "true" : "false");
 
     // --- position --------------------------------------------------------
     const duration = this.durationMs();
@@ -1704,6 +1757,9 @@ class Player {
 
     if (localUrl) {
       // The copy is already here: nothing to fetch and nothing to wait for.
+      // A copy in memory knows its level; a kept playlist's file is played as
+      // it is.
+      this._setLevel(fromMemory ? kept.loudness : null);
       this._giveSource(localUrl);
     } else {
       // The song is downloaded first and played from that: the server holds
@@ -2040,6 +2096,7 @@ class Player {
     if (audio.src !== entry.url) {
       this._stateEvent();
       this.renderBar();
+      this._setLevel(entry.loudness);
       this._giveSource(entry.url);
     } else if (this._pendingSeek !== null) {
       // The position lands whether or not this load is still flagged as in
@@ -2408,6 +2465,9 @@ class Player {
       if (!(await this._warm(variantId, signal))) throw new Error("that file did not arrive");
       const response = await fetch(this._client().mediaUrl(variantId), signal ? { signal } : undefined);
       if (!response.ok) throw new Error(`media ${response.status}`);
+      // How loud the file is, measured by the server once: it rides the copy,
+      // so every later play of it - a room's, a step back - is levelled too.
+      const loudness = response.headers?.get?.("x-loudness-lufs") ?? null;
       const blob = await readMedia(response, (received, total) => {
         this._noteTransfer(trackId, received, total);
       });
@@ -2418,6 +2478,7 @@ class Player {
       if (entry !== claimed || !entry) return null;
       entry.variantId = variantId;
       entry.url = URL.createObjectURL(blob);
+      entry.loudness = loudness;
       entry.bytes = blob.size;
       entry.state = "ready";
       entry.at = Date.now();
@@ -2461,7 +2522,7 @@ class Player {
    * move the queue on or consume a position.
    */
   _wireAudio(audio) {
-    audio.volume = volumeGain(this._volume);
+    audio.volume = this._elementVolume();
     audio.muted = this._muted;
     audio.addEventListener("timeupdate", () => {
       if (audio !== this.audio) return;
@@ -2479,6 +2540,7 @@ class Player {
         this._clockPosition = position;
         this._clockAt = Date.now();
       }
+      this._armSessionHold(audio);
       this._positionEvent();
       this.savePlayback();          // at most every SAVE_PLAYBACK_MS, and only on a change
     });
@@ -2757,6 +2819,14 @@ class Player {
           this._started.delete(variantId);
           return false;
         }
+        // "none" this far in is a fetch that was stopped under this wait - a
+        // play somewhere took the pipe, or another device let the song go -
+        // and nothing will start it again by itself. Asking is free when it
+        // is already running: the server keeps one fetch per rendition.
+        if (status.state === "none" && attempt > 0 && attempt % 10 === 0) {
+          this._started.delete(variantId);
+          this._startDownload(variantId, client);
+        }
         await sleep(POLL_MS);
       }
       // Nothing came of it in the time this was willing to wait: the ask is
@@ -2869,7 +2939,7 @@ class Player {
     this._volume = Number.isFinite(volume) ? clamp01(volume) : 1;
     this._muted = Boolean(saved.muted);
     if (this.audio) {
-      this.audio.volume = volumeGain(this._volume);
+      this.audio.volume = this._elementVolume();
       this.audio.muted = this._muted;
     }
     this._emit("volume-changed", this._volume);
@@ -2927,8 +2997,9 @@ class Player {
    * at all; Android Chrome and Brave can drop the card in that gap, and once
    * the card is gone the background page is throttled and every retry becomes
    * one of the tiny, uneven attempts heard from a locked phone. A detached
-   * element looping a tenth of a second of silence keeps one media player
-   * genuinely running until the real song starts or the listener pauses.
+   * element looping silence keeps one media player genuinely running until the
+   * real song starts or the listener pauses - and the clip is long enough to be
+   * counted as one (`SESSION_HOLD_CLIP_SECONDS`).
    *
    * Silent by content rather than by volume, since a muted element is not
    * "playing audio" to the browser and a card the browser believes is silent
@@ -2939,6 +3010,10 @@ class Player {
     const silent = this._silentPlayer();
     if (!silent) return;
     silent.loop = true;
+    // Asked for again is held for longer; not asked for again, it lets go.
+    clearTimeout(this._holdTimer);
+    this._holdTimer = setTimeout(() => this._releaseSessionHold(), SESSION_HOLD_MAX_MS);
+    this._holdTimer?.unref?.();   // a test runner's process is not kept open for it
     if (!silent.paused) return;
     try {
       const playing = silent.play();
@@ -2952,6 +3027,9 @@ class Player {
 
   /** Stop the silent loop once the real element has the session again. */
   _releaseSessionHold() {
+    clearTimeout(this._holdTimer);
+    this._holdTimer = 0;
+    this._holdArmed = false;
     const silent = this._silent;
     if (!silent) return;
     // Pause even if it still reads `paused`: a play that has been asked for but
@@ -2963,6 +3041,38 @@ class Player {
     }
   }
 
+  /**
+   * Start the hold a moment before the song on the element runs out.
+   *
+   * The session loses a player the instant its file ends, and the next file is
+   * only handed over once the page hears about it - so however quick the
+   * changeover, the session was empty at every boundary: the card went and came
+   * back, and each time the browser had to win its place as a playing app again
+   * from behind a locked screen. With the silent player already running there
+   * is no such instant. Only when something follows: the end of the queue is
+   * the end of the session, and nothing should outlast it.
+   *
+   * A seek back out of the song's last moments lets the hold go again; one
+   * started for any other reason (a load, a refused play) is not this one's to
+   * stop.
+   */
+  _armSessionHold(audio) {
+    if (audio.paused || this._loading) return;
+    const leftMs = (Number(audio.duration) - Number(audio.currentTime)) * 1000;
+    if (!Number.isFinite(leftMs)) return;
+    if (leftMs > SESSION_HOLD_LEAD_MS) {
+      if (this._holdArmed) this._releaseSessionHold();
+      return;
+    }
+    if (this._holdArmed || !this._playingWanted) return;
+    // A room's follower is told what comes next by the room; everyone else
+    // plays their own queue.
+    const follower = Boolean(this._room) && !this._room.hostPlayback;
+    if (!follower && nextIndex(this.queue, this._index) < 0) return;
+    this._holdSession();
+    this._holdArmed = true;
+  }
+
   /** The silent element `_holdSession` plays, made once and then kept. */
   _silentPlayer() {
     if (this._silent !== undefined) return this._silent;
@@ -2971,7 +3081,7 @@ class Player {
     if (typeof URL === "undefined" || typeof URL.createObjectURL !== "function") return null;
     let url = "";
     try {
-      url = URL.createObjectURL(new Blob([silenceWav()], { type: "audio/wav" }));
+      url = URL.createObjectURL(new Blob([silenceWav(SESSION_HOLD_CLIP_SECONDS)], { type: "audio/wav" }));
     } catch {
       return null;
     }
@@ -2993,7 +3103,8 @@ class Player {
     // it the page's standing as something that is playing, which is what a
     // backgrounded phone needs to be allowed to start the next file at all.
     const inGap = this._betweenSongs || (this._loading && Boolean(this._room?.playing));
-    session.playbackState = this._playingWanted || inGap ? "playing" : "paused";
+    const playbackState = this._playingWanted || inGap ? "playing" : "paused";
+    if (session.playbackState !== playbackState) session.playbackState = playbackState;
     if (typeof session.setPositionState !== "function") return;
     // The length the app knows, not only the one the element measured: before
     // the file is here there is no measured length, and a lock screen with no
@@ -3001,8 +3112,20 @@ class Player {
     const duration = this.durationMs();
     const position = this.positionMs();
     if (duration <= 0 || position < 0 || position > duration) return;
+    // The lock screen runs its own clock from the last position it was given,
+    // so it is told again only when that clock would be wrong: another length,
+    // a start or a stop, a seek. This is reached from every tick of the
+    // timeline, and each call is a notification rebuilt on the phone.
+    const moving = this.isPlaying() && !this._loading;
+    const now = Date.now();
+    const sent = this._positionSent;
+    if (sent && sent.duration === duration && sent.moving === moving) {
+      const expected = sent.position + (moving ? now - sent.at : 0);
+      if (Math.abs(expected - position) < 1000) return;
+    }
     try {
       session.setPositionState({ duration: duration / 1000, position: position / 1000, playbackRate: 1 });
+      this._positionSent = { duration, position, moving, at: now };
     } catch {
       /* the numbers moved between the check and the call: not worth reporting */
     }
@@ -3066,8 +3189,18 @@ class Player {
         /* that action is not supported here; the others still are */
       }
     };
-    handle("play", () => this.toggle());
-    handle("pause", () => this.toggle());
+    // Each button is the thing it says, not a toggle of whatever this page
+    // believes: a play the browser refused leaves the intent at "playing" with
+    // nothing sounding, and the press that is meant to start it must not be
+    // read as a pause. A room owns its own transport while it can be reached.
+    handle("play", () => {
+      if (this._room && this.online() && !this._playingWanted) return this._roomCommand("resume", "pause");
+      return this.resume();
+    });
+    handle("pause", () => {
+      if (this._room && this.online()) return this._roomCommand("pause", "pause");
+      return this.pause();
+    });
     handle("stop", () => this.pause());
     handle("nexttrack", () => this.next());
     handle("previoustrack", () => this.previous());

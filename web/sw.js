@@ -48,7 +48,14 @@ const SHELL_CACHE = "musoak-shell";
 const SHELL_TIMEOUT_MS = 2500;
 // Everything that makes up the app itself: the page, its modules, its styles,
 // its fonts and its icons. The API is left alone.
-const SHELL_PATH = /^\/(?:$|index\.html$|theme\.css$|icon\.png$|icon-64\.png$|apple-touch-icon\.png$|sw\.js$|js\/|fonts\/)/;
+const SHELL_PATH = /^\/(?:$|index\.html$|theme\.css$|icon\.png$|icon-64\.png$|icon-192\.png$|icon-512\.png$|apple-touch-icon\.png$|manifest\.json$|sw\.js$|js\/|fonts\/)/;
+// The server's own answers, which share the origin with the app and are no part
+// of it: the API, the deployment's `/ui/` calls and the health check. A
+// navigation can name them too - a playlist's zip is an `<a download>`, which
+// the browser sends as one - and the navigation rule took every one of those for
+// the page: the download went through the shell's two tries and its deadline,
+// and was then kept in the shell cache, archive and all.
+const SERVER_PATH = /^\/(?:(?:api|ui)(?:\/|$)|healthz$)/;
 
 // The shell as the page itself reported it: every file the app loaded on a
 // load that worked. The page posts this once it is up (see app.js), which is
@@ -75,6 +82,7 @@ async function keepShell(urls) {
   const kept = [];
   for (const url of urls) {
     try {
+      if (SERVER_PATH.test(scoped(new URL(url, self.location.href).pathname))) continue;
       // Asked for in the ordinary way: a copy the browser already holds and
       // still trusts costs no request, and one it no longer trusts is
       // revalidated - a 304, no body. `force-cache` used to be here, and it
@@ -114,6 +122,8 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(keptSong(request));
     return;
   }
+  // Everything else the server answers goes to it untouched, navigation or not.
+  if (SERVER_PATH.test(path)) return;
 
   // The frontend is edited while it is being served, so what is kept has to be
   // allowed to change under it: the page asks the network first, and every other
@@ -182,9 +192,12 @@ async function openShellCache() {
 }
 
 /** Keep what the network answered on the way past, so the next load that cannot
- *  reach the server has something to show. */
+ *  reach the server has something to show. Only the app's own files: an answer
+ *  of the server's is never the shell, whichever way it was asked for. */
 function keep(request, cache, response) {
-  if (cache && response && response.ok) cache.put(request, response.clone()).catch(() => {});
+  if (cache && response && response.ok && !SERVER_PATH.test(scoped(new URL(request.url).pathname))) {
+    cache.put(request, response.clone()).catch(() => {});
+  }
   return response;
 }
 

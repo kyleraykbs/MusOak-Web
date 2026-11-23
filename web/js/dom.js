@@ -25,7 +25,31 @@ export function h(tag, props = null, ...children) {
     }
   }
   append(node, children);
+  if (props && typeof props.onclick === "function") reachable(node);
   return node;
+}
+
+/**
+ * A clickable row that a keyboard can reach and press.
+ *
+ * Song, album and playlist rows are `div.row.clickable` with a click handler,
+ * which a mouse or a finger can use and a keyboard cannot: they were never in
+ * the tab order, so the focus ring theme.css draws for them never showed. A row
+ * that names its own tabindex or role keeps what it says. Enter and Space press
+ * the row itself, not a button inside it, and are kept from the page's own
+ * Space-to-pause.
+ */
+function reachable(node) {
+  if (!node.classList?.contains?.("clickable") || typeof node.hasAttribute !== "function") return;
+  if (node.tagName === "BUTTON" || node.tagName === "A") return;
+  if (!node.hasAttribute("tabindex")) node.tabIndex = 0;
+  if (!node.hasAttribute("role")) node.setAttribute("role", "button");
+  node.addEventListener("keydown", (event) => {
+    if (event.target !== node || (event.key !== "Enter" && event.key !== " ")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    node.click();
+  });
 }
 
 function append(node, children) {
@@ -261,17 +285,26 @@ export function render(parent, build) {
  * A modal. Actions are [{label, class?, onClick}]; onClick returning `false`
  * keeps the dialog open (an action that failed and wants to say so).
  * Escape and a backdrop click close it. Returns {close, node}.
+ *
+ * `onClose` is told once, however the dialog went: a button, Escape, the
+ * backdrop, the close cross, or a caller's own `close()`. Anything waiting on
+ * an answer settles there - a promise that only its buttons could resolve is a
+ * promise a click beside the dialog leaves pending for ever.
  */
-export function dialog({ title, body, actions = [], onOpen, closeButton = false }) {
+export function dialog({ title, body, actions = [], onOpen, onClose, closeButton = false }) {
   const backdrop = h("div", { class: "dialog-backdrop", role: "presentation" });
   const opener = document.activeElement;
+  let closed = false;
   // The backdrop is mounted on body below; views cannot create a competing
   // stacking context around this modal.
   const close = () => {
+    if (closed) return;
+    closed = true;
     document.removeEventListener("keydown", onKey);
     backdrop.remove();
     if (!document.querySelector(".dialog-backdrop")) document.body.classList.remove("modal-open");
     if (opener?.isConnected && typeof opener.focus === "function") opener.focus();
+    onClose?.();
   };
   const onKey = (event) => {
     if (event.key === "Escape") close();
@@ -495,6 +528,8 @@ export function prompt(title, label, initial = "", { type = "text", confirm = "S
         { label: "Cancel", onClick: () => finish(null) },
         { label: confirm, class: "suggested", onClick: () => finish(input.value.trim()) },
       ],
+      // Escape and a click beside the dialog are a cancel too.
+      onClose: () => finish(null),
       onOpen: (panel) => {
         panel.querySelector("input")?.focus();
         input.select?.();
@@ -525,6 +560,8 @@ export function confirm(title, message, { confirm: confirmLabel = "Confirm", des
         { label: "Cancel", onClick: () => finish(false) },
         { label: confirmLabel, class: destructive ? "destructive" : "suggested", onClick: () => finish(true) },
       ],
+      // Dismissed is "no": the answer nobody gave is not a yes.
+      onClose: () => finish(false),
     });
   });
 }

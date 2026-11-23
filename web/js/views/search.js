@@ -256,7 +256,7 @@ export function trackRow(group) {
   const rest = providers.join(", ");
   return h(
     "div",
-    { class: "row clickable", onclick: () => playTracks([track]) },
+    { class: "row clickable", "data-track-id": track.id || null, onclick: () => playTracks([track]) },
     artwork(track.artworkUrl),
     h(
       "div",

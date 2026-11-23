@@ -296,6 +296,9 @@ export function openSourcePicker(anchor, track, onChange = null, { playingVarian
       data.notice = error?.message || "could not load the sources";
     }
     panel.removeAttribute("aria-busy");
+    // What was just loaded is drawn: without this the panel sits on "Loading
+    // sources" with the list in hand.
+    render();
   };
 
   const pick = async (source) => {

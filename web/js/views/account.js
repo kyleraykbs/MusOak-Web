@@ -186,6 +186,30 @@ function deviceCard() {
           "How many songs after the one playing this device downloads ahead of the playhead. " +
           `It fetches them one at a time, in queue order. ${DEFAULT_PRELOAD_AHEAD} by default, ` +
           `and your server allows up to ${preloadMax()}.`,
+      }),
+      h(
+        "label",
+        { class: "row account-device-row" },
+        h("input", {
+          type: "checkbox",
+          checked: state.levelLoudness !== false,
+          "aria-describedby": "account-level-note",
+          onchange: (event) => {
+            state.levelLoudness = event.target.checked;
+            saveLocal();
+            // Loaded when it is used: the player is the app's, not this page's.
+            import("../player.js").then(({ player }) => player.setLevelLoudness(state.levelLoudness));
+          },
+        }),
+        h("span", { text: "Even out loudness" })
+      ),
+      h("div", {
+        id: "account-level-note",
+        class: "account-device-note",
+        text:
+          "Songs from different platforms are mastered at very different levels. " +
+          "With this on, loud songs are turned down to match the rest, so the volume " +
+          "stays where you set it from one song to the next.",
       })
     )
   );

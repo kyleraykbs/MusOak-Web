@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -134,6 +135,46 @@ func TestProxyCarriesTheSessionCookieAsABearerToken(t *testing.T) {
 	}
 }
 
+func TestProxyKeepsTheSessionTokenFromABackendALinkNamed(t *testing.T) {
+	backend, seen := fakeBackend(t)
+	server := newServer(t, &config.Config{Listen: ":0"})
+
+	// The browser is signed in on one backend; a link names another.
+	response := do(t, server.Handler(), "GET", "/api/v1/providers?ms="+url.QueryEscape(backend.URL), nil, []*http.Cookie{
+		{Name: serverCookie, Value: "https://home.test"},
+		{Name: tokenCookie, Value: "home-token"},
+	})
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", response.Code, response.Body)
+	}
+	<-seen.sawAll
+	if seen.auth != "" {
+		t.Errorf("another backend was sent the session token: %q", seen.auth)
+	}
+}
+
+func TestASessionWithoutATokenClearsTheLastOne(t *testing.T) {
+	server := newServer(t, &config.Config{Listen: ":0"})
+
+	request := httptest.NewRequest("POST", "/ui/session", strings.NewReader(`{"server":"https://home.test","token":""}`))
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", response.Code, response.Body)
+	}
+	for _, cookie := range response.Result().Cookies() {
+		if cookie.Name == tokenCookie {
+			if cookie.MaxAge >= 0 || cookie.Value != "" {
+				t.Errorf("token cookie = %+v, want it expired", cookie)
+			}
+			return
+		}
+	}
+	t.Error("the token cookie was left as it was")
+}
+
 func TestProxyRefusesUnlistedServersWhenCustomIsOff(t *testing.T) {
 	backend, seen := fakeBackend(t)
 	no := false
@@ -194,6 +235,38 @@ func TestProxyRefusesPrivateBackendsWhenAsked(t *testing.T) {
 		t.Fatal("a private backend was dialled")
 	default:
 	}
+}
+
+// The policy is about where a name leads, not how it is spelled: a hostname that
+// resolves to this machine is this machine.
+func TestPrivateBackendsAreRefusedByWhereTheirNameLeads(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+	_, port, _ := net.SplitHostPort(listener.Addr().String())
+	if addrs, err := net.LookupHost("localhost"); err != nil || len(addrs) == 0 {
+		t.Skip("this machine does not resolve localhost")
+	}
+
+	blocking := newServer(t, &config.Config{Listen: ":0", BlockPrivateServers: true})
+	conn, err := blocking.dialGuard(context.Background(), "tcp", net.JoinHostPort("localhost", port))
+	if err == nil {
+		conn.Close()
+		t.Fatal("a name that resolves to loopback was dialled")
+	}
+	if !strings.Contains(err.Error(), "private range") {
+		t.Errorf("error = %v, want the private-range refusal", err)
+	}
+
+	// With the policy off the same name is an ordinary backend.
+	open := newServer(t, &config.Config{Listen: ":0"})
+	conn, err = open.dialGuard(context.Background(), "tcp", net.JoinHostPort("localhost", port))
+	if err != nil {
+		t.Fatalf("dial without the policy: %v", err)
+	}
+	conn.Close()
 }
 
 func TestProxySaysSoWhenTheBackendIsDown(t *testing.T) {
@@ -631,7 +704,7 @@ func TestSiteCompressesTextForClientsThatAsk(t *testing.T) {
 	// Images are already compressed, and the icons the page and the tab ask for
 	// are served untouched: the head of the document, the app's avatar, and the
 	// home screen's.
-	for _, icon := range []string{"/icon.png", "/icon-64.png", "/apple-touch-icon.png"} {
+	for _, icon := range []string{"/icon.png", "/icon-64.png", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png"} {
 		response := do(t, server.Handler(), "GET", icon, map[string]string{"Accept-Encoding": "gzip"}, nil)
 		if response.Code != http.StatusOK || response.Body.Len() == 0 {
 			t.Errorf("%s = %d, %d bytes", icon, response.Code, response.Body.Len())
@@ -642,6 +715,12 @@ func TestSiteCompressesTextForClientsThatAsk(t *testing.T) {
 		if got := response.Header().Get("Content-Type"); got != "image/png" {
 			t.Errorf("%s is %q", icon, got)
 		}
+	}
+
+	// The manifest is what makes the app installable on a phone.
+	manifest := do(t, server.Handler(), "GET", "/manifest.json", nil, nil)
+	if manifest.Code != http.StatusOK || !strings.Contains(manifest.Body.String(), `"display": "standalone"`) {
+		t.Errorf("/manifest.json = %d: %s", manifest.Code, manifest.Body.String())
 	}
 }
 
@@ -682,16 +761,36 @@ func TestVersionedAssetsAreKeptAndTheRestRevalidate(t *testing.T) {
 	server := newServer(t, &config.Config{Listen: ":0"})
 	handler := server.Handler()
 
-	stamped := do(t, handler, "GET", "/theme.css?v=2f1a0c6d9e04", nil, nil)
+	stamped := do(t, handler, "GET", "/theme.css?v="+server.assetStamp(), nil, nil)
 	if got := stamped.Header().Get("Cache-Control"); !strings.Contains(got, "immutable") ||
 		!strings.Contains(got, "max-age=31536000") {
 		t.Errorf("a versioned stylesheet is kept with %q", got)
 	}
 
-	for _, target := range []string{"/", "/js/app.js", "/theme.css"} {
+	// A stamp from another revision names other bytes than the ones it is
+	// answered with, so it is not a URL to keep.
+	for _, target := range []string{"/", "/js/app.js", "/theme.css", "/theme.css?v=2f1a0c6d9e04"} {
 		response := do(t, handler, "GET", target, nil, nil)
 		if got := response.Header().Get("Cache-Control"); got != "no-cache" {
 			t.Errorf("%s answers %q, want it to keep asking", target, got)
 		}
+	}
+}
+
+// A file that is not there is a 404, not the shell: a module answered with a
+// page of markup fails as a syntax error nobody can read, and a path with no
+// file suffix is still the app's own page.
+func TestAMissingFileIsNotTheShell(t *testing.T) {
+	server := newServer(t, &config.Config{Listen: ":0"})
+	handler := server.Handler()
+
+	for _, target := range []string{"/js/not-there.js", "/fonts/gone.woff2", "/nothing.css"} {
+		if response := do(t, handler, "GET", target, nil, nil); response.Code != http.StatusNotFound {
+			t.Errorf("%s = %d, want 404", target, response.Code)
+		}
+	}
+	page := do(t, handler, "GET", "/somewhere/else", nil, nil)
+	if page.Code != http.StatusOK || !strings.Contains(page.Header().Get("Content-Type"), "text/html") {
+		t.Errorf("a path with no file in it = %d %q, want the shell", page.Code, page.Header().Get("Content-Type"))
 	}
 }
