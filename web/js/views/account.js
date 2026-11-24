@@ -210,9 +210,25 @@ function deviceCard() {
           "Songs from different platforms are mastered at very different levels. " +
           "With this on, loud songs are turned down to match the rest, so the volume " +
           "stays where you set it from one song to the next.",
-      })
+      }),
+      lockScreenNote()
     )
   );
+}
+
+/** Whether this browser lets the player keep the lock screen's card between
+ *  songs: the one fact about the phone's card a person cannot see from here. */
+function lockScreenNote() {
+  const note = h("div", { class: "account-device-note", text: "" });
+  import("../player.js").then(({ player }) => {
+    const said = {
+      ready: "Lock screen: this browser lets the player keep its card between songs.",
+      blocked: "Lock screen: this browser refused the player's stand-in between songs, so the card may drop. Allowing autoplay for this site fixes it.",
+      untested: "Lock screen: checked when you next press play.",
+    };
+    note.textContent = said[player.sessionHoldState?.()] || "";
+  }).catch(() => {});
+  return note;
 }
 
 /**

@@ -4131,3 +4131,65 @@ test("the element plays the fader's volume times the song's level, unless levell
     Object.assign(player, { audio: saved.audio, _volume: saved.volume, _level: saved.level, _levelOn: saved.on });
   }
 });
+
+// A browser that blocks autoplay lets an element play without a tap only once a
+// tap has started it. The silent player is started and stopped inside a tap, and
+// its state says whether the browser let it.
+test("a tap unlocks the silent player and leaves it stopped", async () => {
+  const saved = {
+    silent: player._silent, unlocked: player._silentUnlocked, blocked: player._holdBlocked, timer: player._holdTimer,
+  };
+  const silent = {
+    paused: true, plays: 0, pauses: 0, loop: false,
+    play() { this.plays += 1; this.paused = false; return Promise.resolve(); },
+    pause() { this.pauses += 1; this.paused = true; },
+  };
+  try {
+    Object.assign(player, { _silent: silent, _silentUnlocked: false, _holdBlocked: false, _holdTimer: 0 });
+    assert.equal(player.sessionHoldState(), "untested");
+    player._unlockSilent();
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(silent.plays, 1, "started inside the tap");
+    assert.equal(silent.paused, true, "and stopped again: nothing was waiting on it");
+    assert.equal(player.sessionHoldState(), "ready");
+    player._unlockSilent();
+    assert.equal(silent.plays, 1, "once unlocked, a tap leaves it alone");
+  } finally {
+    Object.assign(player, { _silent: saved.silent, _silentUnlocked: saved.unlocked, _holdBlocked: saved.blocked, _holdTimer: saved.timer });
+  }
+});
+
+test("an unlock does not stop a hold that is running, and a refused hold says so", async () => {
+  const saved = {
+    silent: player._silent, unlocked: player._silentUnlocked, blocked: player._holdBlocked, timer: player._holdTimer,
+  };
+  const refusing = {
+    paused: true, loop: false,
+    play() { return Promise.reject(new Error("NotAllowedError")); },
+    pause() { this.paused = true; },
+  };
+  try {
+    Object.assign(player, { _silent: refusing, _silentUnlocked: false, _holdBlocked: false, _holdTimer: 0 });
+    player._holdSession();
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(player.sessionHoldState(), "blocked", "a browser that refused the hold is reported");
+    player._releaseSessionHold();
+
+    const holding = {
+      paused: true, loop: false,
+      play() { this.paused = false; return Promise.resolve(); },
+      pause() { this.paused = true; },
+    };
+    Object.assign(player, { _silent: holding, _silentUnlocked: false, _holdBlocked: false });
+    player._unlockSilent();
+    player._holdTimer = 1; // a hold began before the unlock's play settled
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(holding.paused, false, "the running hold is not stopped by the unlock");
+  } finally {
+    clearTimeout(player._holdTimer);
+    Object.assign(player, { _silent: saved.silent, _silentUnlocked: saved.unlocked, _holdBlocked: saved.blocked, _holdTimer: saved.timer });
+  }
+});

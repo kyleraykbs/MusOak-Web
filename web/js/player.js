@@ -556,6 +556,10 @@ class Player {
      *  element, and the timer that lets any hold go if nobody renews it. */
     this._holdArmed = false;
     this._holdTimer = 0;
+    /** Whether a browser has let the silent player play (see _unlockSilent),
+     *  and whether one has refused it. */
+    this._silentUnlocked = false;
+    this._holdBlocked = false;
     /** The last position the lock screen was given, and when. */
     this._positionSent = null;
     /** Plain track objects, in play order. */
@@ -923,6 +927,7 @@ class Player {
   }
 
   resume() {
+    this._unlockSilent();
     if (!this.queue.length) return;
     // The song is still being fetched: this press is the intent to play it when
     // its file lands, not a reason to start the load over. Reloading here
@@ -1586,6 +1591,11 @@ class Player {
       const wake = () => this._retryWanted();
       document.addEventListener("pointerdown", wake, true);
       document.addEventListener("keydown", wake, true);
+      // A tap is also the moment the silent player can be given its first
+      // play. On a phone it is the click, not the press, that counts as one.
+      const unlock = () => this._unlockSilent();
+      document.addEventListener("click", unlock, true);
+      document.addEventListener("keydown", unlock, true);
       // A window that is merely behind another is still "visible", so nothing
       // above fires when somebody comes back to it: focus is the only signal,
       // and it is also the gesture the browser wants.
@@ -3017,12 +3027,56 @@ class Player {
     if (!silent.paused) return;
     try {
       const playing = silent.play();
-      if (playing?.catch) playing.catch(() => {
-        /* refused while hidden: the retry asks again, and the gap says so */
-      });
+      if (playing?.then) {
+        playing.then(
+          () => { this._silentUnlocked = true; this._holdBlocked = false; },
+          () => { this._holdBlocked = !this._silentUnlocked; },
+        );
+      }
     } catch {
-      /* refused while hidden: the retry asks again */
+      this._holdBlocked = !this._silentUnlocked;
     }
+  }
+
+  /**
+   * Give the silent player its first play inside a tap, and stop it again.
+   *
+   * A browser that blocks autoplay - Brave does by default - lets an element
+   * play without a tap only once a tap has started it. The song's own element
+   * earned that when the listener pressed play; the silent one never had a tap
+   * of its own, so every hold between songs was refused, the session emptied,
+   * and the lock screen's card went until the next song was already playing.
+   * Started once here, it is an element the browser will start again later.
+   */
+  _unlockSilent() {
+    if (this._silentUnlocked) return;
+    const silent = this._silentPlayer();
+    if (!silent || !silent.paused) return;
+    let started;
+    try {
+      started = silent.play();
+    } catch {
+      return;
+    }
+    if (!started?.then) return;
+    started.then(
+      () => {
+        this._silentUnlocked = true;
+        this._holdBlocked = false;
+        // Only this unlock's own play is stopped: a hold that began meanwhile
+        // is the session's, and keeps running.
+        if (!this._holdTimer) silent.pause();
+      },
+      () => { /* not a tap the browser counts: the next one tries again */ },
+    );
+  }
+
+  /** Whether the silent player can hold the lock screen's card between songs:
+   *  "ready" once a browser has let it play, "blocked" when it refused, and
+   *  "untested" before either. Shown on the account page. */
+  sessionHoldState() {
+    if (this._silentUnlocked) return "ready";
+    return this._holdBlocked ? "blocked" : "untested";
   }
 
   /** Stop the silent loop once the real element has the session again. */
@@ -3647,8 +3701,10 @@ class Player {
     const status = h("span", { class: "track-error", role: "status", "aria-live": "polite", style: { display: "none" } });
     const text = h("div", { class: "track-text" }, title, line, load, status);
 
+    // Placed by class, not by title: the title is what the button says, and it
+    // changes - "Unfavourite" once the song is starred - while its place does not.
     const star = h("button", {
-      class: "btn flat round", title: "Favourite",
+      class: "btn flat round player-star", title: "Favourite",
       style: { display: "none" }, onclick: () => this._star(),
     });
     const words = h("button", {
@@ -3656,6 +3712,7 @@ class Player {
       style: { display: "none" }, text: "Aa", onclick: () => this._openLyrics(),
     });
     const shuffle = iconButton("shuffle", {
+      class: "btn flat round player-shuffle",
       title: "Shuffle what is left of the queue",
       onclick: () => {
         // In a room the local queue is not what plays, so the button asks the

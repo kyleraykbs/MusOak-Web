@@ -1815,11 +1815,11 @@ body:has(.drawer:not([hidden])) .player-bar > .btn[title="Open the room"] { disp
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .player > .player-bar > .btn[title="Favourite"] { grid-area: star; }
+  .player > .player-bar > .player-star { grid-area: star; }
   .player > .player-bar > .btn[title="Song actions"] { grid-area: queue; }
   .player > .player-bar > .btn[title="Open the room"] { grid-area: room; }
   .player > .player-bar > .btn[title^="Listening along"] { grid-area: misc; }
-  .player > .player-bar > .btn[title^="Shuffle"] { grid-area: shuffle; }
+  .player > .player-bar > .player-shuffle { grid-area: shuffle; }
   /* A phone row holds less than a desktop one: the same floor as its columns. */
   .player .timeline input[type="range"],
   .player input[type="range"] { min-width: 90px; width: 100%; }
@@ -1851,7 +1851,7 @@ body:has(.drawer:not([hidden])) .player-bar > .btn[title="Open the room"] { disp
    shares the row with the star, and the row is what the bars and the transport
    are competing for. */
 @media (max-width: 560px) {
-  .player > .player-bar > .btn[title^="Shuffle"] { display: none; }
+  .player > .player-bar > .player-shuffle { display: none; }
   .player-bar {
     grid-template-columns: minmax(56px, 4fr) minmax(40px, 3fr) minmax(40px, 3fr) auto auto auto auto auto;
     /* The bars sit closer together than the buttons do: what lies between them
@@ -1872,7 +1872,7 @@ body:has(.drawer:not([hidden])) .player-bar > .btn[title="Open the room"] { disp
    The bars give way first and the buttons tighten, because the transport is the
    last thing that may leave the screen. */
 @media (max-width: 390px) {
-  .player > .player-bar > .btn[title^="Shuffle"] { display: none; }
+  .player > .player-bar > .player-shuffle { display: none; }
   .player-bar {
     grid-template-columns: minmax(40px, 7fr) minmax(28px, 3fr) auto auto auto auto auto;
     grid-template-areas:
@@ -1926,7 +1926,7 @@ body:has(.drawer:not([hidden])) .player-bar > .btn[title="Open the room"] { disp
 /* Below this even the extra controls cannot fit beside the transport: the star
    and the song menu step out, and the queue's own drawer keeps the menu. */
 @media (max-width: 330px) {
-  .player > .player-bar > .btn[title="Favourite"],
+  .player > .player-bar > .player-star,
   .player > .player-bar > .btn[title="Song actions"] { display: none; }
 }
 

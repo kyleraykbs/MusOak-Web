@@ -616,3 +616,44 @@ def test_a_loud_song_is_levelled_and_the_tab_names_it(ui, backend, media_factory
         timeout=10.0,
     )
     ui.assert_no_errors("levelling a loud song")
+
+
+def test_a_favourited_song_keeps_its_star_in_place_on_a_phone(ui, backend, media_factory):
+    """On a phone the star sits under the play button whether or not the song is
+    a favourite.
+
+    The phone layout used to place it by its tooltip, and the tooltip turns to
+    "Unfavourite" once the song is starred: the star then fell into the next
+    free cell, beside Next.
+    """
+    tag = uuid.uuid4().hex[:6]
+    title = f"Starred {tag}"
+    account, _ = library_of(backend, media_factory, [(title, 8)])
+    enter(ui, account)
+    play_from_manage(ui, title)
+    wait_sounding(ui, title, 8)
+
+    ui.driver.set_window_size(390, 844)
+    rect = "const r = document.querySelector(arguments[0]).getBoundingClientRect(); return {top: r.top, left: r.left, bottom: r.bottom};"
+    before = ui.js(rect, ".player-bar .player-star")
+
+    ui.click(".player-bar .player-star")
+    # Starring asks for a rating first; the dialog's own Rate makes it a favourite.
+    ui.wait(
+        lambda: ui.js(
+            "const b = [...document.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Rate');"
+            "if (b) { b.click(); return true; } return null;"
+        ),
+        "the rating dialog never offered Rate",
+    )
+    ui.wait(
+        lambda: ui.attr(".player-bar .player-star", "aria-pressed") == "true" or None,
+        "the star never showed the song as a favourite",
+    )
+    after = ui.js(rect, ".player-bar .player-star")
+    play = ui.js(rect, ".player-bar button.play")
+
+    assert abs(after["top"] - before["top"]) < 2 and abs(after["left"] - before["left"]) < 2, (
+        f"starring the song moved the star from {before} to {after}"
+    )
+    assert after["top"] >= play["bottom"] - 2, f"the star {after} is not below the play button {play}"
